@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import select
 from pathlib import Path
 import subprocess
 import tempfile
@@ -18,6 +19,29 @@ def helper(name):
 
 
 class IntegratedFeatures(unittest.TestCase):
+    def test_apt_progress_is_live_and_preserves_failure_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            release=Path(directory)/'release'
+            script='apt-get() { echo package-output-fixture; while [[ ! -e "$RELEASE" ]]; do sleep .05; done; return 100; };\n'
+            script+=function('apt_system')+'\napt_system -y dist-upgrade'
+            process=subprocess.Popen(['bash','-eu','-c',script],env={**os.environ,'RELEASE':str(release)},stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+            try:
+                ready=select.select([process.stdout],[],[],2)[0]
+                early=process.stdout.readline() if ready else ''
+                running=process.poll() is None
+            finally:
+                release.touch()
+                _,errors=process.communicate(timeout=5)
+            self.assertIn('APT: working',early,'No progress before the APT command finished')
+            self.assertNotIn('package-output-fixture',early,'Raw package output must stay private until completion')
+            self.assertTrue(running)
+            self.assertEqual(process.returncode,100,errors)
+            self.assertIn('package-output-fixture',errors)
+            broken_capture='apt-get() { echo package-output-fixture; }; tee() { cat >/dev/null; return 73; };\n'
+            result=subprocess.run(['bash','-eu','-c',broken_capture+function('apt_system')+'\napt_system -y dist-upgrade'],capture_output=True,text=True)
+            self.assertEqual(result.returncode,1,'An output-capture error must not become successful APT')
+            self.assertNotIn('package-output-fixture',result.stdout)
+
     def test_minimal_image_security_preflight_and_dns_rollback(self):
         security=helper('security')
         with tempfile.TemporaryDirectory() as directory:

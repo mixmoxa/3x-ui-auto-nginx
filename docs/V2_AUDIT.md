@@ -92,6 +92,9 @@ no-remove upgrade simulation, `apt-get --no-remove -y dist-upgrade`, dependency
 installation and SSH/tool/libc DNS readiness checks, all before cleanup. APT waits
 for dpkg locks and retries the lists lock with a bounded deadline; noninteractive
 dpkg/UCF preserve existing configuration, and needrestart reports pending restarts.
+While APT emits output, a fixed activity message is flushed at most once per
+15 seconds; raw package/URL output stays in the private file until completion.
+APT failures retain their exit code when capture succeeds; capture errors fail closed.
 APT origins are not changed by the initial upgrade. Existing-deployment confirmation
 explicitly covers possible service restarts and the non-rollbackable OS upgrade.
 Package maintainer scripts can still restart services; package installation and

@@ -369,17 +369,29 @@ validate_domains() {
 # ─────────────────────────────────────────────────────────────────────────────
 apt_system() {
     local output attempt rc deadline=$((SECONDS + 300))
+    local -a statuses
     output=$(mktemp) || return 1
     for attempt in {1..30}; do
         if DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l UCF_FORCE_CONFFOLD=1 \
             apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef \
             -o Dpkg::Options::=--force-confold -o Acquire::Retries=3 \
             -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
-            --no-remove "$@" > "$output" 2>&1; then
-            cat "$output"; rm -f "$output"; return 0
+            --no-remove "$@" 2>&1 | tee "$output" | {
+                local apt_line progress_at=$((SECONDS - 15))
+                while IFS= read -r apt_line || [[ -n "$apt_line" ]]; do
+                    if (( SECONDS - progress_at >= 15 )); then
+                        printf '%s\n' 'APT: working; detailed output follows at completion.' || exit 1
+                        progress_at=$SECONDS
+                    fi
+                done
+            }; then
+            statuses=("${PIPESTATUS[@]}")
         else
-            rc=$?
+            statuses=("${PIPESTATUS[@]}")
         fi
+        rc=${statuses[0]}
+        (( statuses[1] == 0 && statuses[2] == 0 )) || { rm -f "$output"; return 1; }
+        if (( rc == 0 )); then cat "$output"; rm -f "$output"; return 0; fi
         # apt update's lists lock does not use DPkg::Lock::Timeout.
         if ! grep -Eq 'Could not get lock|Unable to acquire.*lock' "$output"; then break; fi
         (( SECONDS < deadline )) || break
