@@ -184,7 +184,7 @@ _validate_panel_version() {
     local version="${1#v}"
     if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
        [[ "$(printf '%s\n' 3.8.0 "$version" | sort -V | head -n1)" != "3.8.0" ]]; then
-        msg_err "Unsupported 3x-ui version: $1. Use a stable release >= v3.8.0."
+        msg_err "Unsupported 3X-UI version: $1. Use a stable release >= v3.8.0."
         return 1
     fi
 }
@@ -205,7 +205,7 @@ detect_existing_installation() {
     if [[ -e /etc/x-ui || -e /usr/local/x-ui || -e /usr/bin/x-ui ||
           -e /etc/systemd/system/x-ui.service || -e /lib/systemd/system/x-ui.service ]] ||
        systemctl is-active --quiet x-ui 2>/dev/null || systemctl is-enabled --quiet x-ui 2>/dev/null; then
-        EXISTING_INSTALL_CATEGORIES+=("3x-ui installation")
+        EXISTING_INSTALL_CATEGORIES+=("3X-UI installation")
     fi
     if [[ -e /usr/local/lib/3x-ui-pro || -e /usr/local/bin/x-ui-backup ||
           -e /etc/systemd/system/mtr-backend.service ]] ||
@@ -241,7 +241,7 @@ confirm_destructive_reinstall() {
     msg_warn '  Existing installation detected'
     msg_warn '============================================================'
     for category in "${EXISTING_INSTALL_CATEGORIES[@]}"; do msg_warn " [!] $category"; done
-    printf '\nContinuing will run a full OS dist-upgrade (services may restart),\nremove the current 3x-ui deployment and replace nginx configuration.\nThe OS upgrade cannot be rolled back. Copy a backup off-host first.\n\n'
+    printf '\nContinuing will run a full OS dist-upgrade (services may restart),\nremove the current 3X-UI deployment and replace nginx configuration.\nThe OS upgrade cannot be rolled back. Copy a backup off-host first.\n\n'
     printf 'Type YES to remove the existing deployment and continue: '
     if ! IFS= read -r answer || [[ "$answer" != YES ]]; then
         msg_err 'Cancelled. Existing deployment was not changed.'
@@ -302,7 +302,7 @@ uninstall_xui() {
 if [[ ${UNINSTALL} == *"y"* ]]; then
     confirm_destructive_reinstall || exit 1
     uninstall_xui || exit 1
-    msg_ok "3x-ui Auto Nginx completely uninstalled."
+    msg_ok "3X-UI Auto Nginx completely uninstalled."
     exit 0
 fi
 
@@ -333,7 +333,7 @@ IP4=$(ip route get 8.8.8.8 2>&1 | grep -Po -- 'src \K\S*')
 validate_domains() {
     while true; do
         [[ -n "$domain" ]] && break
-        printf 'Panel domain: '
+        printf 'Enter the domain for your 3X-UI panel: '
         read -r domain || { msg_err "Panel domain is required."; return 1; }
     done
     domain=$(echo "$domain" | tr -d '[:space:]')
@@ -343,7 +343,7 @@ validate_domains() {
 
     while true; do
         [[ -n "$reality_domain" ]] && break
-        printf 'REALITY domain: '
+        printf 'Enter the domain for VLESS REALITY: '
         read -r reality_domain || { msg_err "REALITY domain is required."; return 1; }
     done
     reality_domain=$(echo "$reality_domain" | tr -d '[:space:]')
@@ -1017,7 +1017,7 @@ _panel_initial_config() {
         (SELECT value FROM settings WHERE key='webPort'),
         (SELECT value FROM settings WHERE key='webBasePath');") || return 1
     [[ "$initialized" == "$config_username|127.0.0.1|$panel_port|/$panel_path/" ]] || {
-        msg_err "3x-ui initial settings were not saved correctly."
+        msg_err "3X-UI initial settings were not saved correctly."
         return 1
     }
 }
@@ -1085,7 +1085,7 @@ with tarfile.open(sys.argv[1], 'r:gz') as archive:
         if (path.is_absolute() or '..' in path.parts or not path.parts or
                 path.parts[0] != 'x-ui' or member.name in seen or
                 not (member.isfile() or member.isdir())):
-            raise ValueError('Unsafe 3x-ui archive member: '+member.name)
+            raise ValueError('Unsafe 3X-UI archive member: '+member.name)
         seen.add(member.name)
     for name in ('x-ui/x-ui', 'x-ui/x-ui.sh', 'x-ui/x-ui.service.debian',
                  'x-ui/bin/xray-linux-'+sys.argv[2]):
@@ -1101,7 +1101,7 @@ _download_panel_archive() {
     if ! curl -fLsS --retry 3 --connect-timeout 15 --max-time 300 "$url" -o "$archive" ||
        ! curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 "${url}.sha256" -o "$checksum"; then
         rm -f "$archive" "$checksum"
-        msg_err "Failed to download the 3x-ui release or checksum."
+        msg_err "Failed to download the 3X-UI release or checksum."
         return 1
     fi
     expected=$(python3 - "$checksum" "${url##*/}" <<'PY'
@@ -1122,7 +1122,7 @@ PY
     rm -f "$checksum"
     if [[ "$expected" != "$actual" || ( -n "$pinned" && "$pinned" != "$actual" ) ]]; then
         rm -f "$archive"
-        msg_err "3x-ui release checksum verification failed."
+        msg_err "3X-UI release checksum verification failed."
         return 1
     fi
 }
@@ -1144,10 +1144,10 @@ preflight_panel_release() {
         pinned=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["archives"][sys.argv[2]])' \
             "$PANEL_STAGE/baseline.json" "$PANEL_ARCH") || return 1
     else
-        msg_warn "Explicit 3x-ui $PANEL_TAG selection: not the verified baseline; compatibility and full installer acceptance are not assured."
+        msg_warn "Explicit 3X-UI $PANEL_TAG selection: not the verified baseline; compatibility and full installer acceptance are not assured."
         curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 \
             "https://api.github.com/repos/MHSanaei/3x-ui/releases/tags/${PANEL_TAG}" \
-            -o "$PANEL_STAGE/release.json" || { msg_err "Stable 3x-ui release $PANEL_TAG is unavailable."; return 1; }
+            -o "$PANEL_STAGE/release.json" || { msg_err "Stable 3X-UI release $PANEL_TAG is unavailable."; return 1; }
         pinned=$(python3 - "$PANEL_STAGE/release.json" "$PANEL_TAG" "$asset" <<'PY'
 import json, re, sys
 release = json.load(open(sys.argv[1]))
@@ -1164,22 +1164,22 @@ if not isinstance(digest, str) or not re.fullmatch(r'sha256:[0-9a-f]{64}', diges
     raise ValueError('Release asset lacks an official SHA-256 digest')
 print(digest[7:])
 PY
-        ) || { msg_err "Unsupported or unverifiable 3x-ui release $PANEL_TAG."; return 1; }
+        ) || { msg_err "Unsupported or unverifiable 3X-UI release $PANEL_TAG."; return 1; }
     fi
     PANEL_ARCHIVE="$PANEL_STAGE/$asset"
     _download_panel_archive \
         "https://github.com/MHSanaei/3x-ui/releases/download/${PANEL_TAG}/$asset" \
         "$PANEL_ARCHIVE" "$pinned" || return 1
-    _validate_panel_archive "$PANEL_ARCHIVE" "$PANEL_ARCH" || { msg_err "Invalid 3x-ui release archive."; return 1; }
+    _validate_panel_archive "$PANEL_ARCHIVE" "$PANEL_ARCH" || { msg_err "Invalid 3X-UI release archive."; return 1; }
     chmod 400 "$PANEL_ARCHIVE" || return 1
-    msg_ok "3x-ui $PANEL_TAG archive verified before deployment cleanup."
+    msg_ok "3X-UI $PANEL_TAG archive verified before deployment cleanup."
 }
 
 install_panel() {
     local tag_version="${PANEL_TAG:?Release preflight is required}" archive="${PANEL_ARCHIVE:?Release preflight is required}"
     [[ -f "$archive" ]] || { msg_err "Verified release archive is unavailable."; return 1; }
     cd /usr/local/ || return 1
-    echo "Installing 3x-ui ${tag_version} ..."
+    echo "Installing 3X-UI ${tag_version} ..."
 
     [[ -d /usr/local/x-ui/ ]] && systemctl stop x-ui 2>/dev/null; rm -rf /usr/local/x-ui/
     if ! tar zxvf "$archive" -C /usr/local; then
@@ -1204,7 +1204,7 @@ install_panel() {
     cp -f x-ui.service.debian /etc/systemd/system/x-ui.service
     systemctl daemon-reload
 
-    msg_ok "3x-ui ${tag_version} installed."
+    msg_ok "3X-UI ${tag_version} installed."
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1907,7 +1907,7 @@ select_amneziawg() {
     INSTALL_AWG=n
     local answer
     while true; do
-        printf 'AmneziaWG? [y/N]: '
+        printf 'Set up an additional AmneziaWG connection? [y/N]: '
         IFS= read -r answer || return 0
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -1919,7 +1919,7 @@ select_amneziawg() {
 
 preflight_amneziawg() {
     [[ "${INSTALL_AWG:-n}" == y ]] || return 0
-    [[ "${PANEL_TAG:-}" == v3.9.0 ]] || { msg_err "AmneziaWG 3.1 integration requires verified 3x-ui v3.9.0."; return 1; }
+    [[ "${PANEL_TAG:-}" == v3.9.0 ]] || { msg_err "AmneziaWG 3.1 integration requires verified 3X-UI v3.9.0."; return 1; }
     # Python is guaranteed by release preflight even on a clean OS.
     python3 - <<'PYPORT' || return 1
 import socket
@@ -1942,7 +1942,7 @@ select_adguard() {
     INSTALL_AGH=n
     local answer
     while true; do
-        printf 'AdGuard Home + DoH? [y/N]: '
+        printf 'Install and configure AdGuard Home? [y/N]: '
         if ! IFS= read -r answer; then return 0; fi
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -2136,7 +2136,7 @@ install_adguard() {
         AGH_PASSWORD=''
         if (( result == 0 )); then
             AGH_RESULT=failed_rolled_back
-            msg_warn 'Core 3x-ui stack remains operational.'
+            msg_warn 'Core 3X-UI stack remains operational.'
         else
             msg_err 'Rollback could not be verified. Inspect nginx and core services.'
         fi
@@ -2150,7 +2150,7 @@ install_adguard() {
 show_results() {
     local version version_label="" firewall
     version=$(/usr/local/x-ui/x-ui -v 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1) || version=""
-    [[ -n "$version" ]] && version_label=" (3x-ui ${version})"
+    [[ -n "$version" ]] && version_label=" (3X-UI ${version})"
 
     echo
     msg_inf '============================================================'
@@ -2160,13 +2160,13 @@ show_results() {
         msg_inf ' [i] APT schedule           update 02:30 / upgrade 02:50; reboot 04:38, including logged-in users'
     fi
     [[ ! -e /var/run/reboot-required ]] || msg_warn ' [!] Reboot required; post-reboot acceptance pending'
-    msg_inf '  3x-ui Auto Nginx — Installation Result'
+    msg_inf '  3X-UI Auto Nginx — Installation Result'
     msg_inf '============================================================'
     # The core passed its initial gate; optional rollback may leave its current health unverified.
     if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_warn ' [!] 3x-ui / Xray           Post-rollback health not verified'
+        msg_warn ' [!] 3X-UI / Xray           Post-rollback health not verified'
     else
-        msg_ok " [✓] 3x-ui / Xray           Running${version_label}"
+        msg_ok " [✓] 3X-UI / Xray           Running${version_label}"
     fi
     case "${CPU_SUPPORT_LEVEL:-info}" in
         ok)   msg_ok " [✓] CPU support             ${CPU_SUPPORT_TEXT}" ;;
@@ -2262,7 +2262,7 @@ show_results() {
         printf ' Login: admin\n Password: %s\n DoH: https://%s/dns-query\n\n' "$AGH_PASSWORD" "$domain"
         AGH_PASSWORD=''
     elif [[ "${AGH_RESULT:-not_requested}" == failed_rolled_back ]]; then
-        msg_warn ' AdGuard Home was not installed. The core 3x-ui stack remains operational.'
+        msg_warn ' AdGuard Home was not installed. The core 3X-UI stack remains operational.'
     elif [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_warn ' Post-rollback core health could not be verified. Inspect nginx and core services.'
     fi
@@ -2277,7 +2277,7 @@ show_results() {
 select_security() {
     local answer
     INSTALL_SECURITY=n
-    printf 'VPS Security + DoT? [Y/n]: '
+    printf 'Enhance VPS security? [Y/n]: '
     while IFS= read -r answer; do
         case "$answer" in
             ''|y|Y) INSTALL_SECURITY=y; return 0 ;;
@@ -2292,7 +2292,7 @@ select_vision() {
     local answer
     INSTALL_VISION=n
     while true; do
-        printf 'VLESS Vision? [y/N]: '
+        printf 'Set up an additional VLESS Vision connection? (requires a separate domain) [y/N]: '
         IFS= read -r answer || return 0
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -2300,7 +2300,7 @@ select_vision() {
             *) printf 'Please enter y or n.\n' ;;
         esac
     done
-    printf 'Vision domain: '
+    printf 'Enter the domain for VLESS Vision (must differ from the panel and REALITY domains): '
     IFS= read -r vision_domain || return 1
     vision_domain=${vision_domain,,}
     [[ -n "$vision_domain" ]] || return 1
@@ -2311,7 +2311,7 @@ select_client() {
     local answer
     CREATE_CLIENT=n
     while true; do
-        printf 'Create initial client? [Y/n]: '
+        printf 'Create a client in 3X-UI and display a subscription link after installation? [Y/n]: '
         IFS= read -r answer || return 0
         case "$answer" in
             ''|y|Y) CREATE_CLIENT=y; return 0 ;;
@@ -2369,7 +2369,7 @@ preflight_vision_artifacts() {
 preflight_integrated_features() {
     if [[ "${INSTALL_VISION:-n}" == y || "${CREATE_CLIENT:-n}" == y ]]; then
         [[ "$PANEL_TAG" == v3.9.0 ]] || {
-            msg_err 'Vision and initial client require verified 3x-ui v3.9.0; select N with other versions.'; return 1;
+            msg_err 'Vision and initial client require verified 3X-UI v3.9.0; select N with other versions.'; return 1;
         }
         # Reuse the existing authenticated local HTTPS/CSRF implementation.
         AWG_HELPER="$PANEL_STAGE/managed-amneziawg.py"
@@ -2391,7 +2391,7 @@ PYCHECK
     preflight_vision_artifacts || return 1
     if [[ "${INSTALL_SECURITY:-n}" == y ]]; then
         local security_preflight
-        if ! security_preflight=$(python3 "$PANEL_STAGE/managed-security.py" --preflight-install); then
+        if ! security_preflight=$(python3 "$PANEL_STAGE/managed-security.py" --preflight); then
             printf '%s' "$security_preflight" | python3 -c 'import json,sys; [print("[!] Security preflight: "+w, file=sys.stderr) for w in json.load(sys.stdin)["warnings"]]'
             return 1
         fi
@@ -2508,7 +2508,7 @@ main() {
     select_amneziawg || exit 1
     select_adguard || exit 1
     select_client || exit 1
-    printf 'Preparing system...\n'
+    printf '\nPreparing system...\n'
     msg_warn 'Initial full OS upgrade is mandatory; services may restart. A required reboot follows only a successful installation report.'
     preflight_base_os || { msg_err 'Base OS preflight failed; existing deployment was not removed.'; exit 1; }
     preflight_panel_release || { msg_err "Release preflight failed; existing deployment was not removed."; exit 1; }

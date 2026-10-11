@@ -168,7 +168,7 @@ CD_COUNT=0
                                         "reality_domain": "reality.example.com" if provided else ""})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertTrue(result.stdout.endswith("panel.example.com|reality.example.com"))
-                for prompt in ("Panel domain:", "REALITY domain:"):
+                for prompt in ("Enter the domain for your 3X-UI panel:", "Enter the domain for VLESS REALITY:"):
                     self.assertEqual(prompt in result.stdout, not provided)
 
     def test_cpu_capabilities_are_advisory_and_fixture_driven(self):
@@ -318,12 +318,12 @@ echo 'x-ui 3.9.0'
                     self.assertEqual(len(calls), 3)
                     continue
                 self.assertEqual(calls[3:], ["binary -v", "ufw status"])
-                for item in ("3x-ui Auto Nginx — Installation Result", "Panel:", "Diagnostics", "Username: fixture-user",
+                for item in ("3X-UI Auto Nginx — Installation Result", "Panel:", "Diagnostics", "Username: fixture-user",
                              "Password: fixture-password", "Backup:", "x-ui-backup backup", "Certificate renewal",
                              "https://deploy.example/panel/", "https://deploy.example/panel/diag",
                              "Enabled by default: REALITY · XHTTP · Hysteria2", "Optional profiles: WS · Trojan gRPC"):
                     self.assertIn(item, text)
-                self.assertEqual("(3x-ui 3.9.0)" in text, not failed_version)
+                self.assertEqual("(3X-UI 3.9.0)" in text, not failed_version)
                 cpu_line = next(line for line in result.stdout.splitlines() if "CPU support" in line)
                 self.assertIn({"ok": "\x1b[1;32m", "warn": "\x1b[1;33m", "info": "\x1b[1;34m"}[cpu_level], cpu_line)
                 self.assertIn({"ok": "[✓]", "warn": "[!]", "info": "[i]"}[cpu_level], cpu_line)
@@ -331,7 +331,7 @@ echo 'x-ui 3.9.0'
                 self.assertIn({"ok": "hardware AES available", "warn": "hardware AES unavailable",
                                "info": "acceleration not assessed"}[cpu_level], cpu_line)
                 self.assertNotRegex(cpu_line, r"Unsupported|Failed|Unsafe")
-                self.assertLess(text.index("3x-ui / Xray"), text.index("CPU support"))
+                self.assertLess(text.index("3X-UI / Xray"), text.index("CPU support"))
                 self.assertLess(text.index("CPU support"), text.index("nginx"))
                 firewall_line = next(line for line in result.stdout.splitlines() if "Firewall / UFW" in line)
                 self.assertIn("\x1b[1;32m" if state == "active" else "\x1b[1;33m", firewall_line)

@@ -15,6 +15,8 @@ if [[ -d /work/root/opt/xui-ci/apt ]]; then
     chmod 0644 /work/root/etc/resolv.conf
     printf '[Resolve]\nDNS=8.8.4.4 8.8.8.8 2001:4860:4860::8844 2001:4860:4860::8888\n' > /work/root/etc/systemd/resolved.conf
     chmod 0644 /work/root/etc/systemd/resolved.conf
+    mkdir -p /work/root/etc/network
+    printf 'iface eth0 inet dhcp\n    dns-nameservers 8.8.8.8 2001:4860:4860::8888\n' > /work/root/etc/network/interfaces
 fi
 mkdir -p /work/root/dev /work/root/proc /work/root/sys /work/root/run
 cat > /work/root/init <<'INIT'

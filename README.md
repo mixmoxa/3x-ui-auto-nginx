@@ -77,20 +77,20 @@ Choices are collected before the rebuild. Security and initial client creation d
 
 Before removing a previous deployment, the installer checks compatibility, runs mandatory `apt-get --no-remove -y dist-upgrade`, installs system dependencies and rechecks SSH/DNS. Reinstallation requires confirmation: OS upgrades may restart services and cannot be rolled back. A required reboot is scheduled only after successful installation, checks and the final report; the owner verifies post-reboot acceptance.
 
-`VPS Security + DoT? [Y/n]:` configures the SSH Fail2ban jail, APT update at 02:30, unattended upgrade at 02:50 and automatic reboot at 04:38, including when users are logged in. The displayed local VPS timezone is preserved; SSH policy and keys remain unchanged. On a recognized minimal image without resolved, with a regular resolv.conf containing only public Cloudflare/Google DNS, the package is installed and strict system DoT is verified before cleanup. Original DNS and service state are saved for verified rollback on failure; installed packages are not rolled back. Conflicting custom/provider DNS policies, VPN routes and competing DNS services cause safe refusal before cleanup. Network interfaces are not rewritten. Selecting N leaves DNS unchanged; initial full upgrade remains mandatory. Host-specific security/DNS is not transported by Backup / Restore. An inherited DNS= list in the base resolved.conf is preserved and overridden by the managed DoT drop-in; conflicting drop-ins and interface policies still cause refusal.
+`Enhance VPS security? [Y/n]:` configures the SSH Fail2ban jail, APT update at 02:30, unattended upgrade at 02:50 and automatic reboot at 04:38, including when users are logged in. The displayed local VPS timezone is preserved; SSH policy and keys remain unchanged. Selecting Security applies the project DNS policy regardless of the previous provider or existing DNS directives. The installer snapshots the original resolver file/link, its own drop-in and service state, ensures systemd-resolved is installed, then applies and verifies strict DoT. The base resolved.conf and network/VPN files remain unchanged. Effective conflicting DNS routes or failed TLS/DNS checks cause verified rollback; old configuration alone does not block preflight. Package changes are not rolled back. Security=N leaves DNS unchanged. Host-specific security/DNS is not transported by Backup / Restore.
 
 ### Optional VLESS RAW TLS Vision
 
-`VLESS Vision? [y/N]:` requires one additional domain or subdomain pointing to this VPS. Vision shares TCP/443 through nginx SNI, uses a separate certificate and provides an HTTPS camouflage site. No extra public port is opened. Backup / Restore v3 supports the third certificate while retaining compatibility with archives without Vision.
+`Set up an additional VLESS Vision connection? (requires a separate domain) [y/N]:` requires one additional domain or subdomain pointing to this VPS. Vision shares TCP/443 through nginx SNI, uses a separate certificate and provides an HTTPS camouflage site. No extra public port is opened. Backup / Restore v3 supports the third certificate while retaining compatibility with archives without Vision.
 
 ### Automatic client and subscription
 
-`Create initial client? [Y/n]:` creates one client through official 3x-ui v3.9.0 API, attaches it to supported active local inbounds and verifies the official subscription. It uses the panel domain; no subscription domain is required. N leaves client/subscription settings unchanged. The final result prints the subscription only after verification. An AWG `vpn://` export needs a compatible Amnezia application.
+`Create a client in 3X-UI and display a subscription link after installation? [Y/n]:` creates one client through official 3x-ui v3.9.0 API, attaches it to supported active local inbounds and verifies the official subscription. It uses the panel domain; no subscription domain is required. N leaves client/subscription settings unchanged. The final result prints the subscription only after verification. An AWG `vpn://` export needs a compatible Amnezia application.
 
 
 ### AdGuard Home + DoH
 
-Enter `y` when prompted `AdGuard Home + DoH? [y/N]:`. No third domain is needed: the admin UI uses a random `/adg-.../` path on the panel domain, and DoH is available at `https://panel.example.com/dns-query`. Public TCP/UDP port **53** is not opened. Configuration and data are included in **Backup / Restore v3**.
+Enter `y` when prompted `Install and configure AdGuard Home? [y/N]:`. No third domain is needed: the admin UI uses a random `/adg-.../` path on the panel domain, and DoH is available at `https://panel.example.com/dns-query`. Public TCP/UDP port **53** is not opened. Configuration and data are included in **Backup / Restore v3**.
 
 <details>
 <summary>⚠️ <strong>Security recommendation</strong></summary>
@@ -105,7 +105,7 @@ Use DoH URLs such as `/dns-query/<ClientID>`. DNS queries without an allowed Cli
 
 ### AmneziaWG 3.1
 
-You can configure **AmneziaWG 3.1 on UDP/8443** during installation (disabled by default). Enter `y` when prompted `AmneziaWG? [y/N]:`. It runs inside 3x-ui and uses the panel domain. After installation, add a client in the 3x-ui panel to get a configuration or `vpn://` link; initial client creation includes AWG when selected. UFW automatically allows UDP/8443; **Backup / Restore v3** preserves the configuration and restores the rule.
+You can configure **AmneziaWG 3.1 on UDP/8443** during installation (disabled by default). Enter `y` when prompted `Set up an additional AmneziaWG connection? [y/N]:`. It runs inside 3x-ui and uses the panel domain. After installation, add a client in the 3x-ui panel to get a configuration or `vpn://` link; initial client creation includes AWG when selected. UFW automatically allows UDP/8443; **Backup / Restore v3** preserves the configuration and restores the rule.
 
 ## 💾 Backup / Restore
 

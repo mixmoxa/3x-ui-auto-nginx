@@ -243,7 +243,7 @@ class AdGuardInstaller(unittest.TestCase):
                                  'install_adguard; echo Installation-Complete',FAIL=failure)
                 self.assertNotEqual(r.returncode,0,r.stdout+r.stderr)
                 self.assertNotIn('Installation-Complete',r.stdout)
-                self.assertIn('Core 3x-ui stack remains operational.',r.stdout)
+                self.assertIn('Core 3X-UI stack remains operational.',r.stdout)
                 self.assertFalse((self.root/'opt/AdGuardHome').exists())
                 self.assertFalse((self.root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf').exists())
                 self.assertFalse((self.root/'etc/systemd/system/AdGuardHome.service').exists())
@@ -401,7 +401,7 @@ class AdGuardInstaller(unittest.TestCase):
                     self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
                     self.assertNotIn('Installation-Complete', r.stdout)
                     self.assertFalse((self.root/'opt/AdGuardHome').exists())
-                    self.assertIn('Core 3x-ui stack remains operational.', r.stdout)
+                    self.assertIn('Core 3X-UI stack remains operational.', r.stdout)
                 else:
                     self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
                     self.assertIn('/control/status', log)
@@ -474,7 +474,7 @@ main
                               UNVERIFIED='1' if unverified else '0', PYTHONOPTIMIZE='1')
 
     def assert_core_credentials(self, result):
-        self.assertIn('3x-ui Auto Nginx — Installation Result', result.stdout)
+        self.assertIn('3X-UI Auto Nginx — Installation Result', result.stdout)
         self.assertIn('https://example.com/panel/', result.stdout)
         self.assertIn('Username: panel-user', result.stdout)
         self.assertEqual(result.stdout.count('Password: generated-panel-secret'), 1)
@@ -504,10 +504,10 @@ main
         r = self.final_result(True, 'cookie-unusable')
         self.assertEqual(r.returncode, 1, r.stdout+r.stderr)
         self.assert_core_credentials(r)
-        self.assertIn('[✓] 3x-ui / Xray           Running', r.stdout)
+        self.assertIn('[✓] 3X-UI / Xray           Running', r.stdout)
         self.assertIn('[!] AdGuard Home           Failed — rolled back', r.stdout)
         self.assertIn('[!] DNS-over-HTTPS         Not installed', r.stdout)
-        self.assertIn('The core 3x-ui stack remains operational.', r.stdout)
+        self.assertIn('The core 3X-UI stack remains operational.', r.stdout)
         self.assert_no_agh_credentials_or_success(r)
         self.assertIn('core-health 2', self.calls.read_text())
         self.assertFalse((self.root/'opt/AdGuardHome').exists())
@@ -518,7 +518,7 @@ main
         self.assert_core_credentials(r)
         self.assertIn('Post-rollback core health could not be verified.', r.stdout)
         self.assertIn('[!] AdGuard Home           Failed — rollback not verified', r.stdout)
-        for label in ('3x-ui / Xray', 'nginx', 'XHTTP', 'Diagnostics', 'Certificate renewal'):
+        for label in ('3X-UI / Xray', 'nginx', 'XHTTP', 'Diagnostics', 'Certificate renewal'):
             line = next(l for l in r.stdout.splitlines() if label in l and '[!]' in l)
             self.assertIn('Post-rollback health not verified', line)
             self.assertNotIn('[✓] '+label, r.stdout)

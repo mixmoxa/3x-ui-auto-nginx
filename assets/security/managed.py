@@ -4,7 +4,6 @@ Host DNS and security state are deliberately excluded from portable Backup v3.
 """
 import configparser
 import hashlib
-import ipaddress
 import json
 import os
 from pathlib import Path
@@ -125,75 +124,13 @@ def global_servers(dns):
     return global_block[1].split() if global_block else []
 
 
-def minimal_dns(root):
-    """Narrow opt-in takeover, not a claim of ownership of arbitrary provider DNS."""
-    resolv = root / 'etc/resolv.conf'
-    status = command('dpkg-query', '-W', '-f=${db:Status-Abbrev}', 'systemd-resolved', check=False)
-    if (status and (len(status)<2 or status[1] not in ('n','c'))) or command('systemctl', 'is-active', 'systemd-resolved.service', check=False) == 'active':
-        raise ValueError('Inactive installed resolver/custom DNS state preserved')
-    if (resolv.is_symlink() or not resolv.is_file() or resolv.stat().st_uid != 0 or
-            resolv.stat().st_gid != 0 or resolv.stat().st_mode & 0o022 or resolv.stat().st_nlink != 1):
-        raise ValueError('Nonstandard/provider resolv.conf ownership; DNS preserved')
-    content = resolv.read_text()
-    allowed = {ipaddress.ip_address(address) for address in (
-        '1.1.1.1','1.0.0.1','8.8.8.8','8.8.4.4',
-        '2001:4860:4860::8888','2001:4860:4860::8844',
-        '2606:4700:4700::1111','2606:4700:4700::1001')}
-    servers = []
-    for line in content.splitlines():
-        if re.search(r'generated|managed|provider|cloud|networkmanager|resolvconf|dhcp', line, re.I):
-            raise ValueError('Provider-managed DNS file preserved')
-        line = line.partition('#')[0].strip()
-        if not line:
-            continue
-        fields = line.split()
-        if len(fields) != 2 or fields[0] != 'nameserver':
-            raise ValueError('Custom/provider DNS directives preserved')
-        try:
-            address = ipaddress.ip_address(fields[1])
-        except ValueError:
-            raise ValueError('Custom/provider DNS directives preserved') from None
-        if address not in allowed:
-            raise ValueError('Custom/provider DNS directives preserved')
-        servers.append(fields[1])
-    if not servers:
-        raise ValueError('No recognized working minimal-image DNS')
-    for service in ('NetworkManager.service','dnsmasq.service','named.service','unbound.service','resolvconf.service'):
-        if command('systemctl', 'is-active', service, check=False) == 'active':
-            raise ValueError('Competing DNS/network manager preserved: ' + service)
-    for directory in ('etc/netplan','etc/systemd/network','run/systemd/network','usr/lib/systemd/network',
-                      'etc/network','etc/cloud/cloud.cfg.d','etc/NetworkManager/system-connections'):
-        for path in (root / directory).rglob('*'):
-            if path.is_file() and re.search(r'^\s*(?:DNS|Domains|DNSDefaultRoute|dns[-_]|nameservers\s*:|manage_resolv_conf\s*:|resolv_conf\s*:)', path.read_text(errors='replace'), re.M | re.I):
-                raise ValueError('Interface/cloud/VPN DNS policy preserved in /' + directory)
-    status = command('dpkg-query', '-W', '-f=${db:Status-Abbrev}', 'resolvconf', check=False)
-    if status and (len(status)<2 or status[1] not in ('n','c')):
-        raise ValueError('Existing resolvconf manager preserved')
-    if re.search(r':53\s', command('ss','-lntu', check=False)):
-        raise ValueError('Existing local DNS listener preserved')
-    if re.search(r'\b(?:wireguard|tun|tap|ppp)\b', command('ip','-d','-o','link','show',check=False)):
-        raise ValueError('Existing VPN interface policy preserved')
-
-
-def preflight(root=Path('/'), allow_minimal=False):
+def preflight(root=Path('/')):
     for filename in FILES:
         path = root / filename.lstrip('/')
         if path.is_symlink() or (path.exists() and (not path.is_file() or not path.read_text().startswith(MARKER))):
             raise ValueError('Unowned project configuration path: ' + filename)
         if path.exists() and (path.stat().st_uid != 0 or path.stat().st_mode & 0o022):
             raise ValueError('Unsafe owner/permissions of project configuration: ' + filename)
-    resolved_files = [root / 'etc/systemd/resolved.conf']
-    for base in ('etc', 'run', 'usr/lib'):
-        resolved_files += list((root / base / 'systemd/resolved.conf.d').glob('*.conf'))
-    for path in resolved_files:
-        if path.exists() and str(path).endswith('90-3x-ui-auto-nginx.conf'):
-            continue
-        content = path.read_text() if path.exists() else ''
-        if path == root / 'etc/systemd/resolved.conf':
-            # Keep the base file; our drop-in resets its inherited server list.
-            content = re.sub(r'^\s*DNS\s*=.*$', '', content, flags=re.M)
-        if re.search(r'^\s*(DNS|FallbackDNS|Domains|DNSOverTLS|DNSStubListener(?:Extra)?)\s*=', content, re.M):
-            raise ValueError('Existing global/provider resolved policy; DNS preserved')
     # Never overwrite administrator jails, including a later *.local override.
     jails = list((root / 'etc/fail2ban/jail.d').glob('*.local')) + list((root / 'etc/fail2ban/jail.d').glob('*.conf')) + [root / 'etc/fail2ban/jail.local', root / 'etc/fail2ban/jail.conf']
     package_jails = None
@@ -211,18 +148,6 @@ def preflight(root=Path('/'), allow_minimal=False):
                     if not path.is_symlink() and package_jails.get(name) == hashlib.md5(path.read_bytes()).hexdigest():
                         continue  # Unmodified distro jail; do not mistake it for an administrator override.
                 raise ValueError('Administrator SSH/DEFAULT Fail2ban jail present; preserved')
-    resolv = root / 'etc/resolv.conf'
-    standard = resolv.is_symlink() and os.readlink(resolv) in (
-        '/run/systemd/resolve/stub-resolv.conf', '/run/systemd/resolve/resolv.conf',
-        '../run/systemd/resolve/stub-resolv.conf', '../run/systemd/resolve/resolv.conf')
-    if standard:
-        if command('systemctl', 'is-active', 'systemd-resolved.service', check=False) != 'active':
-            raise ValueError('Existing active systemd-resolved required; DNS preserved')
-        dns_routes(command('resolvectl', 'dns'), command('resolvectl', 'domain'))
-    elif allow_minimal:
-        minimal_dns(root)
-    else:
-        raise ValueError('Nonstandard/provider resolv.conf ownership; DNS preserved')
     for service in SERVICES:
         if command('systemctl', 'is-enabled', service, check=False) not in ('enabled', 'disabled', 'static', 'not-found', ''):
             raise ValueError('Custom/masked service enable state preserved: ' + service)
@@ -238,9 +163,7 @@ def preflight(root=Path('/'), allow_minimal=False):
                              '#clear Unattended-Upgrade::Allowed-Origins;\n#clear Unattended-Upgrade::Origins-Pattern;')
     if apt_file.exists() and apt_file.read_text() not in (current, previous, legacy):
         raise ValueError('Administrator changes in managed APT drop-in preserved; refusing replacement')
-    for tool in ('systemctl', 'resolvectl', 'busctl', 'apt-config', 'journalctl', '/usr/sbin/sshd'):
-        if tool == 'resolvectl' and not standard:
-            continue  # Installed only after the complete read-only preflight.
+    for tool in ('systemctl', 'apt-config', 'journalctl', '/usr/sbin/sshd'):
         if not shutil.which(tool):
             raise ValueError('Security diagnostic tool unavailable: ' + tool)
     effective = command('/usr/sbin/sshd', '-T')
@@ -417,14 +340,13 @@ def verify_dns():
 
 def prepare_dns(root=Path('/'), state=None):
     # Capture DNS and service state BEFORE package maintainer scripts can change it.
-    preflight(root, allow_minimal=True)
+    preflight(root)
     command('getent', 'ahosts', 'debian.org')
     txn = Transaction(root, services=('systemd-resolved.service',), files=FILES[-1:])
     try:
         if state is not None: txn.save_dns(state)
-        if not (root/'etc/resolv.conf').is_symlink():
-            command('apt-get', '-o', 'DPkg::Lock::Timeout=300', '-o', 'Dpkg::Options::=--force-confdef',
-                    '-o', 'Dpkg::Options::=--force-confold', '--no-remove', '--no-install-recommends', '-y', 'install', 'systemd-resolved')
+        command('apt-get', '-o', 'DPkg::Lock::Timeout=300', '-o', 'Dpkg::Options::=--force-confdef',
+                '-o', 'Dpkg::Options::=--force-confold', '--no-remove', '--no-install-recommends', '-y', 'install', 'systemd-resolved')
         txn.write(FILES[4], DOT)
         resolv=root/'etc/resolv.conf'; resolv.unlink(); resolv.symlink_to('/run/systemd/resolve/stub-resolv.conf')
         command('systemctl','daemon-reload')
@@ -512,15 +434,15 @@ bantime = 3600
 
 if __name__ == '__main__':
     try:
-        if sys.argv[1:] in (['--preflight'], ['--preflight-install']):
-            preflight(allow_minimal=sys.argv[1:] == ['--preflight-install'])
+        if sys.argv[1:] == ['--preflight']:
+            preflight()
             result = {'status': 'compatible', 'warnings': []}
         elif len(sys.argv) in (2,3) and sys.argv[1] == '--prepare-dns':
             result = prepare_dns(state=Path(sys.argv[2]) if len(sys.argv)==3 else None)
         elif len(sys.argv)==3 and sys.argv[1] == '--rollback-dns':
             result = rollback_dns_checkpoint(Path(sys.argv[2]))
         elif sys.argv[1:]:
-            raise ValueError('Usage: managed-security.py [--preflight|--preflight-install|--prepare-dns [checkpoint]|--rollback-dns checkpoint]')
+            raise ValueError('Usage: managed-security.py [--preflight|--prepare-dns [checkpoint]|--rollback-dns checkpoint]')
         else:
             result = configure()
     except Exception as error:

@@ -64,6 +64,7 @@ class SecuritySystemd(unittest.TestCase):
             run('ip','link','set','xui-test','up')
             seen, errors, stop = [], [], threading.Event()
             fail_tls=threading.Event()
+            route_policy=threading.Event()
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); context.load_cert_chain(cert, key)
             servers = []
             for ip in ('1.1.1.1', '1.0.0.1', '8.8.8.8', '8.8.4.4'):
@@ -114,6 +115,8 @@ class SecuritySystemd(unittest.TestCase):
             self.assertEqual(original_dns,b'nameserver 8.8.4.4\nnameserver 8.8.8.8\nnameserver 2001:4860:4860::8844\nnameserver 2001:4860:4860::8888\n')
             original_policy=Path('/etc/systemd/resolved.conf').read_bytes()
             self.assertEqual(original_policy,b'[Resolve]\nDNS=8.8.4.4 8.8.8.8 2001:4860:4860::8844 2001:4860:4860::8888\n')
+            original_network=Path('/etc/network/interfaces').read_bytes()
+            self.assertIn(b'dns-nameservers 8.8.8.8 2001:4860:4860::8888',original_network)
             self.assertFalse(Path('/usr/bin/resolvectl').exists())
             self.assertFalse(Path('/usr/sbin/ufw').exists())
             self.assertEqual(run('dpkg-query','-W','-f=${Status}','systemd-resolved'),'deinstall ok config-files')
@@ -125,7 +128,8 @@ class SecuritySystemd(unittest.TestCase):
             from test_real_services import question
             plain_servers=[]; plain_seen=[]; plain_stop=threading.Event()
             self.addCleanup(plain_stop.set)
-            for ip in ('8.8.8.8','8.8.4.4'):
+            run('ip','address','add','9.9.9.9/32','dev','lo')
+            for ip in ('8.8.8.8','8.8.4.4','9.9.9.9'):
                 udp=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); udp.bind((ip,53)); udp.settimeout(.5)
                 plain_servers.append(udp); self.addCleanup(udp.close)
                 def answer_plain(udp=udp):
@@ -140,17 +144,17 @@ class SecuritySystemd(unittest.TestCase):
                         if kind==1: response+=b'\xc0\x0c'+struct.pack('!HHIH',1,1,1,4)+socket.inet_aton('203.0.113.7')
                         plain_seen.append(packet); udp.sendto(response,peer)
                 threading.Thread(target=answer_plain,daemon=True).start()
-            # Public DNS lives on guest loopback only because the VM is offline.
-            # Exclude those two Internet stand-ins from the local-service probe;
-            # all other real ss diagnostics and commands remain unchanged.
+            # Public DNS stand-ins exist only inside this offline VM.
             production_command=security.command
             plain_at_restart=[]
             def command(*args,**kwargs):
                 if args==('systemctl','restart','systemd-resolved.service'):
                     plain_at_restart.append(len(plain_seen))
                 result=production_command(*args,**kwargs)
-                if args==('ss','-lntu'):
-                    result='\n'.join(line for line in result.splitlines() if not any(ip+':53' in line for ip in ('8.8.8.8','8.8.4.4')))
+                if args==('systemctl','restart','systemd-resolved.service') and route_policy.is_set():
+                    # Model a provider/VPN reapplying its real link route.
+                    run('resolvectl','dns','xui-test','127.0.0.1')
+                    run('resolvectl','domain','xui-test','~.')
                 return result
             security.command=command
             # An offline local APT repository contains real distro resolved/UFW
@@ -165,7 +169,7 @@ class SecuritySystemd(unittest.TestCase):
             disabled = Path('/etc/apt/apt.conf.d/docker-disable-periodic-update')
             if disabled.exists():
                 with self.assertRaisesRegex(ValueError, 'APT periodic'):
-                    security.preflight(allow_minimal=True)
+                    security.preflight()
                 disabled.unlink()
             stock_origins = security.apt_origins(run('apt-config', 'dump'))
             self.assertTrue(stock_origins, 'Native unattended-upgrades defaults missing')
@@ -174,18 +178,8 @@ class SecuritySystemd(unittest.TestCase):
             self.addCleanup(admin.unlink, missing_ok=True)
             expected_origins = security.apt_origins(run('apt-config', 'dump'))
             self.assertTrue(stock_origins <= expected_origins)
-            global_policy=Path('/etc/systemd/resolved.conf')
-            original_policy=global_policy.read_bytes() if global_policy.exists() else None
-            global_policy.write_text('[Resolve]\nDNSStubListenerExtra=0.0.0.0\n')
-            try:
-                with self.assertRaisesRegex(ValueError,'global/provider'): security.preflight(allow_minimal=True)
-                self.assertEqual(Path('/etc/resolv.conf').read_bytes(),original_dns)
-                self.assertFalse(Path('/usr/bin/resolvectl').exists())
-            finally:
-                if original_policy is None: global_policy.unlink()
-                else: global_policy.write_bytes(original_policy)
             files_before = {str(p): p.read_bytes() for p in Path('/etc/apt/apt.conf.d').glob('*') if p.is_file()}
-            prepared_os=security.preflight(allow_minimal=True)[0]
+            prepared_os=security.preflight()[0]
             self.assertEqual({str(p): p.read_bytes() for p in Path('/etc/apt/apt.conf.d').glob('*') if p.is_file()}, files_before)
             effective = run('/usr/sbin/sshd', '-T')
             before = {p: p.read_bytes() for p in Path('/etc/ssh').rglob('*') if p.is_file()}
@@ -207,6 +201,21 @@ class SecuritySystemd(unittest.TestCase):
             self.assertEqual(Path('/etc/resolv.conf').read_bytes(),original_dns)
             self.assertIn('203.0.113.7',run('getent','ahosts','debian.org'))
             self.assertEqual(Path('/etc/systemd/resolved.conf').read_bytes(),original_policy)
+            self.assertEqual(Path('/etc/network/interfaces').read_bytes(),original_network)
+            # A different provider also passes real preparation and round-trip
+            # rollback; no Google/Cloudflare ownership classification remains.
+            other_dns=b'nameserver 9.9.9.9\n'
+            Path('/etc/resolv.conf').write_bytes(other_dns)
+            other_checkpoint=root/'other-dns-checkpoint'
+            other=security.prepare_dns(state=other_checkpoint)
+            self.assertEqual(other['status'],'configured',other)
+            self.assertEqual(len(plain_seen),plain_at_restart[-1],'Plaintext DNS after provider takeover')
+            restored=security.rollback_dns_checkpoint(other_checkpoint)
+            self.assertEqual(restored['status'],'failed_rolled_back',restored)
+            self.assertEqual(Path('/etc/resolv.conf').read_bytes(),other_dns)
+            self.assertIn('203.0.113.7',run('getent','ahosts','debian.org'))
+            Path('/etc/resolv.conf').write_bytes(original_dns)
+            print('REAL other provider DNS / strict DoT / original DNS rollback: PASS',flush=True)
             # Package remains installed by design; remove it only in this VM to
             # recreate the original missing-package state for the success path.
             run('dpkg','-r','systemd-resolved')
@@ -215,6 +224,7 @@ class SecuritySystemd(unittest.TestCase):
             self.assertEqual(success['status'],'configured',success)
             security.preflight()
             self.assertEqual(Path('/etc/systemd/resolved.conf').read_bytes(),original_policy)
+            self.assertEqual(Path('/etc/network/interfaces').read_bytes(),original_network)
             self.assertTrue(seen,'No authenticated TLS query during preparation')
             self.assertEqual(len(plain_seen),plain_at_restart[-1],'Plaintext DNS after strict preparation')
             print('REAL minimal OS / residual resolved.conf preserved / full no-remove upgrade / missing UFW / DNS preparation and rollback: PASS',flush=True)
@@ -290,7 +300,11 @@ class SecuritySystemd(unittest.TestCase):
                 self.assertEqual(len(doh_queries),before_doh,'System resolved unexpectedly routed into AGH')
                 managed_before={name:Path(name).read_bytes() for name in security.FILES}
                 run('resolvectl','dns','xui-test','127.0.0.1'); run('resolvectl','domain','xui-test','~.')
-                with self.assertRaises(ValueError): security.configure()
+                route_policy.set()
+                try: route_failure=security.configure()
+                finally: route_policy.clear()
+                self.assertEqual(route_failure['status'],'failed_rolled_back',route_failure)
+                self.assertTrue(any('Interface/VPN DNS route' in warning for warning in route_failure['warnings']))
                 self.assertEqual({name:Path(name).read_bytes() for name in security.FILES},managed_before)
                 self.assertIsNone(agh.poll())
                 run('resolvectl','revert','xui-test')
