@@ -4,6 +4,7 @@ Host DNS and security state are deliberately excluded from portable Backup v3.
 """
 import configparser
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -134,6 +135,10 @@ def minimal_dns(root):
             resolv.stat().st_gid != 0 or resolv.stat().st_mode & 0o022 or resolv.stat().st_nlink != 1):
         raise ValueError('Nonstandard/provider resolv.conf ownership; DNS preserved')
     content = resolv.read_text()
+    allowed = {ipaddress.ip_address(address) for address in (
+        '1.1.1.1','1.0.0.1','8.8.8.8','8.8.4.4',
+        '2001:4860:4860::8888','2001:4860:4860::8844',
+        '2606:4700:4700::1111','2606:4700:4700::1001')}
     servers = []
     for line in content.splitlines():
         if re.search(r'generated|managed|provider|cloud|networkmanager|resolvconf|dhcp', line, re.I):
@@ -142,7 +147,13 @@ def minimal_dns(root):
         if not line:
             continue
         fields = line.split()
-        if len(fields) != 2 or fields[0] != 'nameserver' or fields[1] not in ('1.1.1.1','1.0.0.1','8.8.8.8','8.8.4.4'):
+        if len(fields) != 2 or fields[0] != 'nameserver':
+            raise ValueError('Custom/provider DNS directives preserved')
+        try:
+            address = ipaddress.ip_address(fields[1])
+        except ValueError:
+            raise ValueError('Custom/provider DNS directives preserved') from None
+        if address not in allowed:
             raise ValueError('Custom/provider DNS directives preserved')
         servers.append(fields[1])
     if not servers:

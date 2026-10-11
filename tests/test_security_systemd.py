@@ -111,7 +111,7 @@ class SecuritySystemd(unittest.TestCase):
             # Start from the reported minimum VPS state, not a prepared resolver.
             self.assertFalse(Path('/etc/resolv.conf').is_symlink())
             original_dns=Path('/etc/resolv.conf').read_bytes()
-            self.assertEqual(original_dns,b'nameserver 8.8.8.8\nnameserver 8.8.4.4\n')
+            self.assertEqual(original_dns,b'nameserver 8.8.4.4\nnameserver 8.8.8.8\nnameserver 2001:4860:4860::8844\nnameserver 2001:4860:4860::8888\n')
             self.assertFalse(Path('/usr/bin/resolvectl').exists())
             self.assertFalse(Path('/usr/sbin/ufw').exists())
             self.assertFalse(run('dpkg-query','-W','-f=${db:Status-Abbrev}','systemd-resolved').startswith('ii'))

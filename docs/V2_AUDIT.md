@@ -67,7 +67,9 @@ store. Port 853 is outbound only.
 Read-only DNS preflight accepts an active systemd-resolved with its standard
 stub/uplink symlink, or a narrowly recognized minimal image: no installed/active
 resolved, a root-owned non-writable regular resolv.conf containing only the four
-public Cloudflare/Google nameservers, no generated/provider ownership notice,
+IPv4 and four IPv6 Google/Cloudflare addresses in an explicit allowlist, compared
+as canonical IP addresses. Other public/private/link-local addresses are refused,
+as are generated/provider ownership notices,
 search/options, competing DNS/network manager, local DNS listener or explicit
 interface/cloud/VPN DNS policy. It is not proof of ownership of arbitrary provider
 files. Unknown configurations fail safely before cleanup; network interfaces are
@@ -251,7 +253,8 @@ management remains fixtures. These boundaries must accompany reported PASS.
 Live acceptance remains necessary for public A/AAAA, Let's Encrypt, the actual
 provider/VPN DNS environment, cloud firewall, each distro kernel, a complete
 same-host/new-host recovery and full VPS reboot acceptance. The systemd matrix
-starts without resolved/resolvectl/UFW and with regular Google resolv.conf. It
+starts without resolved/resolvectl/UFW and with the reported regular Google
+resolv.conf: 8.8.4.4, 8.8.8.8, 2001:4860:4860::8844, 2001:4860:4860::8888. It
 uses real APT with a local repository containing distro resolved/UFW packages
 and tiny upgrade/retention fixtures: upgrade changes the fixture version, retains
 the unrelated package and sets reboot-required. It exercises real TLS DNS failure,
