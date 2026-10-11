@@ -337,6 +337,14 @@ class IntegratedFeatures(unittest.TestCase):
         finally:
             instance.doCleanups()
 
+    def test_concise_installer_question_sequence(self):
+        names=('validate_domains','select_security','select_vision','select_amneziawg','select_adguard','select_client')
+        script='domain=; reality_domain=; msg_err() { echo "$*" >&2; }; msg_inf() { echo "$*"; };\n'
+        script+='\n'.join(function(name) for name in names)+'\n'+'; '.join(names)
+        result=subprocess.run(['bash','-eu','-c',script],input='panel.example.com\nreality.example.com\ny\ny\nvision.example.com\nn\nn\ny\n',text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout,'Panel domain: REALITY domain: VPS Security + DoT? [Y/n]: VLESS Vision? [y/N]: Vision domain: AmneziaWG? [y/N]: AdGuard Home + DoH? [y/N]: Create initial client? [Y/n]: ')
+
     def test_prompt_defaults_decline_and_eof(self):
         for name, variable, default in (('select_security', 'INSTALL_SECURITY', 'y'),
                                          ('select_client', 'CREATE_CLIENT', 'y'),
@@ -726,7 +734,7 @@ class IntegratedFeatures(unittest.TestCase):
             self.assertEqual(result.returncode,0,result.stderr)
             expected=[name for name,key in (('install_vision','INSTALL_VISION'),('install_amneziawg','INSTALL_AWG'),
                 ('install_adguard','INSTALL_AGH'),('install_security','INSTALL_SECURITY'),('install_initial_client','CREATE_CLIENT')) if variables[key]=='y']
-            self.assertEqual(result.stdout.splitlines(),expected)
+            self.assertEqual(result.stdout.splitlines(),['Preparing system...']+expected)
         # An uncertain Vision inbound may still be enabled but lack its SNI
         # route. Do not attach a new client or publish it as ready in that state.
         failure_stubs=stubs+'\ninstall_vision() { VISION_RESULT=failed_unverified; return 1; }; show_results() { echo "$CLIENT_RESULT"; };'

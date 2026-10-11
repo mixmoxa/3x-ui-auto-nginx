@@ -9,10 +9,7 @@ msg_inf() { echo -e "\e[1;34m$1\e[0m"; }
 msg_warn() { printf '\e[1;33m%s\e[0m\n' "$1"; }
 
 echo
-msg_inf '============================================================'
-msg_inf '  3X-UI AUTO NGINX'
-msg_inf '  Automated 3x-ui / Xray deployment'
-msg_inf '============================================================'
+msg_inf '3X-UI AUTO NGINX'
 echo
 
 # ─── Pre-flight checks ───────────────────────────────────────────────────────
@@ -336,9 +333,7 @@ IP4=$(ip route get 8.8.8.8 2>&1 | grep -Po -- 'src \K\S*')
 validate_domains() {
     while true; do
         [[ -n "$domain" ]] && break
-        msg_inf "PANEL DOMAIN"
-        echo "Public domain for the panel and optional services."
-        echo -en "3x-ui panel domain (panel.example.com): "
+        printf 'Panel domain: '
         read -r domain || { msg_err "Panel domain is required."; return 1; }
     done
     domain=$(echo "$domain" | tr -d '[:space:]')
@@ -348,9 +343,7 @@ validate_domains() {
 
     while true; do
         [[ -n "$reality_domain" ]] && break
-        msg_inf "REALITY DOMAIN"
-        echo "Separate domain for the REALITY camouflage site."
-        echo -en "REALITY domain (reality.example.com): "
+        printf 'REALITY domain: '
         read -r reality_domain || { msg_err "REALITY domain is required."; return 1; }
     done
     reality_domain=$(echo "$reality_domain" | tr -d '[:space:]')
@@ -1913,10 +1906,8 @@ setup_firewall() {
 select_amneziawg() {
     INSTALL_AWG=n
     local answer
-    msg_inf 'AMNEZIAWG'
-    echo 'Optional AmneziaWG 3.1; initial client creation can include this connection.'
     while true; do
-        printf 'Install AmneziaWG on UDP port 8443? [y/N]: '
+        printf 'AmneziaWG? [y/N]: '
         IFS= read -r answer || return 0
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -1949,11 +1940,9 @@ install_amneziawg() {
 
 select_adguard() {
     INSTALL_AGH=n
-    msg_inf "ADGUARD HOME"
-    echo "Optional filtering DNS and DoH through the panel domain."
     local answer
     while true; do
-        printf 'Install AdGuard Home with DNS-over-HTTPS? [y/N]: '
+        printf 'AdGuard Home + DoH? [y/N]: '
         if ! IFS= read -r answer; then return 0; fi
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -2288,10 +2277,7 @@ show_results() {
 select_security() {
     local answer
     INSTALL_SECURITY=n
-    printf 'CONFIGURE VPS SECURITY + DoT? [Y/n]:\n'
-    echo 'Fail2ban, automatic security updates, encrypted system DNS.'
-    echo 'Existing SSH configuration will not be changed.'
-    echo 'Local time: APT update 02:30, upgrade 02:50, automatic reboot 04:38 (even with logged-in users).'
+    printf 'VPS Security + DoT? [Y/n]: '
     while IFS= read -r answer; do
         case "$answer" in
             ''|y|Y) INSTALL_SECURITY=y; return 0 ;;
@@ -2306,7 +2292,7 @@ select_vision() {
     local answer
     INSTALL_VISION=n
     while true; do
-        printf 'INSTALL VLESS RAW TLS VISION? [y/N]: '
+        printf 'VLESS Vision? [y/N]: '
         IFS= read -r answer || return 0
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -2314,9 +2300,7 @@ select_vision() {
             *) printf 'Please enter y or n.\n' ;;
         esac
     done
-    echo 'Requires one additional domain or subdomain'
-    echo 'pointing to this VPS. Uses TCP port 443.'
-    printf 'VISION DOMAIN: '
+    printf 'Vision domain: '
     IFS= read -r vision_domain || return 1
     vision_domain=${vision_domain,,}
     [[ -n "$vision_domain" ]] || return 1
@@ -2327,7 +2311,7 @@ select_client() {
     local answer
     CREATE_CLIENT=n
     while true; do
-        printf 'CREATE CLIENT AND SUBSCRIPTION? [Y/n]: '
+        printf 'Create initial client? [Y/n]: '
         IFS= read -r answer || return 0
         case "$answer" in
             ''|y|Y) CREATE_CLIENT=y; return 0 ;;
@@ -2524,6 +2508,7 @@ main() {
     select_amneziawg || exit 1
     select_adguard || exit 1
     select_client || exit 1
+    printf 'Preparing system...\n'
     msg_warn 'Initial full OS upgrade is mandatory; services may restart. A required reboot follows only a successful installation report.'
     preflight_base_os || { msg_err 'Base OS preflight failed; existing deployment was not removed.'; exit 1; }
     preflight_panel_release || { msg_err "Release preflight failed; existing deployment was not removed."; exit 1; }

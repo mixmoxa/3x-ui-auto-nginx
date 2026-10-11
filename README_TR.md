@@ -77,20 +77,20 @@ Seçimler yeniden kurulumdan önce alınır. Security ve istemci oluşturma vars
 
 Önceki kurulumu silmeden önce yükleyici uyumluluğu denetler, zorunlu `apt-get --no-remove -y dist-upgrade` çalıştırır, sistem bağımlılıklarını kurar ve SSH/DNS hazır durumunu yeniden doğrular. Yeniden kurulum onay gerektirir: işletim sistemi güncellemesi hizmetleri yeniden başlatabilir ve geri alınamaz. Gerekli yeniden başlatma yalnızca başarılı kurulum, kontroller ve son rapordan sonra planlanır; sonrasındaki kabulü sunucu sahibi doğrular.
 
-`CONFIGURE VPS SECURITY + DoT? [Y/n]:` SSH Fail2ban jail, 02:30 APT update, 02:50 unattended upgrade ve kullanıcılar bağlı olsa bile 04:38 otomatik yeniden başlatma ayarlar. Gösterilen yerel VPS saat dilimi korunur; SSH ilkesi ve anahtarları değişmez. resolved bulunmayan, yalnızca Cloudflare/Google genel DNS adreslerini içeren normal resolv.conf dosyalı tanınan minimal imajda paket kurulur ve cleanup öncesinde katı DoT doğrulanır. Hata durumunda doğrulanmış geri dönüş için özgün DNS ve hizmet durumu saklanır; kurulan paketler geri alınmaz. Özel/sağlayıcı DNS, VPN yolları ve başka DNS hizmetleri cleanup öncesinde güvenli ret oluşturur. Ağ arayüzleri yeniden yazılmaz. N seçimi DNS değiştirmez; ilk full upgrade zorunludur. Sunucuya özel güvenlik/DNS Backup / Restore ile taşınmaz.
+`VPS Security + DoT? [Y/n]:` SSH Fail2ban jail, 02:30 APT update, 02:50 unattended upgrade ve kullanıcılar bağlı olsa bile 04:38 otomatik yeniden başlatma ayarlar. Gösterilen yerel VPS saat dilimi korunur; SSH ilkesi ve anahtarları değişmez. resolved bulunmayan, yalnızca Cloudflare/Google genel DNS adreslerini içeren normal resolv.conf dosyalı tanınan minimal imajda paket kurulur ve cleanup öncesinde katı DoT doğrulanır. Hata durumunda doğrulanmış geri dönüş için özgün DNS ve hizmet durumu saklanır; kurulan paketler geri alınmaz. Çakışan özel/sağlayıcı DNS ilkeleri, VPN yolları ve başka DNS hizmetleri cleanup öncesinde güvenli ret oluşturur. Ağ arayüzleri yeniden yazılmaz. N seçimi DNS değiştirmez; ilk full upgrade zorunludur. Sunucuya özel güvenlik/DNS Backup / Restore ile taşınmaz. Ana resolved.conf dosyasındaki devralınan DNS= listesi korunur ve yönetilen DoT drop-in ile geçersiz kılınır; çakışan drop-in ve arayüz ilkeleri yine güvenli ret oluşturur.
 
 ### İsteğe bağlı VLESS RAW TLS Vision
 
-`INSTALL VLESS RAW TLS VISION? [y/N]:` VPS’ye yönlenen bir ek alan adı veya alt alan adı gerektirir. nginx SNI üzerinden TCP/443 paylaşılır; ayrı sertifika ve HTTPS kamuflaj sitesi kullanılır. Ek genel port açılmaz. Backup / Restore v3 üçüncü sertifikayı ve Vision içermeyen arşivleri destekler.
+`VLESS Vision? [y/N]:` VPS’ye yönlenen bir ek alan adı veya alt alan adı gerektirir. nginx SNI üzerinden TCP/443 paylaşılır; ayrı sertifika ve HTTPS kamuflaj sitesi kullanılır. Ek genel port açılmaz. Backup / Restore v3 üçüncü sertifikayı ve Vision içermeyen arşivleri destekler.
 
 ### Otomatik istemci ve abonelik oluşturma
 
-`CREATE CLIENT AND SUBSCRIPTION? [Y/n]:` resmi 3x-ui v3.9.0 API ile bir istemci oluşturur, desteklenen etkin yerel inbound bağlantılarına ekler ve resmi aboneliği doğrular. Panel alan adı kullanılır; başka bir alan adı gerekmez. N mevcut istemci/abonelik ayarlarını korur. Sonuç, bağlantıyı yalnızca doğrulama sonrasında gösterir. AWG `vpn://` için uyumlu Amnezia uygulaması gerekir.
+`Create initial client? [Y/n]:` resmi 3x-ui v3.9.0 API ile bir istemci oluşturur, desteklenen etkin yerel inbound bağlantılarına ekler ve resmi aboneliği doğrular. Panel alan adı kullanılır; başka bir alan adı gerekmez. N mevcut istemci/abonelik ayarlarını korur. Sonuç, bağlantıyı yalnızca doğrulama sonrasında gösterir. AWG `vpn://` için uyumlu Amnezia uygulaması gerekir.
 
 
 ### AdGuard Home + DoH
 
-`Install AdGuard Home with DNS-over-HTTPS? [y/N]:` sorusuna `y` yanıtını verin. Üçüncü bir alan adı gerekmez: yönetim arayüzü panel alan adınız altında rastgele oluşturulan `/adg-.../` yolunu kullanır; DoH adresi `https://panel.example.com/dns-query` olur. Genel erişime açık TCP/UDP **53** portu açılmaz. Yapılandırma ve veriler **Backup / Restore v3** kapsamındadır.
+`AdGuard Home + DoH? [y/N]:` sorusuna `y` yanıtını verin. Üçüncü bir alan adı gerekmez: yönetim arayüzü panel alan adınız altında rastgele oluşturulan `/adg-.../` yolunu kullanır; DoH adresi `https://panel.example.com/dns-query` olur. Genel erişime açık TCP/UDP **53** portu açılmaz. Yapılandırma ve veriler **Backup / Restore v3** kapsamındadır.
 
 <details>
 <summary>⚠️ <strong>Güvenlik önerisi</strong></summary>
@@ -105,7 +105,7 @@ Kişisel VPS'inizde her cihaz için bir [ClientID](https://adguard-dns.io/kb/tr/
 
 ### AmneziaWG 3.1
 
-Kurulum sırasında **UDP/8443 üzerinde AmneziaWG 3.1** yapılandırabilirsiniz (varsayılan olarak kapalıdır). `Install AmneziaWG on UDP port 8443? [y/N]:` sorusuna `y` yanıtını verin. 3x-ui içine gömülüdür ve panel alan adını kullanır. Kurulumdan sonra 3x-ui paneline bir istemci ekleyerek yapılandırmasını veya `vpn://` bağlantısını alın; ilk istemci oluşturma seçilirse AWG bağlantısını da kapsar. UFW, UDP/8443 erişimine otomatik izin verir; **Backup / Restore v3** yapılandırmayı korur ve güvenlik duvarı kuralını geri yükler.
+Kurulum sırasında **UDP/8443 üzerinde AmneziaWG 3.1** yapılandırabilirsiniz (varsayılan olarak kapalıdır). `AmneziaWG? [y/N]:` sorusuna `y` yanıtını verin. 3x-ui içine gömülüdür ve panel alan adını kullanır. Kurulumdan sonra 3x-ui paneline bir istemci ekleyerek yapılandırmasını veya `vpn://` bağlantısını alın; ilk istemci oluşturma seçilirse AWG bağlantısını da kapsar. UFW, UDP/8443 erişimine otomatik izin verir; **Backup / Restore v3** yapılandırmayı korur ve güvenlik duvarı kuralını geri yükler.
 
 ## 💾 Yedekleme ve geri yükleme
 

@@ -77,20 +77,20 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 删除原部署前，安装器先检查兼容性，执行必要的 `apt-get --no-remove -y dist-upgrade`，安装系统依赖并再次检查 SSH/DNS。重装需要确认：系统升级可能重启服务，且无法回滚。若需要重启，只在安装、检查和最终报告均成功后安排；重启后的验收由所有者完成。
 
-`CONFIGURE VPS SECURITY + DoT? [Y/n]:` 配置 SSH Fail2ban、02:30 APT update、02:50 unattended upgrade，以及 04:38 自动重启，即使仍有用户登录。显示并保留 VPS 本地时区，不修改 SSH 策略或密钥。对识别出的最小镜像，若未安装 resolved，普通 resolv.conf 仅含 Cloudflare/Google 公共 DNS，则安装该软件包并在 cleanup 前验证严格系统 DoT。保存原 DNS 和服务状态以便失败时验证回滚，但不回滚已安装的软件包。自定义或服务商 DNS、VPN 路由及竞争 DNS 服务会在 cleanup 前安全拒绝。不会重写网络接口。选择 N 不修改 DNS，但初次 full upgrade 仍为必需。Backup / Restore 不迁移主机特定安全/DNS 设置。
+`VPS Security + DoT? [Y/n]:` 配置 SSH Fail2ban、02:30 APT update、02:50 unattended upgrade，以及 04:38 自动重启，即使仍有用户登录。显示并保留 VPS 本地时区，不修改 SSH 策略或密钥。对识别出的最小镜像，若未安装 resolved，普通 resolv.conf 仅含 Cloudflare/Google 公共 DNS，则安装该软件包并在 cleanup 前验证严格系统 DoT。保存原 DNS 和服务状态以便失败时验证回滚，但不回滚已安装的软件包。冲突的自定义或服务商 DNS 策略、VPN 路由及竞争 DNS 服务会在 cleanup 前安全拒绝。不会重写网络接口。选择 N 不修改 DNS，但初次 full upgrade 仍为必需。Backup / Restore 不迁移主机特定安全/DNS 设置。 保留主 resolved.conf 中继承的 DNS= 列表，由受管理的 DoT drop-in 覆盖；冲突的 drop-in 和接口策略仍会导致拒绝。
 
 ### 可选 VLESS RAW TLS Vision
 
-`INSTALL VLESS RAW TLS VISION? [y/N]:` 需要一个指向 VPS 的额外域名或子域名。通过 nginx SNI 共用 TCP/443，使用独立证书并提供 HTTPS 伪装网站，不开放额外公网端口。Backup / Restore v3 支持第三张证书，同时兼容不含 Vision 的备份。
+`VLESS Vision? [y/N]:` 需要一个指向 VPS 的额外域名或子域名。通过 nginx SNI 共用 TCP/443，使用独立证书并提供 HTTPS 伪装网站，不开放额外公网端口。Backup / Restore v3 支持第三张证书，同时兼容不含 Vision 的备份。
 
 ### 自动创建客户端和订阅
 
-`CREATE CLIENT AND SUBSCRIPTION? [Y/n]:` 通过官方 3x-ui v3.9.0 API 创建一个客户端，将其关联至支持的已启用本地 inbound，并验证官方订阅。使用面板域名，无须额外订阅域名。选择 N 保留现有客户端和订阅设置。最终报告仅在验证成功后显示订阅地址。AWG `vpn://` 导出需要兼容的 Amnezia 应用。
+`Create initial client? [Y/n]:` 通过官方 3x-ui v3.9.0 API 创建一个客户端，将其关联至支持的已启用本地 inbound，并验证官方订阅。使用面板域名，无须额外订阅域名。选择 N 保留现有客户端和订阅设置。最终报告仅在验证成功后显示订阅地址。AWG `vpn://` 导出需要兼容的 Amnezia 应用。
 
 
 ### AdGuard Home + DoH
 
-出现 `Install AdGuard Home with DNS-over-HTTPS? [y/N]:` 提示时输入 `y`。无需第三个域名：管理界面位于面板域名下随机生成的 `/adg-.../` 路径，DoH 地址为 `https://panel.example.com/dns-query`。安装程序不会向公网开放 TCP/UDP **53** 端口。配置和数据均包含在 **Backup / Restore v3** 中。
+出现 `AdGuard Home + DoH? [y/N]:` 提示时输入 `y`。无需第三个域名：管理界面位于面板域名下随机生成的 `/adg-.../` 路径，DoH 地址为 `https://panel.example.com/dns-query`。安装程序不会向公网开放 TCP/UDP **53** 端口。配置和数据均包含在 **Backup / Restore v3** 中。
 
 <details>
 <summary>⚠️ <strong>安全建议</strong></summary>
@@ -105,7 +105,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ### AmneziaWG 3.1
 
-安装时可选择配置 **AmneziaWG 3.1（UDP/8443）**（默认关闭）。出现 `Install AmneziaWG on UDP port 8443? [y/N]:` 提示时输入 `y`。它内置于 3x-ui，使用面板域名。安装完成后，请在 3x-ui 面板中添加客户端并获取配置文件或 `vpn://` 链接；选择自动创建客户端时也会包含已启用的 AWG。UFW 会自动放行 UDP/8443；**Backup / Restore v3** 会保留配置并恢复相应的防火墙规则。
+安装时可选择配置 **AmneziaWG 3.1（UDP/8443）**（默认关闭）。出现 `AmneziaWG? [y/N]:` 提示时输入 `y`。它内置于 3x-ui，使用面板域名。安装完成后，请在 3x-ui 面板中添加客户端并获取配置文件或 `vpn://` 链接；选择自动创建客户端时也会包含已启用的 AWG。UFW 会自动放行 UDP/8443；**Backup / Restore v3** 会保留配置并恢复相应的防火墙规则。
 
 ## 💾 备份与恢复
 

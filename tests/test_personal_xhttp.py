@@ -155,7 +155,7 @@ CD_COUNT=0
         result = subprocess.run(["bash", "-eu", "-c", startup], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("3X-UI AUTO NGINX", result.stdout)
-        self.assertIn("Automated 3x-ui / Xray deployment", result.stdout)
+        self.assertEqual(re.sub(r'\x1b\[[0-9;]*m','',result.stdout).strip(),"3X-UI AUTO NGINX")
         self.assertNotIn("X-UI-PRO", result.stdout.upper())
         self.assertNotIn("X-UI Secure Panel", SOURCE)
         helpers = '\n'.join(re.findall(r'^msg_\w+\(\).*$', SOURCE, re.M))
@@ -168,7 +168,7 @@ CD_COUNT=0
                                         "reality_domain": "reality.example.com" if provided else ""})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertTrue(result.stdout.endswith("panel.example.com|reality.example.com"))
-                for prompt in ("3x-ui panel domain (panel.example.com):", "REALITY domain (reality.example.com):"):
+                for prompt in ("Panel domain:", "REALITY domain:"):
                     self.assertEqual(prompt in result.stdout, not provided)
 
     def test_cpu_capabilities_are_advisory_and_fixture_driven(self):

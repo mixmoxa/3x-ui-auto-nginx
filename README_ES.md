@@ -77,20 +77,20 @@ Las opciones se eligen antes de reinstalar. Security y la creación del cliente 
 
 Antes de eliminar un despliegue anterior, el instalador comprueba la compatibilidad, ejecuta obligatoriamente `apt-get --no-remove -y dist-upgrade`, instala dependencias y vuelve a comprobar SSH/DNS. La reinstalación requiere confirmación: la actualización puede reiniciar servicios y no se puede revertir. Si hace falta reiniciar, se programa solo tras la instalación, las comprobaciones y el informe correctos; el propietario verifica el funcionamiento después del reinicio.
 
-`CONFIGURE VPS SECURITY + DoT? [Y/n]:` configura Fail2ban para SSH, APT update a las 02:30, unattended upgrade a las 02:50 y reinicio automático a las 04:38, incluso con usuarios conectados. Conserva y muestra la zona horaria local; no cambia la política ni las claves SSH. En una imagen mínima reconocida sin resolved, con resolv.conf normal que solo contiene DNS públicos de Cloudflare/Google, instala el paquete y verifica DoT estricto antes de cleanup. Guarda el DNS y estado del servicio originales para una recuperación verificada; no revierte los paquetes instalados. DNS personalizados/del proveedor, rutas VPN y servicios DNS competidores causan rechazo seguro antes de cleanup. No reescribe interfaces. N conserva el DNS; el full upgrade inicial sigue siendo obligatorio. Backup / Restore no transfiere seguridad/DNS específicos del servidor.
+`VPS Security + DoT? [Y/n]:` configura Fail2ban para SSH, APT update a las 02:30, unattended upgrade a las 02:50 y reinicio automático a las 04:38, incluso con usuarios conectados. Conserva y muestra la zona horaria local; no cambia la política ni las claves SSH. En una imagen mínima reconocida sin resolved, con resolv.conf normal que solo contiene DNS públicos de Cloudflare/Google, instala el paquete y verifica DoT estricto antes de cleanup. Guarda el DNS y estado del servicio originales para una recuperación verificada; no revierte los paquetes instalados. Políticas DNS incompatibles personalizadas/del proveedor, rutas VPN y servicios DNS competidores causan rechazo seguro antes de cleanup. No reescribe interfaces. N conserva el DNS; el full upgrade inicial sigue siendo obligatorio. Backup / Restore no transfiere seguridad/DNS específicos del servidor. La lista DNS= heredada del resolved.conf principal se conserva y se sustituye mediante el drop-in DoT gestionado; los drop-ins y las políticas de interfaz incompatibles siguen causando rechazo.
 
 ### VLESS RAW TLS Vision opcional
 
-`INSTALL VLESS RAW TLS VISION? [y/N]:` requiere un dominio o subdominio adicional apuntando al VPS. Comparte TCP/443 mediante nginx SNI, usa un certificado independiente y ofrece un sitio de camuflaje HTTPS. No abre otro puerto público. Backup / Restore v3 admite el tercer certificado y los archivos sin Vision.
+`VLESS Vision? [y/N]:` requiere un dominio o subdominio adicional apuntando al VPS. Comparte TCP/443 mediante nginx SNI, usa un certificado independiente y ofrece un sitio de camuflaje HTTPS. No abre otro puerto público. Backup / Restore v3 admite el tercer certificado y los archivos sin Vision.
 
 ### Creación automática de cliente y suscripción
 
-`CREATE CLIENT AND SUBSCRIPTION? [Y/n]:` crea un cliente mediante la API oficial de 3x-ui v3.9.0, lo vincula a los inbounds locales activos compatibles y verifica la suscripción oficial. Utiliza el dominio del panel, sin otro dominio. N conserva los ajustes actuales de clientes y suscripciones. El resultado muestra la URL solo tras verificarla. AWG `vpn://` requiere una aplicación Amnezia compatible.
+`Create initial client? [Y/n]:` crea un cliente mediante la API oficial de 3x-ui v3.9.0, lo vincula a los inbounds locales activos compatibles y verifica la suscripción oficial. Utiliza el dominio del panel, sin otro dominio. N conserva los ajustes actuales de clientes y suscripciones. El resultado muestra la URL solo tras verificarla. AWG `vpn://` requiere una aplicación Amnezia compatible.
 
 
 ### AdGuard Home + DoH
 
-Responde `y` a `Install AdGuard Home with DNS-over-HTTPS? [y/N]:`. No hace falta un tercer dominio: la interfaz de administración utiliza una ruta aleatoria `/adg-.../` en el dominio del panel, y DoH está disponible en `https://panel.example.com/dns-query`. No se abre el puerto público TCP/UDP **53**. La configuración y los datos se incluyen en **Backup / Restore v3**.
+Responde `y` a `AdGuard Home + DoH? [y/N]:`. No hace falta un tercer dominio: la interfaz de administración utiliza una ruta aleatoria `/adg-.../` en el dominio del panel, y DoH está disponible en `https://panel.example.com/dns-query`. No se abre el puerto público TCP/UDP **53**. La configuración y los datos se incluyen en **Backup / Restore v3**.
 
 <details>
 <summary>⚠️ <strong>Recomendación de seguridad</strong></summary>
@@ -105,7 +105,7 @@ Utiliza direcciones DoH como `/dns-query/<ClientID>`. Se rechazarán las consult
 
 ### AmneziaWG 3.1
 
-Durante la instalación puedes configurar **AmneziaWG 3.1 en UDP/8443** (desactivado por defecto). Responde `y` a `Install AmneziaWG on UDP port 8443? [y/N]:`. Está integrado en 3x-ui y utiliza el dominio del panel. Después, añade un cliente desde 3x-ui para obtener su configuración o enlace `vpn://`; la creación inicial incluye AWG si está seleccionado. UFW permite automáticamente UDP/8443; **Backup / Restore v3** conserva la configuración y restaura la regla.
+Durante la instalación puedes configurar **AmneziaWG 3.1 en UDP/8443** (desactivado por defecto). Responde `y` a `AmneziaWG? [y/N]:`. Está integrado en 3x-ui y utiliza el dominio del panel. Después, añade un cliente desde 3x-ui para obtener su configuración o enlace `vpn://`; la creación inicial incluye AWG si está seleccionado. UFW permite automáticamente UDP/8443; **Backup / Restore v3** conserva la configuración y restaura la regla.
 
 ## 💾 Copias de seguridad y restauración
 
