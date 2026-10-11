@@ -378,3 +378,11 @@ class IntegratedFeatures(unittest.TestCase):
             expected=[name for name,key in (('install_vision','INSTALL_VISION'),('install_amneziawg','INSTALL_AWG'),
                 ('install_adguard','INSTALL_AGH'),('install_security','INSTALL_SECURITY'),('install_initial_client','CREATE_CLIENT')) if variables[key]=='y']
             self.assertEqual(result.stdout.splitlines(),expected)
+        # An uncertain Vision inbound may still be enabled but lack its SNI
+        # route. Do not attach a new client or publish it as ready in that state.
+        failure_stubs=stubs+'\ninstall_vision() { VISION_RESULT=failed_unverified; return 1; }; show_results() { echo "$CLIENT_RESULT"; };'
+        variables=dict(zip(('INSTALL_SECURITY','INSTALL_VISION','INSTALL_AWG','INSTALL_AGH','CREATE_CLIENT'),'nynny'))
+        result=subprocess.run(['bash','-eu','-c',failure_stubs+function('main')+'\nmain'],env={**os.environ,**variables},capture_output=True,text=True)
+        self.assertEqual(result.returncode,1,result.stderr)
+        self.assertNotIn('install_initial_client',result.stdout)
+        self.assertIn('failed_unverified',result.stdout)

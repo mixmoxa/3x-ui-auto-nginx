@@ -2412,7 +2412,8 @@ main() {
         install_security || install_result=1
     fi
     if [[ "${CREATE_CLIENT:-n}" == y ]]; then
-        if check_installation; then
+        # A retained unverified Vision inbound may lack its public SNI route.
+        if [[ "$VISION_RESULT" != failed_unverified ]] && check_installation; then
             install_initial_client || install_result=1
         else
             install_result=1

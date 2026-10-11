@@ -117,7 +117,9 @@ Initial configuration restarts Xray through the native API, preserving the
 administrator session for rollback. If rollback is unverified, the new
 certificate and renewal artifacts remain for inspection rather than breaking
 an inbound that might still reference them. Subscription routes suppress nginx
-access/error logging so subscription identifiers do not enter shared logs.
+access/error logging, including upstream error redirects, so subscription
+identifiers do not enter shared logs. Initial client creation is deferred if
+Vision rollback remains unverified: a retained inbound might lack its SNI route.
 
 Portable Backup v3 includes Vision DB/Host, SNI, static fallback, ACME site,
 canonical hook and third lineage when declared. Archives without the new
