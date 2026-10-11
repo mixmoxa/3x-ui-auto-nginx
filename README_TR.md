@@ -158,6 +158,10 @@ Resmî panel [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui) projesinden sa�
 
 xPROMSx tarafından geliştirilen özgün katkılar ve değişiklikler [GNU GPL-3.0-only](LICENSE) kapsamında sunulur. Copyright (C) 2026 xPROMSx contributors. Bu lisans yalnızca söz konusu materyaller üzerinde sahip olduğumuz hakları kapsar; devralınmış kodu yeniden lisanslamaz veya deponun tamamının GPL kapsamında olduğunu göstermez. Ayrıntılar için [lisans kapsamına ve üçüncü taraf bildirimlerine](THIRD_PARTY_NOTICES.md) bakın.
 
+## ❤️ Geliştirmeyi destekleyin
+
+Bu proje işinize yarıyorsa [geliştirilmesine gönüllü olarak destek olabilirsiniz](docs/SUPPORT_TR.md). Bağış yapıp yapmamanızdan bağımsız olarak proje ve tüm özellikleri ücretsiz ve açık kaynaklı kalır.
+
 <div align="center">
 
 **İki alan adı. Birkaç dakika. Kendi 3x-ui / Xray sunucunuz.**

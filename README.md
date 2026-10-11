@@ -158,6 +158,10 @@ The panel comes from [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Third-
 
 Original xPROMSx developments and changes are offered under [GNU GPL-3.0-only](LICENSE). Copyright (C) 2026 xPROMSx contributors. The license covers only our rights in those materials; it does not relicense inherited code or establish GPL status for the entire repository. The scope of our license and notices for third-party components are explained in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
+## ❤️ Support development
+
+If this project is useful to you, you can voluntarily [support its development](docs/SUPPORT.en.md). The project and all its features remain free and open source, whether or not you donate.
+
 <div align="center">
 
 **Two domains. A few minutes. Your own 3x-ui / Xray server.**

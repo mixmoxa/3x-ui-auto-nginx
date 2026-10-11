@@ -1,0 +1,2 @@
+# Preserve intentional Markdown hard line breaks in verbatim support pages.
+docs/SUPPORT*.md whitespace=-blank-at-eol
