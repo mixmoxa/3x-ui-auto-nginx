@@ -4,6 +4,7 @@ No Internet DoT dependency. Production resolver addresses exist only on containe
 loopback; their TLS servers use a generated test CA in this VM's trust store.
 """
 import importlib.util
+import base64
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
@@ -16,6 +17,7 @@ import tempfile
 import threading
 import time
 import unittest
+from urllib.parse import parse_qs, urlsplit
 
 
 class SecuritySystemd(unittest.TestCase):
@@ -115,6 +117,11 @@ class SecuritySystemd(unittest.TestCase):
                 class DoH(BaseHTTPRequestHandler):
                     def do_POST(handler):
                         packet=handler.rfile.read(int(handler.headers['Content-Length']))
+                        handler.answer(packet)
+                    def do_GET(handler):
+                        encoded=parse_qs(urlsplit(handler.path).query)['dns'][0]
+                        handler.answer(base64.urlsafe_b64decode(encoded+'='*(-len(encoded)%4)))
+                    def answer(handler,packet):
                         doh_queries.append(packet)
                         end=12
                         while packet[end]: end+=packet[end]+1
@@ -146,8 +153,8 @@ class SecuritySystemd(unittest.TestCase):
                         try: reply=dns.recv(4096); break
                         except socket.timeout:
                             if attempt==14: raise
-                    self.assertEqual(reply[-4:],socket.inet_aton('203.0.113.7'))
-                self.assertTrue(doh_queries,'AGH did not use its actual trusted HTTPS upstream')
+                    self.assertTrue(doh_queries,'AGH did not reach its trusted HTTPS upstream: '+(root/'agh.log').read_text())
+                    self.assertEqual(reply[-4:],socket.inet_aton('203.0.113.7'),(root/'agh.log').read_text())
                 before_dot,before_doh=len(seen),len(doh_queries)
                 run('resolvectl','query','--cache=no','system-with-adguard.example')
                 self.assertGreater(len(seen),before_dot)
