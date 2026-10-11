@@ -1,5 +1,6 @@
 """Real loopback services; host installation and systemd remain outside this suite."""
 import base64
+import errno
 import hashlib
 from http.cookies import SimpleCookie
 import json
@@ -103,8 +104,15 @@ class RealServices(unittest.TestCase):
                     return data
                 length=int.from_bytes(exact(2),'big');response=dns_response(exact(length))
                 handler.request.sendall(len(response).to_bytes(2,'big')+response)
-        self.dns=socketserver.ThreadingUDPServer(('127.0.0.1',0),DNS)
-        tcp=socketserver.ThreadingTCPServer(self.dns.server_address,DNSTCP)
+        for attempt in range(10):
+            self.dns=socketserver.ThreadingUDPServer(('127.0.0.1',0),DNS)
+            try:
+                tcp=socketserver.ThreadingTCPServer(self.dns.server_address,DNSTCP)
+                break
+            except OSError as error:
+                self.dns.server_close()
+                if error.errno != errno.EADDRINUSE or attempt == 9:
+                    raise
         self.allocated.add(self.dns.server_address[1])
         for server in (self.dns,tcp):
             threading.Thread(target=server.serve_forever,daemon=True).start()

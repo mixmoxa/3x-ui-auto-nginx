@@ -18,6 +18,29 @@ def helper(name):
 
 
 class IntegratedFeatures(unittest.TestCase):
+    def test_service_dns_fixture_retries_tcp_udp_port_collision(self):
+        import socket
+        import test_real_services as services
+        blocker=socket.socket(); blocker.bind(('127.0.0.1',0)); blocker.listen()
+        self.addCleanup(blocker.close)
+        constructor=services.socketserver.ThreadingUDPServer; addresses=[]
+        def udp(address,handler):
+            chosen=blocker.getsockname() if not addresses else address
+            result=constructor(chosen,handler); addresses.append(result.server_address)
+            return result
+        instance=services.RealServices('test_real_project_deploy_hook_and_nginx_reload')
+        instance.agh=Path('/bin/true')
+        check_output=services.subprocess.check_output
+        def output(args,**kwargs):
+            return b'admin:fixture-hash' if args[0]=='htpasswd' else check_output(args,**kwargs)
+        try:
+            with patch.object(services.socketserver,'ThreadingUDPServer',side_effect=udp), patch.object(services.subprocess,'check_output',side_effect=output), patch.object(instance,'shell'):
+                instance.setUp()
+            self.assertGreater(len(addresses),1)
+            self.assertNotEqual(instance.dns.server_address,blocker.getsockname())
+        finally:
+            instance.doCleanups()
+
     def test_prompt_defaults_decline_and_eof(self):
         for name, variable, default in (('select_security', 'INSTALL_SECURITY', 'y'),
                                          ('select_client', 'CREATE_CLIENT', 'y'),
