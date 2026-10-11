@@ -167,6 +167,13 @@ def preflight(root=Path('/')):
     os_id, version = (info.get(k, '').strip('"') for k in ('ID', 'VERSION_ID'))
     if (os_id, version) not in (('ubuntu', '24.04'), ('ubuntu', '26.04'), ('debian', '13')):
         raise ValueError('Unsupported OS for VPS Security')
+    apt_file = root / FILES[1].lstrip('/')
+    current = apt_config(os_id)
+    legacy = current.replace('// Add the required distro security origin; retain administrator/distro origins.',
+                             '// Reset effective origins in this final managed drop-in; preserve administrator files.\n'
+                             '#clear Unattended-Upgrade::Allowed-Origins;\n#clear Unattended-Upgrade::Origins-Pattern;')
+    if apt_file.exists() and apt_file.read_text() not in (current, legacy):
+        raise ValueError('Administrator changes in managed APT drop-in preserved; refusing replacement')
     for tool in ('systemctl', 'resolvectl', 'busctl', 'apt-config', 'journalctl', '/usr/sbin/sshd'):
         if not shutil.which(tool):
             raise ValueError('Security diagnostic tool unavailable: ' + tool)

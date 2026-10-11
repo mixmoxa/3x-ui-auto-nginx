@@ -50,7 +50,9 @@ Match contexts still require administrator review. No recidive jail is added.
 APT adds the required distro security origin: Ubuntu's codename-security archive,
 or Debian's Debian-Security/codename-security origin. Existing effective distro,
 ESM and administrator origins remain permitted; they are neither cleared nor
-replaced. Explicitly disabled periodic APT causes early refusal. The managed
+replaced. Explicitly disabled periodic APT causes early refusal. An administrator
+modified project APT drop-in also causes early refusal; both previous and current
+canonical project drop-ins remain supported. The managed
 drop-in disables automatic reboot. Native timers run at about 02:30 and 03:30 local system time.
 Updates outside APT, including 3x-ui/Xray/containers, are not scheduled.
 

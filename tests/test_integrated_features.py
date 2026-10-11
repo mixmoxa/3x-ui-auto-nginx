@@ -66,6 +66,34 @@ class IntegratedFeatures(unittest.TestCase):
         for key in ('Enable','Update-Package-Lists','Unattended-Upgrade'):
             with self.subTest(key=key), self.assertRaisesRegex(ValueError,'administrator policy'):
                 security.apt_preflight('APT::Periodic::'+key+' "0";')
+        # A project marker cannot authorize removal of administrator origins
+        # appended to the managed file itself.
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); (root/'etc').mkdir()
+            (root/'etc/os-release').write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+            (root/'etc/resolv.conf').symlink_to('/run/systemd/resolve/stub-resolv.conf')
+            owned=root/security.FILES[1].lstrip('/'); owned.parent.mkdir(parents=True)
+            owned.write_text(security.apt_config('ubuntu')+'Unattended-Upgrade::Origins-Pattern { "origin=Provider,label=Provider-Security"; };\n')
+            actual_stat=Path.stat
+            def stat(path,*args,**kwargs):
+                value=actual_stat(path,*args,**kwargs)
+                if path==owned:
+                    fields=list(value); fields[4]=0; return os.stat_result(fields)
+                return value
+            def command(*args,**kwargs):
+                if args[0]=='/usr/sbin/sshd': return 'port 22'
+                if args[0]=='journalctl': return 'SSH journal'
+                if args[:2]==('systemctl','is-active'): return 'active' if args[-1]=='systemd-resolved.service' else 'inactive'
+                if args[:2]==('systemctl','is-enabled'): return 'enabled'
+                return ''
+            with patch.object(Path,'stat',stat), patch.object(security.shutil,'which',side_effect=lambda name:name), patch.object(security,'command',side_effect=command):
+                with self.assertRaisesRegex(ValueError,'APT.*preserved'): security.preflight(root)
+                self.assertIn('origin=Provider',owned.read_text())
+                current=security.apt_config('ubuntu')
+                legacy=current.replace('// Add the required distro security origin; retain administrator/distro origins.',
+                    '// Reset effective origins in this final managed drop-in; preserve administrator files.\n#clear Unattended-Upgrade::Allowed-Origins;\n#clear Unattended-Upgrade::Origins-Pattern;')
+                for canonical in (current,legacy):
+                    owned.write_text(canonical); security.preflight(root)
         self.assertEqual(security.apt_preflight(''),set())
         self.assertEqual(security.apt_preflight('Unattended-Upgrade::Origins-Pattern:: "origin=Provider,label=Provider-Security";'),{('Origins-Pattern','origin=Provider,label=Provider-Security')})
 
