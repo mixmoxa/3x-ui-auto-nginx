@@ -131,16 +131,17 @@ class SecuritySystemd(unittest.TestCase):
                 agh_config=root/'AdGuardHome.yaml'
                 agh_config.write_text(json.dumps({'schema_version':34,'http':{'address':'127.0.0.1:8383'},
                     'dns':{'bind_hosts':['127.0.0.1'],'port':53,'upstream_dns':[f'https://127.0.0.1:{doh.server_port}/dns-query'],
-                           'bootstrap_dns':[],'cache_size':0},'filters':[],'tls':{'enabled':False}}))
+                           'bootstrap_dns':[],'cache_size':4096},'filters':[],'tls':{'enabled':False}}))
+                agh_log=open(root/'agh.log','wb'); self.addCleanup(agh_log.close)
                 agh=subprocess.Popen(['/opt/xui-ci/AdGuardHome','-c',str(agh_config),'-w',str(root), '--no-check-update'],
-                                     stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                                     stdout=agh_log,stderr=agh_log)
                 def stop_agh():
                     if agh.poll() is None: agh.terminate(); agh.wait(timeout=20)
                 self.addCleanup(stop_agh)
                 with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as dns:
                     dns.settimeout(2)
                     for attempt in range(15):
-                        self.assertIsNone(agh.poll(),'Real AGH exited before DNS readiness')
+                        self.assertIsNone(agh.poll(),'Real AGH exited before DNS readiness: '+(root/'agh.log').read_text())
                         dns.sendto(question('adguard.example'),('127.0.0.1',53))
                         try: reply=dns.recv(4096); break
                         except socket.timeout:
