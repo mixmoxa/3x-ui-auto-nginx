@@ -18,6 +18,85 @@ def helper(name):
 
 
 class IntegratedFeatures(unittest.TestCase):
+    def test_security_readonly_preflight_blocks_cleanup_for_known_conflicts(self):
+        from test_personal_backup import relocated
+        cases = ('inactive', 'resolv', 'dns', 'jail', 'jail-conf', 'apt', 'compatible', 'declined')
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); (root/'etc').mkdir()
+                (root/'etc/os-release').write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+                resolv = root/'etc/resolv.conf'
+                resolv.symlink_to('/provider/resolv.conf' if case=='resolv' else '/run/systemd/resolve/stub-resolv.conf')
+                if case=='dns':
+                    policy=root/'etc/systemd/resolved.conf'; policy.parent.mkdir(parents=True)
+                    policy.write_text('[Resolve]\nDNS=10.0.0.1\n')
+                if case in ('jail','jail-conf'):
+                    jail=root/('etc/fail2ban/jail.local' if case=='jail' else 'etc/fail2ban/jail.d/provider.conf'); jail.parent.mkdir(parents=True)
+                    jail.write_text('[sshd]\nmaxretry=2\n')
+                stage=root/'stage'; stage.mkdir()
+                source=(ROOT/'assets/security/managed.py').read_text()
+                # Execute the real helper CLI against private files and read-only
+                # command fixtures. No installer/global paths are executed.
+                override = "shutil.which = lambda tool: tool\ndef command(*args, **kwargs):\n    if args[0]=='/usr/sbin/sshd': return 'port 22'\n    if args[0]=='journalctl': return 'SSH journal'\n    if args[:2]==('systemctl','is-active'): return %r if args[-1]=='systemd-resolved.service' else 'inactive'\n    if args[:2]==('systemctl','is-enabled'): return 'enabled'\n    return ''\n" % ('inactive' if case=='inactive' else 'active')
+                if case=='apt': override=override.replace("    return ''\n","    if args[0]=='apt-config': return 'APT::Periodic::Enable \"0\";'\n    return ''\n")
+                prefix, cli=source.split("if __name__ == '__main__':",1)
+                (root/'helper.py').write_text(prefix.replace("root=Path('/')", 'root=Path('+repr(str(root))+')')+override+"if __name__ == '__main__':"+cli)
+                names=('confirm_destructive_reinstall','validate_domains','select_vision','select_amneziawg','select_adguard','select_client',
+                       'preflight_panel_release','preflight_amneziawg','preflight_vision_artifacts')
+                stubs='\n'.join(name+'() { :; }' for name in names)
+                stubs+='\nselect_security() { INSTALL_SECURITY='+('n' if case=='declined' else 'y')+'; }; msg_err() { echo "$*" >&2; };\n'
+                stubs+='curl() { cp "$FIXTURE_HELPER" "${@: -1}"; }; cleanup_adguard() { echo CLEANUP; exit 19; }; clean_previous_install() { echo DESTRUCTION; };\n'
+                script=stubs+function('preflight_integrated_features')+'\n'+function('main')+'\nINSTALL_VISION=n; CREATE_CLIENT=n; main'
+                env={**os.environ,'PANEL_STAGE':str(stage),'GITHUB_RAW':'https://fixture.invalid','FIXTURE_HELPER':str(root/'helper.py')}
+                before={str(p.relative_to(root)):os.readlink(p) if p.is_symlink() else p.read_bytes() for p in (root/'etc').rglob('*') if p.is_file() or p.is_symlink()}
+                result=subprocess.run(['bash','-eu','-c',script],env=env,capture_output=True,text=True)
+                after={str(p.relative_to(root)):os.readlink(p) if p.is_symlink() else p.read_bytes() for p in (root/'etc').rglob('*') if p.is_file() or p.is_symlink()}
+                self.assertEqual(before,after)
+                if case in ('compatible','declined'):
+                    self.assertEqual(result.returncode,19,result.stderr)
+                    self.assertIn('CLEANUP',result.stdout)
+                else:
+                    self.assertEqual(result.returncode,1,result.stderr)
+                    self.assertNotIn('CLEANUP',result.stdout)
+                    self.assertNotIn('DESTRUCTION',result.stdout)
+                    self.assertIn('preflight',result.stderr.lower())
+
+    def test_security_apt_conflict_refuses_before_configuration(self):
+        security=helper('security')
+        for key in ('Enable','Update-Package-Lists','Unattended-Upgrade'):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError,'administrator policy'):
+                security.apt_preflight('APT::Periodic::'+key+' "0";')
+        self.assertEqual(security.apt_preflight(''),set())
+        self.assertEqual(security.apt_preflight('Unattended-Upgrade::Origins-Pattern:: "origin=Provider,label=Provider-Security";'),{('Origins-Pattern','origin=Provider,label=Provider-Security')})
+
+    def test_runtime_security_repeats_preflight_before_any_mutation(self):
+        security=helper('security')
+        with patch.object(security,'preflight',side_effect=ValueError('State changed')), patch.object(security,'command') as command, patch.object(security,'Transaction') as transaction:
+            with self.assertRaisesRegex(ValueError,'State changed'): security.configure()
+            command.assert_not_called(); transaction.assert_not_called()
+
+    def test_apt_dropin_preserves_effective_admin_and_distro_origins(self):
+        security=helper('security')
+        defaults={
+            'ubuntu24': ('ubuntu','Unattended-Upgrade::Allowed-Origins { "${distro_id}:${distro_codename}"; "${distro_id}:${distro_codename}-security"; "${distro_id}ESMApps:${distro_codename}-apps-security"; "${distro_id}ESM:${distro_codename}-infra-security"; };'),
+            'ubuntu26': ('ubuntu','Unattended-Upgrade::Allowed-Origins { "${distro_id}:${distro_codename}"; "${distro_id}:${distro_codename}-security"; "${distro_id}ESMApps:${distro_codename}-apps-security"; "${distro_id}ESM:${distro_codename}-infra-security"; };'),
+            'empty': ('ubuntu',''),
+            'debian13': ('debian','Unattended-Upgrade::Origins-Pattern { "origin=Debian,codename=${distro_codename},label=Debian"; "origin=Debian,codename=${distro_codename},label=Debian-Security"; "origin=Debian,codename=${distro_codename}-security,label=Debian-Security"; };')}
+        for label,(os_id,stock) in defaults.items():
+            with self.subTest(distro=label), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory); parts=root/'parts'; parts.mkdir()
+                bootstrap=root/'apt.conf'; bootstrap.write_text(f'Dir::Etc::parts "{parts}"; Dir::Etc::main "{root}/absent";')
+                admin=parts/'50unattended-upgrades'; admin.write_text(stock+'\nUnattended-Upgrade::Origins-Pattern { "origin=Provider,label=Provider-Security"; };\n')
+                dump=lambda: subprocess.check_output(['apt-config','dump'],env={**os.environ,'APT_CONFIG':str(bootstrap)},text=True)
+                before=dump(); self.assertIn('origin=Provider,label=Provider-Security',before); owned=parts/'99zz-3x-ui-auto-nginx'; owned.write_text(security.apt_config(os_id)); after=dump()
+                for line in before.splitlines():
+                    if 'Unattended-Upgrade::' in line and ':: "' in line:
+                        self.assertIn(line,after,'Existing effective origin removed')
+                self.assertIn('origin=Provider,label=Provider-Security',after)
+                self.assertIn('Unattended-Upgrade::Automatic-Reboot "false";',after)
+                owned.write_text(security.apt_config(os_id)); self.assertEqual(dump(),after)
+                owned.unlink(); self.assertEqual(dump(),before)
+
     def test_service_dns_fixture_retries_tcp_udp_port_collision(self):
         import socket
         import test_real_services as services
@@ -195,8 +274,8 @@ class IntegratedFeatures(unittest.TestCase):
                 (root/path).mkdir(parents=True)
             source = (ROOT/'x-ui-latest.sh').read_text()
             script = relocated('install_vision() {'+source.split('install_vision() {',1)[1].split('\ninstall_security()',1)[0],root)
-            stubs = 'ln() { return 1; }; nginx() { :; }; systemctl() { :; }; check_installation() { :; }; msg_warn() { :; }; make_port() { echo $((RANDOM+10000)); };\n'
-            result = subprocess.run(['bash','-eu','-c',stubs+script+'\nvision_domain=vision.example; install_vision || :; echo "$VISION_RESULT"'],capture_output=True,text=True)
+            stubs = 'python3() { echo \'# render fixture\'; }; ln() { return 1; }; nginx() { :; }; systemctl() { :; }; check_installation() { :; }; msg_warn() { :; }; make_port() { echo $((RANDOM+10000)); };\n'
+            result = subprocess.run(['bash','-eu','-c',stubs+script+'\nPANEL_STAGE=/stage; vision_domain=vision.example; install_vision || :; echo "$VISION_RESULT"'],capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertEqual(result.stdout.strip(),'failed_rolled_back')
             self.assertFalse((root/'etc/nginx/sites-available/vision-acme.conf').exists())
@@ -209,8 +288,8 @@ class IntegratedFeatures(unittest.TestCase):
                 (root/path).mkdir(parents=True)
             source=(ROOT/'x-ui-latest.sh').read_text()
             script=relocated('install_vision() {'+source.split('install_vision() {',1)[1].split('\ninstall_security()',1)[0],root)
-            stubs='nginx() { :; }; systemctl() { :; }; check_installation() { :; }; check_webroot_lineage() { :; }; msg_warn() { :; }; make_port() { echo $((RANDOM+10000)); }; render_vision_hook() { echo "#!/bin/bash"; }; chown() { :; }; certbot() { echo CERTIFICATE_DELETED; }; python3() { echo \'{"status":"failed_unverified"}\'; return 1; };\n'
-            result=subprocess.run(['bash','-eu','-c',stubs+script+'\nvision_domain=vision.example; domain=panel.example; panel_path=test; config_username=test; config_password=test; PANEL_STAGE=/stage; AWG_HELPER=/helper; install_vision || :; echo "$VISION_RESULT"'],capture_output=True,text=True)
+            stubs='nginx() { :; }; systemctl() { :; }; check_installation() { :; }; check_webroot_lineage() { :; }; msg_warn() { :; }; make_port() { echo $((RANDOM+10000)); }; render_vision_hook() { echo "#!/bin/bash"; }; chown() { :; }; certbot() { echo CERTIFICATE_DELETED; }; python3() { if [[ \"$*\" == *--render-acme* ]]; then echo \'# render fixture\'; return 0; fi; echo \'{"status":"failed_unverified"}\'; return 1; };\n'
+            result=subprocess.run(['bash','-eu','-c',stubs+script+'\nVISION_OWNED_LINEAGE=vision.example; vision_domain=vision.example; domain=panel.example; panel_path=test; config_username=test; config_password=test; PANEL_STAGE=/stage; AWG_HELPER=/helper; install_vision || :; echo "$VISION_RESULT"'],capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertTrue((root/'etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision').exists())
             self.assertTrue((root/'etc/nginx/sites-available/vision-acme.conf').exists())
@@ -269,21 +348,72 @@ class IntegratedFeatures(unittest.TestCase):
 
     def test_vision_reinstall_accepts_owned_files_and_refuses_foreign_files(self):
         from test_personal_backup import relocated
+        vision=helper('vision')
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            available = root/'etc/nginx/sites-available'; available.mkdir(parents=True)
-            enabled = root/'etc/nginx/sites-enabled'; enabled.mkdir()
-            site = available/'vision.conf'; site.write_text('# Managed by 3x-ui Auto Nginx: Vision\nserver {}\n')
-            (enabled/'vision.conf').symlink_to('/etc/nginx/sites-available/vision.conf')
-            script = 'stat() { echo 0:0; }; msg_err() { echo "$1" >&2; };\n'+relocated(function('preflight_vision_artifacts'),root)+'\npreflight_vision_artifacts'
-            # Relocate the expected managed symlink too, just as private Restore fixtures do.
-            (enabled/'vision.conf').unlink(); (enabled/'vision.conf').symlink_to(site)
-            result = subprocess.run(['bash','-eu','-c',script],capture_output=True,text=True)
-            self.assertEqual(result.returncode,0,result.stderr)
-            site.write_text('# administrator configuration\nserver {}\n')
-            result = subprocess.run(['bash','-eu','-c',script],capture_output=True,text=True)
+            root=Path(directory); available=root/'etc/nginx/sites-available'; available.mkdir(parents=True)
+            enabled=root/'etc/nginx/sites-enabled'; enabled.mkdir()
+            site=available/'vision.conf'; valid=vision.fallback_config('vision.example',12001)
+            site.write_text(valid); site.chmod(0o644)
+            link=enabled/'vision.conf'; link.symlink_to(site)
+            # UID/GID fixture only; file modes and symlinks are actually checked.
+            stubs='stat() { case "$2" in *%a*) echo "${OWNER:-0}:0:$(/usr/bin/stat -c %a "$3")";; *) echo "${OWNER:-0}:0";; esac; }; msg_err() { echo "$*" >&2; };\n'
+            script=stubs+relocated(function('preflight_vision_artifacts'),root)+'\npreflight_vision_artifacts'
+            env={**os.environ,'PANEL_STAGE':str(ROOT/'assets/vision')}
+            # Helper filename follows the staged installer convention.
+            stage=root/'stage'; stage.mkdir(); (stage/'managed-vision.py').write_text((ROOT/'assets/vision/managed.py').read_text())
+            env['PANEL_STAGE']=str(stage)
+            run=lambda: subprocess.run(['bash','-eu','-c',script],env=env,capture_output=True,text=True)
+            self.assertEqual(run().returncode,0)
+            for bad in (valid.replace(vision.MARKER,'# Administrator config\n'),valid.replace('root /var/www/html;','root /etc;'),valid.replace('set_real_ip_from 127.0.0.1;','set_real_ip_from 0.0.0.0/0;'),valid.replace('try_files $uri $uri/ =404;','proxy_pass http://127.0.0.1:10002;')):
+                with self.subTest(content=bad.splitlines()[0]):
+                    site.write_text(bad); self.assertNotEqual(run().returncode,0)
+                    self.assertEqual(site.read_text(),bad)
+            site.write_text(valid); site.chmod(0o666); self.assertNotEqual(run().returncode,0)
+            site.chmod(0o644); site.unlink(); site.symlink_to(root/'foreign'); self.assertNotEqual(run().returncode,0)
+            site.unlink(); site.write_text(valid); site.chmod(0o644); self.assertEqual(run().returncode,0)
+            env['OWNER']='1000'; self.assertNotEqual(run().returncode,0)
+            env['OWNER']='0'; self.assertEqual(run().returncode,0)
+
+    def test_vision_runtime_refuses_unapproved_lineage_without_touching_artifacts(self):
+        from test_personal_backup import relocated
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            for name in ('etc/nginx/sites-available','etc/nginx/sites-enabled','etc/letsencrypt/live/vision.example','etc/letsencrypt/renewal-hooks/deploy'):
+                (root/name).mkdir(parents=True)
+            cert=root/'etc/letsencrypt/live/vision.example/fullchain.pem'; cert.write_text('foreign certificate')
+            hook=root/'etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision'; hook.write_text('foreign hook')
+            script=relocated(function('install_vision'),root)
+            stubs='make_port() { echo $((RANDOM+10000)); }; python3() { echo "# rendering"; }; ln() { return 1; }; nginx() { :; }; systemctl() { :; }; check_installation() { :; }; msg_warn() { :; }; certbot() { return 1; };\n'
+            result=subprocess.run(['bash','-eu','-c',stubs+script+'\nPANEL_STAGE=/stage; vision_domain=vision.example; install_vision'],capture_output=True,text=True)
             self.assertNotEqual(result.returncode,0)
-            self.assertIn('administrator',site.read_text())
+            self.assertEqual(cert.read_text(),'foreign certificate')
+            self.assertTrue(hook.exists(),'Unapproved foreign hook removed on failure')
+            self.assertEqual(hook.read_text(),'foreign hook')
+            self.assertFalse((root/'etc/nginx/sites-available/vision-acme.conf').exists())
+
+    def test_vision_existing_lineage_requires_complete_project_ownership(self):
+        from test_personal_backup import relocated
+        vision=helper('vision')
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); stage=root/'stage'; stage.mkdir()
+            (stage/'managed-vision.py').write_text((ROOT/'assets/vision/managed.py').read_text())
+            available=root/'etc/nginx/sites-available'; available.mkdir(parents=True)
+            (root/'etc/nginx/sites-enabled').mkdir()
+            hook=root/'etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision'; hook.parent.mkdir(parents=True)
+            lineage=root/'etc/letsencrypt/live/vision.example'; lineage.mkdir(parents=True)
+            (lineage/'fullchain.pem').write_text('administrator certificate')
+            stubs='stat() { case "$2" in *%a*) echo "${OWNER:-0}:0:$(/usr/bin/stat -c %a "$3")";; *) echo "${OWNER:-0}:0";; esac; }; msg_err() { echo "$*" >&2; };\n'
+            functions=relocated(function('render_vision_hook')+'\n'+function('preflight_vision_artifacts'),root)
+            run=lambda: subprocess.run(['bash','-eu','-c',stubs+functions+'\ncheck_webroot_lineage() { :; }; INSTALL_VISION=y; vision_domain=vision.example; preflight_vision_artifacts'],env={**os.environ,'PANEL_STAGE':str(stage)},capture_output=True,text=True)
+            self.assertNotEqual(run().returncode,0,'Foreign existing lineage adopted')
+            hook.write_text(subprocess.check_output(['bash','-c',relocated(function('render_vision_hook'),root)+'\nrender_vision_hook vision.example'],text=True)); hook.chmod(0o755)
+            self.assertNotEqual(run().returncode,0,'Incomplete old ownership adopted')
+            (available/'vision.conf').write_text(vision.fallback_config('vision.example',12001))
+            # The canonical ACME generator is introduced by the ownership fix.
+            acme='# Managed by 3x-ui Auto Nginx: Vision\nserver {\n    listen 80;\n    listen [::]:80;\n    server_name vision.example;\n    location ^~ /.well-known/acme-challenge/ { root /var/www/acme; try_files $uri =404; }\n    location / { return 301 https://$host$request_uri; }\n}\n'
+            (available/'vision-acme.conf').write_text(acme)
+            self.assertEqual(run().returncode,0)
+            self.assertEqual((lineage/'fullchain.pem').read_text(),'administrator certificate')
 
     def test_initial_client_random_subscription_and_no_plaintext_success(self):
         client = helper('client')

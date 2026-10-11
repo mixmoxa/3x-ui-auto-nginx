@@ -2209,12 +2209,13 @@ select_client() {
 
 preflight_vision_artifacts() {
     VISION_PREVIOUS_HOOK=''
-    local name file hook old_domain
+    VISION_OWNED_LINEAGE=''
+    local name file hook old_domain='' nginx_domain=''
     for name in vision vision-acme; do
         file="/etc/nginx/sites-available/$name.conf"
         if [[ -e "$file" || -L "$file" ]]; then
             [[ -f "$file" && ! -L "$file" && "$(head -n1 "$file")" == '# Managed by 3x-ui Auto Nginx: Vision' &&
-               "$(stat -c '%u:%g' "$file")" == '0:0' ]] || { msg_err "Unowned Vision artifact: $file"; return 1; }
+               "$(stat -c '%u:%g:%a' "$file")" == '0:0:644' ]] || { msg_err "Unowned Vision artifact: $file"; return 1; }
         fi
         file="/etc/nginx/sites-enabled/$name.conf"
         if [[ -e "$file" || -L "$file" ]]; then
@@ -2223,19 +2224,35 @@ preflight_vision_artifacts() {
             }
         fi
     done
+    if [[ -f /etc/nginx/sites-available/vision.conf || -f /etc/nginx/sites-available/vision-acme.conf ]]; then
+        nginx_domain=$(python3 "$PANEL_STAGE/managed-vision.py" --preflight-nginx \
+            /etc/nginx/sites-available/vision.conf /etc/nginx/sites-available/vision-acme.conf) || {
+            msg_err 'Modified/unrecognized Vision nginx configuration; deployment preserved.'; return 1;
+        }
+    fi
     hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision
     if [[ -e "$hook" || -L "$hook" ]]; then
         [[ -f "$hook" && ! -L "$hook" && "$(stat -c '%u:%g:%a' "$hook")" == '0:0:755' ]] || return 1
         old_domain=$(sed -n 's/^VISION_DOMAIN=//p' "$hook")
         [[ "$old_domain" =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ && "$old_domain" == *.* ]] || return 1
         cmp -s "$hook" <(render_vision_hook "$old_domain") || { msg_err 'Unowned Vision deploy-hook; deployment preserved.'; return 1; }
+        [[ -z "$nginx_domain" || "$old_domain" == "$nginx_domain" ]] || { msg_err 'Vision hook/nginx domains differ.'; return 1; }
         VISION_PREVIOUS_HOOK=owned
+    fi
+    if [[ "${INSTALL_VISION:-n}" == y ]] &&
+       [[ -e "/etc/letsencrypt/live/$vision_domain" || -L "/etc/letsencrypt/live/$vision_domain" ||
+          -e "/etc/letsencrypt/archive/$vision_domain" || -L "/etc/letsencrypt/archive/$vision_domain" ||
+          -e "/etc/letsencrypt/renewal/$vision_domain.conf" || -L "/etc/letsencrypt/renewal/$vision_domain.conf" ]]; then
+        [[ "$VISION_PREVIOUS_HOOK" == owned && "$old_domain" == "$vision_domain" && "$nginx_domain" == "$vision_domain" &&
+           -f /etc/nginx/sites-available/vision.conf && -f /etc/nginx/sites-available/vision-acme.conf ]] || {
+            msg_err 'Existing Vision lineage has no complete verified project ownership; deployment preserved.'; return 1;
+        }
+        check_webroot_lineage "$vision_domain" || return 1
+        VISION_OWNED_LINEAGE=$vision_domain
     fi
 }
 
 preflight_integrated_features() {
-    preflight_vision_artifacts || return 1
-    [[ "${INSTALL_SECURITY:-n}${INSTALL_VISION:-n}${CREATE_CLIENT:-n}" != nnn ]] || return 0
     if [[ "${INSTALL_VISION:-n}" == y || "${CREATE_CLIENT:-n}" == y ]]; then
         [[ "$PANEL_TAG" == v3.9.0 ]] || {
             msg_err 'Vision and initial client require verified 3x-ui v3.9.0; select N with other versions.'; return 1;
@@ -2248,7 +2265,7 @@ preflight_integrated_features() {
     for feature in security vision client; do
         case "$feature" in
             security) [[ "${INSTALL_SECURITY:-n}" == y ]] || continue ;;
-            vision) [[ "${INSTALL_VISION:-n}" == y ]] || continue ;;
+            vision) [[ "${INSTALL_VISION:-n}" == y || -e /etc/nginx/sites-available/vision.conf || -e /etc/nginx/sites-available/vision-acme.conf ]] || continue ;;
             client) [[ "${CREATE_CLIENT:-n}" == y ]] || continue ;;
         esac
         curl -fsSL --connect-timeout 15 --max-time 60 "$GITHUB_RAW/assets/$feature/managed.py" -o "$PANEL_STAGE/managed-$feature.py" || return 1
@@ -2257,6 +2274,14 @@ import ast, sys
 ast.parse(open(sys.argv[1]).read())
 PYCHECK
     done
+    preflight_vision_artifacts || return 1
+    if [[ "${INSTALL_SECURITY:-n}" == y ]]; then
+        local security_preflight
+        if ! security_preflight=$(python3 "$PANEL_STAGE/managed-security.py" --preflight); then
+            printf '%s' "$security_preflight" | python3 -c 'import json,sys; [print("[!] Security preflight: "+w, file=sys.stderr) for w in json.load(sys.stdin)["warnings"]]'
+            return 1
+        fi
+    fi
     [[ "${INSTALL_VISION:-n}" == y ]] || return 0
     get_server_ip
     python3 - "$vision_domain" "$domain" "$reality_domain" "$IP4" "$IP6" <<'PYDOMAIN' || return 1
@@ -2295,16 +2320,13 @@ install_vision() {
     fallback_port=$(make_port)
     while [[ "$fallback_port" == "$vision_port" ]]; do fallback_port=$(make_port); done
     [[ -e "/etc/letsencrypt/live/$vision_domain" || -e "/etc/letsencrypt/renewal/$vision_domain.conf" ]] || new_lineage=1
-    cat > /etc/nginx/sites-available/vision-acme.conf <<EOF
-# Managed by 3x-ui Auto Nginx: Vision
-server {
-    listen 80;
-    listen [::]:80;
-    server_name $vision_domain;
-    location ^~ /.well-known/acme-challenge/ { root /var/www/acme; try_files \$uri =404; }
-    location / { return 301 https://\$host\$request_uri; }
-}
-EOF
+    if (( ! new_lineage )) && [[ "${VISION_OWNED_LINEAGE:-}" != "$vision_domain" ]]; then
+        VISION_RESULT=failed_rolled_back
+        msg_warn 'Existing Vision lineage was not approved by project ownership preflight; preserved.'
+        return 1
+    fi
+    python3 "$PANEL_STAGE/managed-vision.py" --render-acme "$vision_domain" > /etc/nginx/sites-available/vision-acme.conf || return 1
+    chmod 0644 /etc/nginx/sites-available/vision-acme.conf || return 1
     if ln -s /etc/nginx/sites-available/vision-acme.conf /etc/nginx/sites-enabled/vision-acme.conf &&
        nginx -t && systemctl reload nginx &&
        { if (( new_lineage )); then

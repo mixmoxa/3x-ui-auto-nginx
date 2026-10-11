@@ -72,6 +72,43 @@ def fallback_config(domain, port, root='/var/www/html'):
 '''
 
 
+def acme_config(domain):
+    domain_name(domain)
+    return MARKER + f'''server {{
+    listen 80;
+    listen [::]:80;
+    server_name {domain};
+    location ^~ /.well-known/acme-challenge/ {{ root /var/www/acme; try_files $uri =404; }}
+    location / {{ return 301 https://$host$request_uri; }}
+}}
+'''
+
+
+def nginx_artifact_domain(site, acme):
+    names = set()
+    for path, render in ((Path(site), fallback_config), (Path(acme), acme_config)):
+        if not path.exists():
+            continue
+        text = path.read_text()
+        name = re.search(r'^    server_name ([a-z0-9.-]+);$', text, re.M)
+        if not name:
+            raise ValueError('Unrecognized Vision server name')
+        domain_name(name[1])
+        if render is fallback_config:
+            port = re.search(r'^    listen 127\.0\.0\.1:(\d+) proxy_protocol;$', text, re.M)
+            if not port or not 1024 <= int(port[1]) <= 65535:
+                raise ValueError('Unrecognized Vision fallback port')
+            expected = render(name[1], int(port[1]))
+        else:
+            expected = render(name[1])
+        if text != expected:
+            raise ValueError('Modified Vision nginx configuration; preserved')
+        names.add(name[1])
+    if len(names) > 1:
+        raise ValueError('Conflicting managed Vision domains')
+    return next(iter(names), '')
+
+
 def stream_config(text, domain, port):
     domain_name(domain)
     # One exact insertion point in the existing installer topology, no generic rewriting.
@@ -141,6 +178,12 @@ def configure(panel, domain, port, fallback, stream, site, enabled, cert, key):
 
 
 def main():
+    if sys.argv[1:2] == ['--render-acme'] and len(sys.argv)==3:
+        print(acme_config(sys.argv[2]), end='')
+        return
+    if sys.argv[1:2] == ['--preflight-nginx'] and len(sys.argv)==4:
+        print(nginx_artifact_domain(*sys.argv[2:]))
+        return
     helper, domain, path, username, vision, port, fallback = sys.argv[1:]
     spec = importlib.util.spec_from_file_location('awg_session', helper)
     module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)

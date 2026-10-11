@@ -89,6 +89,23 @@ class SecuritySystemd(unittest.TestCase):
             # This test deliberately sets a standard baseline in its private VM.
             Path('/etc/resolv.conf').unlink(); Path('/etc/resolv.conf').symlink_to('/run/systemd/resolve/stub-resolv.conf')
             run('systemctl', 'enable', '--now', 'systemd-resolved', 'ssh')
+            # Docker disables periodic APT in its image, unlike native distro
+            # defaults. First prove safe refusal, then select the VM baseline.
+            disabled = Path('/etc/apt/apt.conf.d/docker-disable-periodic-update')
+            if disabled.exists():
+                with self.assertRaisesRegex(ValueError, 'APT periodic'):
+                    security.preflight()
+                disabled.unlink()
+            stock_origins = security.apt_origins(run('apt-config', 'dump'))
+            self.assertTrue(stock_origins, 'Native unattended-upgrades defaults missing')
+            admin = Path('/etc/apt/apt.conf.d/51ci-additional-security')
+            admin.write_text('Unattended-Upgrade::Origins-Pattern { "origin=Provider,label=Provider-Security"; };\n')
+            self.addCleanup(admin.unlink, missing_ok=True)
+            expected_origins = security.apt_origins(run('apt-config', 'dump'))
+            self.assertTrue(stock_origins <= expected_origins)
+            files_before = {str(p): p.read_bytes() for p in Path('/etc/apt/apt.conf.d').glob('*') if p.is_file()}
+            security.preflight()
+            self.assertEqual({str(p): p.read_bytes() for p in Path('/etc/apt/apt.conf.d').glob('*') if p.is_file()}, files_before)
             effective = run('/usr/sbin/sshd', '-T')
             before = {p: p.read_bytes() for p in Path('/etc/ssh').rglob('*') if p.is_file()}
             # Snapshot before applying the production security function, restore afterwards.
@@ -102,6 +119,8 @@ class SecuritySystemd(unittest.TestCase):
                 if result['status'] != 'configured': print('TLS queries observed:',len(seen),'server errors:',errors,flush=True)
                 self.assertEqual(result['status'], 'configured', result)
                 self.assertEqual(result['dot'], 'configured')
+                self.assertTrue(expected_origins <= security.apt_origins(run('apt-config','dump')))
+                self.assertEqual(admin.read_text(),'Unattended-Upgrade::Origins-Pattern { "origin=Provider,label=Provider-Security"; };\n')
                 self.assertTrue(seen, 'No actual TLS DNS query observed')
                 self.assertFalse(errors, errors)
                 self.assertTrue(all(version in ('TLSv1.2','TLSv1.3') for version,_ in seen))

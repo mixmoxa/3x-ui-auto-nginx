@@ -334,8 +334,8 @@ class RealServices(unittest.TestCase):
         nginx=self.start_nginx();self.start_pebble()
         domains = (self.domain, self.reality, 'vision.example.test')
         # Use the production separate Vision webroot vhost on the same HTTP listener.
-        from test_personal_xhttp import template, render
-        vision = render('cat > /etc/nginx/sites-available/vision-acme.conf', vision_domain=domains[2])
+        from test_integrated_features import helper
+        vision = helper('vision').acme_config(domains[2])
         vision = vision.replace('listen 80;', f'listen 127.0.0.1:{self.http};').replace('    listen [::]:80;\n','').replace('/var/www/acme', str(self.webroot))
         config = self.root/'nginx.conf'; config.write_text(config.read_text().replace('http {', 'http {\n'+vision, 1))
         subprocess.run([self.nginx, '-t', '-p', str(self.root)+'/', '-c', config], check=True, capture_output=True, timeout=15)

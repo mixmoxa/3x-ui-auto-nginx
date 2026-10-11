@@ -3,6 +3,7 @@
 Host DNS and security state are deliberately excluded from portable Backup v3.
 """
 import configparser
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -85,11 +86,21 @@ def apt_config(os_id):
     return MARKER + '''APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 Unattended-Upgrade::Automatic-Reboot "false";
-// Reset effective origins in this final managed drop-in; preserve administrator files.
-#clear Unattended-Upgrade::Allowed-Origins;
-#clear Unattended-Upgrade::Origins-Pattern;
+// Add the required distro security origin; retain administrator/distro origins.
 Unattended-Upgrade::Origins-Pattern { "''' + origins + '''"; };
 '''
+
+
+def apt_origins(dump):
+    return set(re.findall(r'Unattended-Upgrade::(Allowed-Origins|Origins-Pattern):: "([^"\n]+)";', dump))
+
+
+def apt_preflight(dump):
+    # Explicitly disabled periodic APT is an administrator/provider policy.
+    for key in ('Enable', 'Update-Package-Lists', 'Unattended-Upgrade'):
+        if re.search(r'APT::Periodic::' + key + r' "(?:0|false|no)";', dump, re.I):
+            raise ValueError('APT periodic updates explicitly disabled; administrator policy preserved')
+    return apt_origins(dump)
 
 
 def dns_routes(dns, domains):
@@ -125,13 +136,21 @@ def preflight(root=Path('/')):
         if path.exists() and re.search(r'^\s*(DNS|FallbackDNS|Domains|DNSOverTLS|DNSStubListener)\s*=', path.read_text(), re.M):
             raise ValueError('Existing global/provider resolved policy; DNS preserved')
     # Never overwrite administrator jails, including a later *.local override.
-    jails = list((root / 'etc/fail2ban/jail.d').glob('*.local')) + [root / 'etc/fail2ban/jail.local']
+    jails = list((root / 'etc/fail2ban/jail.d').glob('*.local')) + list((root / 'etc/fail2ban/jail.d').glob('*.conf')) + [root / 'etc/fail2ban/jail.local', root / 'etc/fail2ban/jail.conf']
+    package_jails = None
     for path in jails:
         if path.exists() and str(path).endswith('90-3x-ui-auto-nginx.local'):
             continue
         if path.exists():
             text = path.read_text()
             if re.search(r'^\s*\[\s*(sshd|DEFAULT)\s*\]', text, re.M):
+                if path.suffix == '.conf':
+                    if package_jails is None:
+                        package_jails = dict(re.findall(r'^ (/\S+) ([a-f0-9]{32})(?: .*?)?$',
+                            command('dpkg-query', '-W', '-f=${Conffiles}', 'fail2ban', check=False), re.M))
+                    name = '/' + str(path.relative_to(root))
+                    if not path.is_symlink() and package_jails.get(name) == hashlib.md5(path.read_bytes()).hexdigest():
+                        continue  # Unmodified distro jail; do not mistake it for an administrator override.
                 raise ValueError('Administrator SSH/DEFAULT Fail2ban jail present; preserved')
     resolv = root / 'etc/resolv.conf'
     if not resolv.is_symlink() or os.readlink(resolv) not in (
@@ -144,6 +163,22 @@ def preflight(root=Path('/')):
     for service in SERVICES:
         if command('systemctl', 'is-enabled', service, check=False) not in ('enabled', 'disabled', 'static', 'not-found', ''):
             raise ValueError('Custom/masked service enable state preserved: ' + service)
+    info = dict(line.strip().split('=', 1) for line in (root / 'etc/os-release').read_text().splitlines() if '=' in line)
+    os_id, version = (info.get(k, '').strip('"') for k in ('ID', 'VERSION_ID'))
+    if (os_id, version) not in (('ubuntu', '24.04'), ('ubuntu', '26.04'), ('debian', '13')):
+        raise ValueError('Unsupported OS for VPS Security')
+    for tool in ('systemctl', 'resolvectl', 'busctl', 'apt-config', 'journalctl', '/usr/sbin/sshd'):
+        if not shutil.which(tool):
+            raise ValueError('Security diagnostic tool unavailable: ' + tool)
+    effective = command('/usr/sbin/sshd', '-T')
+    listen = ''
+    if command('systemctl', 'is-active', 'ssh.socket', check=False) == 'active':
+        listen = command('systemctl', 'show', 'ssh.socket', '-p', 'Listen', '--value')
+    ports = ssh_ports(effective, listen)
+    if not command('journalctl', '-n', '1', '--no-pager', check=False) and not (root / 'var/log/auth.log').is_file():
+        raise ValueError('No SSH journaling/log backend')
+    origins = apt_preflight(command('apt-config', 'dump'))
+    return os_id, effective, ports, origins
 
 
 class Transaction:
@@ -204,7 +239,7 @@ class Transaction:
                 raise ValueError('Configuration rollback not verified')
 
 
-def verify(ports, effective, os_id):
+def verify(ports, effective, os_id, previous_origins=frozenset()):
     if command('/usr/sbin/sshd', '-T') != effective:
         raise ValueError('Effective SSH policy changed')
     # The distro unit uses Type=simple: restart can return before its socket/jail.
@@ -226,11 +261,11 @@ def verify(ports, effective, os_id):
     apt = command('apt-config', 'dump')
     if 'Unattended-Upgrade::Automatic-Reboot "false";' not in apt:
         raise ValueError('Automatic reboot is not disabled')
-    if re.search(r'Unattended-Upgrade::Allowed-Origins:: ', apt):
-        raise ValueError('Additional APT origins active')
-    origins = re.findall(r'Unattended-Upgrade::Origins-Pattern:: "([^"]+)";', apt)
-    if origins != re.findall(r'Origins-Pattern \{ "([^"]+)"', apt_config(os_id)):
-        raise ValueError('Security-only APT origin not effective')
+    origins = apt_origins(apt)
+    required = ('Origins-Pattern', re.search(r'Origins-Pattern \{ "([^"]+)"', apt_config(os_id))[1])
+    if required not in origins or not previous_origins <= origins:
+        raise ValueError('Required security origin missing or existing APT origins changed')
+    apt_preflight(apt)
     for service, hour in (('apt-daily.timer', '02'), ('apt-daily-upgrade.timer', '03')):
         command('systemctl', 'is-active', '--quiet', service)
         command('systemctl', 'is-enabled', '--quiet', service)
@@ -255,14 +290,8 @@ def verify(ports, effective, os_id):
 
 
 def configure(root=Path('/')):
-    preflight(root)
-    os_info = dict(line.strip().split('=', 1) for line in (root / 'etc/os-release').read_text().splitlines() if '=' in line)
-    os_id = os_info['ID'].strip('"')
-    effective = command('/usr/sbin/sshd', '-T')
-    listen = ''
-    if command('systemctl', 'is-active', 'ssh.socket', check=False) == 'active':
-        listen = command('systemctl', 'show', 'ssh.socket', '-p', 'Listen', '--value')
-    ports = ssh_ports(effective, listen)
+    # Repeat the same read-only compatibility check immediately before writes.
+    os_id, effective, ports, previous_origins = preflight(root)
     warnings = []
     if password_warning(effective):
         warnings.append('SSH PASSWORD AUTHENTICATION IS ENABLED. SSH policy was preserved; review it separately.')
@@ -290,7 +319,7 @@ bantime = 3600
         for service in SERVICES:
             command('systemctl', 'enable', service)
             command('systemctl', 'restart', service)
-        verify(ports, effective, os_id)
+        verify(ports, effective, os_id, previous_origins)
         return {'status': 'configured', 'dot': 'configured', 'warnings': warnings}
     except Exception as error:
         status = 'failed_rolled_back'
@@ -307,8 +336,14 @@ bantime = 3600
 
 if __name__ == '__main__':
     try:
-        result = configure()
+        if sys.argv[1:] == ['--preflight']:
+            preflight()
+            result = {'status': 'compatible', 'warnings': []}
+        elif sys.argv[1:]:
+            raise ValueError('Usage: managed-security.py [--preflight]')
+        else:
+            result = configure()
     except Exception as error:
         result = {'status': 'failed_rolled_back', 'dot': 'not_configured', 'warnings': [str(error)]}
     print(json.dumps(result))
-    sys.exit(0 if result['status'] == 'configured' else 1)
+    sys.exit(0 if result['status'] in ('configured', 'compatible') else 1)
