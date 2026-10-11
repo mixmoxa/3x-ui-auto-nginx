@@ -177,7 +177,7 @@ def preflight(root=Path('/'), allow_minimal=False):
     for path in resolved_files:
         if path.exists() and str(path).endswith('90-3x-ui-auto-nginx.conf'):
             continue
-        if path.exists() and re.search(r'^\s*(DNS|FallbackDNS|Domains|DNSOverTLS|DNSStubListener)\s*=', path.read_text(), re.M):
+        if path.exists() and re.search(r'^\s*(DNS|FallbackDNS|Domains|DNSOverTLS|DNSStubListener(?:Extra)?)\s*=', path.read_text(), re.M):
             raise ValueError('Existing global/provider resolved policy; DNS preserved')
     # Never overwrite administrator jails, including a later *.local override.
     jails = list((root / 'etc/fail2ban/jail.d').glob('*.local')) + list((root / 'etc/fail2ban/jail.d').glob('*.conf')) + [root / 'etc/fail2ban/jail.local', root / 'etc/fail2ban/jail.conf']
@@ -240,12 +240,12 @@ def preflight(root=Path('/'), allow_minimal=False):
 
 
 class Transaction:
-    def __init__(self, root=Path('/'), services=SERVICES):
+    def __init__(self, root=Path('/'), services=SERVICES, files=FILES):
         self.root = root
         self.temp = tempfile.TemporaryDirectory(prefix='xui-security-')
         os.chmod(self.temp.name, 0o700)
         self.saved = {}
-        for index, filename in enumerate((*FILES, '/etc/resolv.conf')):
+        for index, filename in enumerate((*files, '/etc/resolv.conf')):
             path = root / filename.lstrip('/')
             backup = Path(self.temp.name) / str(index)
             if path.exists() or path.is_symlink():
@@ -262,6 +262,54 @@ class Transaction:
         # All managed paths were ownership-checked; no global file is rewritten.
         path.write_text(text)
         path.chmod(0o644)
+
+    def save_dns(self, directory):
+        # Only the original DNS snapshot crosses installer subprocesses.
+        directory=Path(directory)
+        shutil.copytree(self.temp.name,directory,symlinks=True)
+        directory.chmod(0o700)
+        metadata=directory/'state.json'
+        metadata.write_text(json.dumps({'saved':{name:backup.name if backup else None for name,backup in self.saved.items()},'states':self.states}))
+        metadata.chmod(0o600)
+
+    @classmethod
+    def load_dns(cls, directory, root):
+        directory=Path(directory); metadata=directory/'state.json'
+        if directory.is_symlink() or not directory.is_dir() or directory.stat().st_uid != 0 or directory.stat().st_mode & 0o077:
+            raise ValueError('Unsafe DNS checkpoint directory')
+        if metadata.is_symlink() or not metadata.is_file() or metadata.stat().st_uid != 0 or metadata.stat().st_mode & 0o077:
+            raise ValueError('Unsafe DNS checkpoint metadata')
+        data=json.loads(metadata.read_text())
+        names=(FILES[-1],'/etc/resolv.conf')
+        if set(data) != {'saved','states'} or set(data['saved']) != set(names) or set(data['states']) != {'systemd-resolved.service'}:
+            raise ValueError('Invalid DNS checkpoint scope')
+        if data['saved']['/etc/resolv.conf'] != '1':
+            raise ValueError('Original resolver file missing from DNS checkpoint')
+        values=data['states']['systemd-resolved.service']
+        if not isinstance(values,list) or len(values)!=2:
+            raise ValueError('Invalid DNS checkpoint service record')
+        active,enabled=values
+        if active not in ('active','inactive','failed','unknown','') or enabled not in ('enabled','disabled','static','not-found',''):
+            raise ValueError('Invalid DNS checkpoint service state')
+        expected={'state.json'}
+        for index,name in enumerate(names):
+            record=data['saved'][name]
+            if record is None: continue
+            if record != str(index): raise ValueError('Invalid DNS checkpoint path')
+            expected.add(record); backup=directory/record
+            if backup.is_symlink():
+                if name != '/etc/resolv.conf' or os.readlink(backup) not in ('/run/systemd/resolve/stub-resolv.conf','/run/systemd/resolve/resolv.conf','../run/systemd/resolve/stub-resolv.conf','../run/systemd/resolve/resolv.conf'):
+                    raise ValueError('Invalid DNS checkpoint link')
+            elif not backup.is_file() or backup.stat().st_uid != 0 or backup.stat().st_mode & 0o022:
+                raise ValueError('Unsafe DNS checkpoint file')
+        if {p.name for p in directory.iterdir()} != expected:
+            raise ValueError('Unexpected DNS checkpoint object')
+        txn=cls.__new__(cls); txn.root=root
+        txn.temp=tempfile.TemporaryDirectory(prefix='xui-dns-restore-')
+        shutil.copytree(directory,txn.temp.name,symlinks=True,dirs_exist_ok=True)
+        txn.saved={name:Path(txn.temp.name)/record if record else None for name,record in data['saved'].items()}
+        txn.states=data['states']
+        return txn
 
     def rollback(self):
         for filename, backup in self.saved.items():
@@ -352,12 +400,13 @@ def verify_dns():
     command('getent', 'ahosts', 'debian.org')
 
 
-def prepare_dns(root=Path('/')):
+def prepare_dns(root=Path('/'), state=None):
     # Capture DNS and service state BEFORE package maintainer scripts can change it.
     preflight(root, allow_minimal=True)
     command('getent', 'ahosts', 'debian.org')
-    txn = Transaction(root, services=('systemd-resolved.service',))
+    txn = Transaction(root, services=('systemd-resolved.service',), files=FILES[-1:])
     try:
+        if state is not None: txn.save_dns(state)
         if not (root/'etc/resolv.conf').is_symlink():
             command('apt-get', '-o', 'DPkg::Lock::Timeout=300', '-o', 'Dpkg::Options::=--force-confdef',
                     '-o', 'Dpkg::Options::=--force-confold', '--no-remove', '--no-install-recommends', '-y', 'install', 'systemd-resolved')
@@ -379,6 +428,25 @@ def prepare_dns(root=Path('/')):
         return {'status':status, 'dot':status, 'warnings':[str(error), 'Package installation is not rolled back; original DNS/service state was restored only if verified.']}
     finally:
         txn.temp.cleanup()
+
+
+def rollback_dns_checkpoint(state, root=Path('/')):
+    txn=None
+    try:
+        # Do not overwrite administrator changes made during installation.
+        resolv=root/'etc/resolv.conf'; policy=root/FILES[-1].lstrip('/')
+        if (not resolv.is_symlink() or os.readlink(resolv) != '/run/systemd/resolve/stub-resolv.conf'
+                or policy.is_symlink() or not policy.is_file() or policy.stat().st_uid != 0
+                or policy.stat().st_mode & 0o022 or policy.read_text() != DOT):
+            raise ValueError('Prepared DNS no longer has canonical project ownership')
+        txn=Transaction.load_dns(state,root)
+        txn.rollback()
+        command('getent','ahosts','debian.org')
+        return {'status':'failed_rolled_back','warnings':['Original DNS and resolver state restored; package changes remain.']}
+    except Exception as error:
+        return {'status':'failed_unverified','warnings':['Original DNS rollback not verified: '+str(error)]}
+    finally:
+        if txn is not None: txn.temp.cleanup()
 
 
 def configure(root=Path('/')):
@@ -432,13 +500,16 @@ if __name__ == '__main__':
         if sys.argv[1:] in (['--preflight'], ['--preflight-install']):
             preflight(allow_minimal=sys.argv[1:] == ['--preflight-install'])
             result = {'status': 'compatible', 'warnings': []}
-        elif sys.argv[1:] == ['--prepare-dns']:
-            result = prepare_dns()
+        elif len(sys.argv) in (2,3) and sys.argv[1] == '--prepare-dns':
+            result = prepare_dns(state=Path(sys.argv[2]) if len(sys.argv)==3 else None)
+        elif len(sys.argv)==3 and sys.argv[1] == '--rollback-dns':
+            result = rollback_dns_checkpoint(Path(sys.argv[2]))
         elif sys.argv[1:]:
-            raise ValueError('Usage: managed-security.py [--preflight|--preflight-install|--prepare-dns]')
+            raise ValueError('Usage: managed-security.py [--preflight|--preflight-install|--prepare-dns [checkpoint]|--rollback-dns checkpoint]')
         else:
             result = configure()
     except Exception as error:
         result = {'status': 'failed_rolled_back', 'dot': 'not_configured', 'warnings': [str(error)]}
     print(json.dumps(result))
-    sys.exit(0 if result['status'] in ('configured', 'compatible') else 1)
+    restored = len(sys.argv)==3 and sys.argv[1]=='--rollback-dns' and result['status']=='failed_rolled_back'
+    sys.exit(0 if result['status'] in ('configured', 'compatible') or restored else 1)

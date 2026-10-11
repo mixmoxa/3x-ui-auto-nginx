@@ -121,12 +121,13 @@ class SecuritySystemd(unittest.TestCase):
             self.assertEqual(run('systemctl','is-active','ssh.service','ssh.socket').splitlines(),['active','active'])
             # Original plain external DNS works before takeover and after rollback.
             from test_real_services import question
-            plain_servers=[]; plain_seen=[]
+            plain_servers=[]; plain_seen=[]; plain_stop=threading.Event()
+            self.addCleanup(plain_stop.set)
             for ip in ('8.8.8.8','8.8.4.4'):
                 udp=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); udp.bind((ip,53)); udp.settimeout(.5)
                 plain_servers.append(udp); self.addCleanup(udp.close)
                 def answer_plain(udp=udp):
-                    while not stop.is_set():
+                    while not plain_stop.is_set():
                         try: packet,peer=udp.recvfrom(4096)
                         except socket.timeout: continue
                         except OSError: return
@@ -171,8 +172,18 @@ class SecuritySystemd(unittest.TestCase):
             self.addCleanup(admin.unlink, missing_ok=True)
             expected_origins = security.apt_origins(run('apt-config', 'dump'))
             self.assertTrue(stock_origins <= expected_origins)
+            global_policy=Path('/etc/systemd/resolved.conf')
+            original_policy=global_policy.read_bytes() if global_policy.exists() else None
+            global_policy.write_text('[Resolve]\nDNSStubListenerExtra=0.0.0.0\n')
+            try:
+                with self.assertRaisesRegex(ValueError,'global/provider'): security.preflight(allow_minimal=True)
+                self.assertEqual(Path('/etc/resolv.conf').read_bytes(),original_dns)
+                self.assertFalse(Path('/usr/bin/resolvectl').exists())
+            finally:
+                if original_policy is None: global_policy.unlink()
+                else: global_policy.write_bytes(original_policy)
             files_before = {str(p): p.read_bytes() for p in Path('/etc/apt/apt.conf.d').glob('*') if p.is_file()}
-            security.preflight(allow_minimal=True)
+            prepared_os=security.preflight(allow_minimal=True)[0]
             self.assertEqual({str(p): p.read_bytes() for p in Path('/etc/apt/apt.conf.d').glob('*') if p.is_file()}, files_before)
             effective = run('/usr/sbin/sshd', '-T')
             before = {p: p.read_bytes() for p in Path('/etc/ssh').rglob('*') if p.is_file()}
@@ -196,7 +207,8 @@ class SecuritySystemd(unittest.TestCase):
             # Package remains installed by design; remove it only in this VM to
             # recreate the original missing-package state for the success path.
             run('dpkg','-r','systemd-resolved')
-            success=security.prepare_dns()
+            dns_checkpoint=root/'dns-checkpoint'
+            success=security.prepare_dns(state=dns_checkpoint)
             self.assertEqual(success['status'],'configured',success)
             security.preflight()
             self.assertTrue(seen,'No authenticated TLS query during preparation')
@@ -310,6 +322,12 @@ class SecuritySystemd(unittest.TestCase):
                 self.assertEqual(Path(security.FILES[-1]).read_text(),security.DOT)
                 self.assertEqual(os.readlink('/etc/resolv.conf'),'/run/systemd/resolve/stub-resolv.conf')
                 self.assertEqual(run('/usr/sbin/sshd','-T'),effective)
+                restored=security.rollback_dns_checkpoint(dns_checkpoint)
+                self.assertEqual(restored['status'],'failed_rolled_back',restored)
+                self.assertFalse(Path('/etc/resolv.conf').is_symlink())
+                self.assertEqual(Path('/etc/resolv.conf').read_bytes(),original_dns)
+                self.assertIn('203.0.113.7',run('getent','ahosts','debian.org'))
+                print('REAL late TLS failure: original pre-install DNS checkpoint restored and libc resolution works: PASS',flush=True)
             finally:
                 if capture.poll() is None: capture.terminate(); capture.wait(timeout=10)
                 if any((Path(name)).exists() for name in security.FILES): snapshot.rollback()
@@ -318,7 +336,7 @@ class SecuritySystemd(unittest.TestCase):
             print('REAL systemd / sshd jail / timers / authenticated TLS DNS / no plaintext / rollback: PASS')
             # Persist only the tested policy into the next disposable boot. This
             # is not a full VPS recovery/reboot acceptance claim.
-            for filename,text in ((security.FILES[1],security.apt_config(security.preflight()[0])),
+            for filename,text in ((security.FILES[1],security.apt_config(prepared_os)),
                                   (security.FILES[2],security.timer('02:30')),(security.FILES[3],security.timer('02:50'))):
                 path=Path(filename); path.parent.mkdir(parents=True,exist_ok=True); path.write_text(text)
             run('systemctl','daemon-reload')

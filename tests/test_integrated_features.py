@@ -50,6 +50,11 @@ class IntegratedFeatures(unittest.TestCase):
                     with self.assertRaises(ValueError): security.preflight(root,allow_minimal=True)
                     self.assertEqual(resolv.read_text(),text)
                 resolv.write_text(original)
+                global_policy=root/'etc/systemd/resolved.conf'; global_policy.parent.mkdir(parents=True,exist_ok=True)
+                global_policy.write_text('[Resolve]\nDNSStubListenerExtra=0.0.0.0\n')
+                with self.assertRaises(ValueError): security.preflight(root,allow_minimal=True)
+                self.assertEqual(resolv.read_text(),original)
+                global_policy.unlink()
                 with patch.object(security,'verify_dns',side_effect=ValueError('TLS unavailable')):
                     result=security.prepare_dns(root)
                 self.assertEqual(result['status'],'failed_rolled_back',result)
@@ -65,6 +70,54 @@ class IntegratedFeatures(unittest.TestCase):
             self.assertNotIn('#clear',config)
         self.assertIn('02:30:00',security.timer('02:30'))
         self.assertIn('02:50:00',security.timer('02:50'))
+
+    def test_late_security_failure_restores_initial_dns_checkpoint(self):
+        import inspect
+        security=helper('security')
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); (root/'etc').mkdir(); (root/'etc/os-release').write_text('ID=ubuntu\nVERSION_ID="26.04"\n')
+            resolv=root/'etc/resolv.conf'; original='nameserver 8.8.8.8\n'; resolv.write_text(original)
+            checkpoint=root/'checkpoint'; state={'active':False,'enabled':'not-found','installed':False}
+            def command(*args,**kwargs):
+                if args[0]=='/usr/sbin/sshd': return 'port 22'
+                if args[0]=='journalctl': return 'SSH journal'
+                if args[0]=='dpkg-query': return 'ii' if state['installed'] and args[-1]=='systemd-resolved' else 'rc'
+                if args[0]=='apt-get' and 'systemd-resolved' in args: state['installed']=True
+                if args[:2]==('systemctl','is-active'): return 'active' if args[-1]=='systemd-resolved.service' and state['active'] else 'inactive'
+                if args[:2]==('systemctl','is-enabled'): return state['enabled'] if args[-1]=='systemd-resolved.service' else 'not-found'
+                if args[0]=='systemctl' and args[-1]=='systemd-resolved.service':
+                    if args[1]=='enable': state['enabled']='enabled'
+                    if args[1]=='disable': state['enabled']='disabled'
+                    if args[1]=='restart': state['active']=True
+                    if args[1]=='stop': state['active']=False
+                if args[0]=='getent': return '203.0.113.7 STREAM debian.org'
+                return ''
+            actual_stat=Path.stat
+            def stat(path,*a,**kw):
+                fields=list(actual_stat(path,*a,**kw)); fields[4]=0; fields[5]=0; return os.stat_result(fields)
+            with patch.object(Path,'stat',stat), patch.object(security.shutil,'which',side_effect=lambda name:name), patch.object(security,'command',side_effect=command), patch.object(security,'verify_dns'):
+                # Compatibility adapter allows the same regression to expose
+                # the real missing rollback on the pre-checkpoint implementation.
+                options={'state':checkpoint} if 'state' in inspect.signature(security.prepare_dns).parameters else {}
+                self.assertEqual(security.prepare_dns(root,**options)['status'],'configured')
+                with patch.object(security,'verify',side_effect=ValueError('late TLS failure')):
+                    self.assertTrue(security.configure(root)['status'].startswith('failed'))
+                if hasattr(security,'rollback_dns_checkpoint'):
+                    metadata=checkpoint/'state.json'; saved_metadata=metadata.read_text()
+                    data=json.loads(saved_metadata); data['states']['ssh.service']=['active','enabled']
+                    metadata.write_text(json.dumps(data))
+                    self.assertEqual(security.rollback_dns_checkpoint(checkpoint,root)['status'],'failed_unverified')
+                    self.assertTrue(resolv.is_symlink(),'Invalid checkpoint must not change DNS')
+                    metadata.write_text(saved_metadata)
+                    policy=root/security.FILES[-1].lstrip('/'); policy.write_text(security.DOT+'# administrator change\n')
+                    self.assertEqual(security.rollback_dns_checkpoint(checkpoint,root)['status'],'failed_unverified')
+                    self.assertIn('administrator change',policy.read_text())
+                    policy.write_text(security.DOT)
+                    self.assertEqual(security.rollback_dns_checkpoint(checkpoint,root)['status'],'failed_rolled_back')
+                self.assertFalse(resolv.is_symlink(),'Late failure retained the new strict DNS instead of the initial scheme')
+                self.assertEqual(resolv.read_text(),original)
+                self.assertFalse((root/security.FILES[-1].lstrip('/')).exists())
+                self.assertFalse(state['active']); self.assertTrue(state['installed'],'No claim of package rollback')
 
     def test_base_preparation_precedes_cleanup_and_reboot_follows_report(self):
         main=function('main')

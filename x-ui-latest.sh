@@ -93,6 +93,10 @@ CFALLOW="n"
 PANEL_VERSION=""
 INSTALL_AGH=n
 INSTALL_SECURITY=n
+DNS_PREPARED=n
+DNS_FINALIZED=n
+DNS_ROLLBACK_ATTEMPTED=n
+DNS_ROLLBACK_RESULT=not_requested
 INSTALL_VISION=n
 CREATE_CLIENT=n
 vision_domain=''
@@ -429,13 +433,27 @@ prepare_base_os() {
 
 prepare_system_dns() {
     [[ "${INSTALL_SECURITY:-n}" == y ]] || return 0
-    local output
-    if ! output=$(python3 "$PANEL_STAGE/managed-security.py" --prepare-dns); then
+    local output status
+    DNS_PREPARED=y
+    if ! output=$(python3 "$PANEL_STAGE/managed-security.py" --prepare-dns "$PANEL_STAGE/dns-checkpoint"); then
+        status=$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])') || status=failed_unverified
+        [[ "$status" != failed_rolled_back ]] || DNS_PREPARED=n
         printf '%s' "$output" | python3 -c 'import json,sys; [print("[!] DNS preparation: "+w,file=sys.stderr) for w in json.load(sys.stdin)["warnings"]]'
         return 1
     fi
     python3 "$PANEL_STAGE/managed-security.py" --preflight >/dev/null || return 1
     verify_base_os
+}
+
+rollback_system_dns() {
+    local output
+    DNS_ROLLBACK_ATTEMPTED=y
+    DNS_ROLLBACK_RESULT=failed_unverified
+    output=$(python3 "$PANEL_STAGE/managed-security.py" --rollback-dns "$PANEL_STAGE/dns-checkpoint")
+    DNS_ROLLBACK_RESULT=$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])') || return 1
+    printf '%s' "$output" | python3 -c 'import json,sys; [print("[!] "+w,file=sys.stderr) for w in json.load(sys.stdin)["warnings"]]'
+    if [[ "$DNS_ROLLBACK_RESULT" == failed_rolled_back ]]; then DNS_PREPARED=n; return 0; fi
+    return 1
 }
 
 finish_initial_reboot() {
@@ -1040,6 +1058,13 @@ bootstrap_panel_dependencies() {
 }
 
 release_panel_preflight() {
+    if [[ "${DNS_PREPARED:-n}" == y && "${DNS_FINALIZED:-n}" != y && "${DNS_ROLLBACK_ATTEMPTED:-n}" != y ]]; then
+        rollback_system_dns || msg_err 'Original DNS rollback could not be verified.'
+    fi
+    if [[ "${DNS_ROLLBACK_RESULT:-}" == failed_unverified ]]; then
+        msg_warn "Private stage retained for DNS rollback inspection: $PANEL_STAGE"
+        return 1
+    fi
     [[ -z "${PANEL_STAGE:-}" ]] || rm -rf -- "$PANEL_STAGE"
 }
 
@@ -2460,7 +2485,16 @@ install_security() {
     output=$(python3 "$PANEL_STAGE/managed-security.py")
     SECURITY_RESULT=$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])') || return 1
     printf '%s' "$output" | python3 -c 'import json,sys; [print("[!] "+w) for w in json.load(sys.stdin)["warnings"]]'
-    [[ "$SECURITY_RESULT" == configured ]]
+    if [[ "$SECURITY_RESULT" == configured ]]; then DNS_FINALIZED=y; return 0; fi
+    local failed_security=$SECURITY_RESULT
+    if [[ "${DNS_PREPARED:-n}" == y ]]; then
+        if rollback_system_dns; then
+            [[ "$failed_security" == failed_unverified ]] || SECURITY_RESULT=failed_rolled_back
+        else
+            SECURITY_RESULT=failed_unverified
+        fi
+    fi
+    return 1
 }
 
 install_initial_client() {

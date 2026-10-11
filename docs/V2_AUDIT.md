@@ -74,8 +74,14 @@ files. Unknown configurations fail safely before cleanup; network interfaces are
 never rewritten. After taking a private snapshot, preparation installs the real
 resolved package, applies strict DoT, checks effective routes/TLS and libc DNS,
 then repeats the readiness preflight. Failure restores the original file/link
-and service active/enable state and verifies libc resolution. A newly installed
-package remains installed but inactive/disabled; retry of such a residual state
+and service active/enable state and verifies libc resolution. The original
+resolver snapshot remains in a root-private checkpoint inside the current
+release stage until Security finishes. A late Security failure or fatal installer
+exit before that point restores the original pre-preparation DNS, not the new DoT
+baseline. Only the two DNS paths and resolver state are accepted by checkpoint
+loading; modified/unowned current DNS is never overwritten. Unverified rollback
+retains the private stage for root inspection; successful finalization removes it.
+A newly installed package remains installed but inactive/disabled; retry of such a residual state
 requires administrator review rather than assuming ownership. AGH's DoH
 upstreams are not rewritten or used as the system resolver.
 
