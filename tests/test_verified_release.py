@@ -74,7 +74,7 @@ cp() { command cp "$@"; }
             root = Path(tmp)
             target = root/'managed-state'
             target.write_bytes(b'previous healthy installation')
-            mock = '\n'.join(f'{n}() {{ :; }}' for n in set(names) if n not in ('main','local','if','return','fi'))
+            mock = '\n'.join(f'{n}() {{ :; }}' for n in set(names) if n not in ('main','local','if','else','return','fi'))
             mock += r'''
 msg_err() { echo "$*" >&2; }
 preflight_panel_release() { echo verification-failed >> "$LOG"; return 1; }
@@ -210,6 +210,24 @@ _panel_initial_config() { :; }
             self.assertNotEqual(first.splitlines()[0],output.read_text().splitlines()[1])
             for field,value in (('tag_name','v3.10.0-rc.1'),('prerelease',True),('draft',True)):
                 with self.subTest(field=field), self.assertRaises(ValueError): candidate({**release,field:value})
+
+    def test_canary_cache_invalidates_changed_integrated_api_helpers(self):
+        from unittest.mock import patch
+        import upstream_canary
+        import shutil
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for folder in ('tests','assets'):
+                shutil.copytree(ROOT/folder,root/folder)
+            shutil.copy2(ROOT/'x-ui-latest.sh',root/'x-ui-latest.sh')
+            (root/'.github/workflows').mkdir(parents=True)
+            shutil.copy2(ROOT/'.github/workflows/upstream-canary.yml',root/'.github/workflows/upstream-canary.yml')
+            with patch.object(upstream_canary,'ROOT',root):
+                for feature in ('vision','client'):
+                    previous = upstream_canary.fingerprint()
+                    path = root/f'assets/{feature}/managed.py'
+                    path.write_text(path.read_text()+'\n# changed API contract\n')
+                    self.assertNotEqual(previous,upstream_canary.fingerprint(),feature)
 
     def test_canary_uses_own_archive_and_reports_compatibility_failure(self):
         from unittest.mock import patch

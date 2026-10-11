@@ -92,10 +92,17 @@ AUTODOMAIN="n"
 CFALLOW="n"
 PANEL_VERSION=""
 INSTALL_AGH=n
+INSTALL_SECURITY=n
+INSTALL_VISION=n
+CREATE_CLIENT=n
+vision_domain=''
 
 # ─── Stop & clean previous install (called from main, after domain validation) ─
 clean_previous_install() {
     systemctl stop x-ui 2>/dev/null || true
+    if [[ "${VISION_PREVIOUS_HOOK:-}" == owned ]]; then
+        rm -f /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision
+    fi
     rm -rf /etc/systemd/system/x-ui.service
     rm -rf /usr/local/x-ui
     rm -rf /etc/x-ui
@@ -494,6 +501,8 @@ EOF
     cat > /etc/nginx/snippets/includes.conf <<EOF
     #Subscription — prefix location covers all sub-paths (assets, JS, etc.)
     location /${sub_path}/ {
+        access_log off;
+        error_log /dev/null crit;
         if (\$hack = 1) { return 404; }
         proxy_redirect off;
         proxy_set_header Host \$host;
@@ -502,6 +511,8 @@ EOF
         proxy_pass https://127.0.0.1:${sub_port};
     }
     location = /${sub_path} {
+        access_log off;
+        error_log /dev/null crit;
         if (\$hack = 1) { return 404; }
         proxy_redirect off;
         proxy_set_header Host \$host;
@@ -512,6 +523,8 @@ EOF
     # Regex takes priority over prefix: catches subscription IDs (one-level deep)
     # and routes Clash/Mihomo clients to dynamic clash.yaml generator
     location ~ ^/${sub_path}/(?<clash_sub_id>[^/]+)$ {
+        access_log off;
+        error_log /dev/null crit;
         if (\$hack = 1) { return 404; }
         if (\$serve_clash_yaml = 1) { rewrite ^ /__clash_api?sub_id=\$clash_sub_id last; }
         proxy_redirect off;
@@ -525,6 +538,8 @@ EOF
 
     #Subscription (json)
     location /${json_path} {
+        access_log off;
+        error_log /dev/null crit;
         if (\$hack = 1) { return 404; }
         proxy_redirect off;
         proxy_set_header Host \$host;
@@ -533,6 +548,8 @@ EOF
         proxy_pass https://127.0.0.1:${sub_port};
     }
     location /${json_path}/ {
+        access_log off;
+        error_log /dev/null crit;
         if (\$hack = 1) { return 404; }
         proxy_redirect off;
         proxy_set_header Host \$host;
@@ -793,6 +810,8 @@ server {
     # ── Clash YAML generator — internal, proxied here by rewrite from sub_path ────
     location = /__clash_api {
         internal;
+        access_log off;
+        error_log /dev/null crit;
         proxy_pass          http://127.0.0.1:${mtr_backend_port}/api/clash\$is_args\$args;
         proxy_http_version  1.1;
         proxy_set_header    X-Real-IP \$remote_addr;
@@ -1760,7 +1779,7 @@ select_amneziawg() {
     INSTALL_AWG=n
     local answer
     msg_inf 'AMNEZIAWG'
-    echo 'Optional AmneziaWG 3.1; add clients later in the panel.'
+    echo 'Optional AmneziaWG 3.1; initial client creation can include this connection.'
     while true; do
         printf 'Install AmneziaWG on UDP port 8443? [y/N]: '
         IFS= read -r answer || return 0
@@ -2014,7 +2033,7 @@ show_results() {
     msg_inf '  3x-ui Auto Nginx — Installation Result'
     msg_inf '============================================================'
     # The core passed its initial gate; optional rollback may leave its current health unverified.
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_warn ' [!] 3x-ui / Xray           Post-rollback health not verified'
     else
         msg_ok " [✓] 3x-ui / Xray           Running${version_label}"
@@ -2024,7 +2043,7 @@ show_results() {
         warn) msg_warn " [!] CPU support             ${CPU_SUPPORT_TEXT}" ;;
         *)    msg_inf " [i] CPU support             ${CPU_SUPPORT_TEXT:-Compatible (acceleration not assessed)}" ;;
     esac
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_warn ' [!] nginx                  Post-rollback health not verified'
     else
         msg_ok ' [✓] nginx                  Running'
@@ -2036,12 +2055,12 @@ show_results() {
     else
         msg_warn ' [!] TLS certificates       Check certificate files'
     fi
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_warn ' [!] XHTTP                  Post-rollback health not verified'
     else
         msg_ok ' [✓] XHTTP                  Ready'
     fi
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_warn ' [!] Diagnostics            Post-rollback health not verified'
     elif [[ -s /var/www/diagnostics/index.html && -s /var/www/diagnostics/speedtest.js &&
           -s /var/www/diagnostics/speedtest_worker.js && -s /usr/local/lib/3x-ui-pro/mtr-backend.py ]]; then
@@ -2058,6 +2077,25 @@ show_results() {
         configured) msg_ok " [✓] AmneziaWG              Configured (UDP/8443)" ;;
         failed) msg_warn " [!] AmneziaWG              Not configured" ;;
     esac
+    case "${SECURITY_RESULT:-not_requested}" in
+        configured) msg_ok ' [✓] VPS Security + DoT     Configured (strict system TLS DNS)' ;;
+        failed_rolled_back) msg_warn ' [!] VPS Security + DoT     Failed — rolled back / unchanged' ;;
+        failed_unverified) msg_warn ' [!] VPS Security + DoT     Failed — rollback not verified' ;;
+    esac
+    case "${VISION_RESULT:-not_requested}" in
+        configured) msg_ok " [✓] RAW TLS Vision         Ready ($vision_domain:443)" ;;
+        failed_rolled_back) msg_warn ' [!] RAW TLS Vision         Failed — rolled back' ;;
+        failed_unverified) msg_warn ' [!] RAW TLS Vision         Failed — rollback not verified' ;;
+    esac
+    case "${CLIENT_RESULT:-not_requested}" in
+        configured)
+            msg_ok ' [✓] Client                  Created'
+            msg_ok ' [✓] Subscription            Ready'
+            printf '%s' "$CLIENT_OUTPUT" | python3 -c 'import json,sys; c=json.load(sys.stdin); print("     " + " / ".join(c["protocols"])); print("\n Subscription:\n " + c["url"])'
+            [[ "${INSTALL_AWG:-n}" != y ]] || msg_inf ' AWG vpn:// export requires an Amnezia-compatible application.'
+            CLIENT_OUTPUT='' ;;
+        failed_unverified) msg_warn ' [!] Client / Subscription   Failed verification — inspect panel before retrying' ;;
+    esac
     case "${AGH_RESULT:-not_requested}" in
         installed)
             msg_ok ' [✓] AdGuard Home           Running (v0.107.79)'
@@ -2069,7 +2107,7 @@ show_results() {
             msg_warn ' [!] AdGuard Home           Failed — rollback not verified'
             msg_warn ' [!] DNS-over-HTTPS         State not verified' ;;
     esac
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_warn ' [!] Certificate renewal    Post-rollback health not verified'
     else
         msg_ok ' [✓] Certificate renewal    Webroot + systemd timer'
@@ -2095,7 +2133,7 @@ show_results() {
         AGH_PASSWORD=''
     elif [[ "${AGH_RESULT:-not_requested}" == failed_rolled_back ]]; then
         msg_warn ' AdGuard Home was not installed. The core 3x-ui stack remains operational.'
-    elif [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
+    elif [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_warn ' Post-rollback core health could not be verified. Inspect nginx and core services.'
     fi
     msg_inf '============================================================'
@@ -2106,13 +2144,216 @@ show_results() {
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
+select_security() {
+    local answer
+    INSTALL_SECURITY=n
+    printf 'CONFIGURE VPS SECURITY + DoT? [Y/n]:\n'
+    echo 'Fail2ban, automatic security updates, encrypted system DNS.'
+    echo 'Existing SSH configuration will not be changed.'
+    while IFS= read -r answer; do
+        case "$answer" in
+            ''|y|Y) INSTALL_SECURITY=y; return 0 ;;
+            n|N) return 0 ;;
+            *) printf 'Please enter y or n.\n' ;;
+        esac
+    done
+    return 0
+}
+
+select_vision() {
+    local answer
+    INSTALL_VISION=n
+    while true; do
+        printf 'INSTALL VLESS RAW TLS VISION? [y/N]: '
+        IFS= read -r answer || return 0
+        case "$answer" in
+            ''|n|N) return 0 ;;
+            y|Y) break ;;
+            *) printf 'Please enter y or n.\n' ;;
+        esac
+    done
+    echo 'Requires one additional domain or subdomain'
+    echo 'pointing to this VPS. Uses TCP port 443.'
+    printf 'VISION DOMAIN: '
+    IFS= read -r vision_domain || return 1
+    vision_domain=${vision_domain,,}
+    [[ -n "$vision_domain" ]] || return 1
+    INSTALL_VISION=y
+}
+
+select_client() {
+    local answer
+    CREATE_CLIENT=n
+    while true; do
+        printf 'CREATE CLIENT AND SUBSCRIPTION? [Y/n]: '
+        IFS= read -r answer || return 0
+        case "$answer" in
+            ''|y|Y) CREATE_CLIENT=y; return 0 ;;
+            n|N) return 0 ;;
+            *) printf 'Please enter y or n.\n' ;;
+        esac
+    done
+}
+
+preflight_vision_artifacts() {
+    VISION_PREVIOUS_HOOK=''
+    local name file hook old_domain
+    for name in vision vision-acme; do
+        file="/etc/nginx/sites-available/$name.conf"
+        if [[ -e "$file" || -L "$file" ]]; then
+            [[ -f "$file" && ! -L "$file" && "$(head -n1 "$file")" == '# Managed by 3x-ui Auto Nginx: Vision' &&
+               "$(stat -c '%u:%g' "$file")" == '0:0' ]] || { msg_err "Unowned Vision artifact: $file"; return 1; }
+        fi
+        file="/etc/nginx/sites-enabled/$name.conf"
+        if [[ -e "$file" || -L "$file" ]]; then
+            [[ -L "$file" && "$(readlink "$file")" == "/etc/nginx/sites-available/$name.conf" ]] || {
+                msg_err "Unowned Vision link: $file"; return 1;
+            }
+        fi
+    done
+    hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision
+    if [[ -e "$hook" || -L "$hook" ]]; then
+        [[ -f "$hook" && ! -L "$hook" && "$(stat -c '%u:%g:%a' "$hook")" == '0:0:755' ]] || return 1
+        old_domain=$(sed -n 's/^VISION_DOMAIN=//p' "$hook")
+        [[ "$old_domain" =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ && "$old_domain" == *.* ]] || return 1
+        cmp -s "$hook" <(render_vision_hook "$old_domain") || { msg_err 'Unowned Vision deploy-hook; deployment preserved.'; return 1; }
+        VISION_PREVIOUS_HOOK=owned
+    fi
+}
+
+preflight_integrated_features() {
+    preflight_vision_artifacts || return 1
+    [[ "${INSTALL_SECURITY:-n}${INSTALL_VISION:-n}${CREATE_CLIENT:-n}" != nnn ]] || return 0
+    if [[ "${INSTALL_VISION:-n}" == y || "${CREATE_CLIENT:-n}" == y ]]; then
+        [[ "$PANEL_TAG" == v3.9.0 ]] || {
+            msg_err 'Vision and initial client require verified 3x-ui v3.9.0; select N with other versions.'; return 1;
+        }
+        # Reuse the existing authenticated local HTTPS/CSRF implementation.
+        AWG_HELPER="$PANEL_STAGE/managed-amneziawg.py"
+        curl -fsSL --connect-timeout 15 --max-time 60 "$GITHUB_RAW/assets/amneziawg/managed.py" -o "$AWG_HELPER" || return 1
+    fi
+    local feature
+    for feature in security vision client; do
+        case "$feature" in
+            security) [[ "${INSTALL_SECURITY:-n}" == y ]] || continue ;;
+            vision) [[ "${INSTALL_VISION:-n}" == y ]] || continue ;;
+            client) [[ "${CREATE_CLIENT:-n}" == y ]] || continue ;;
+        esac
+        curl -fsSL --connect-timeout 15 --max-time 60 "$GITHUB_RAW/assets/$feature/managed.py" -o "$PANEL_STAGE/managed-$feature.py" || return 1
+        python3 - "$PANEL_STAGE/managed-$feature.py" <<'PYCHECK' || return 1
+import ast, sys
+ast.parse(open(sys.argv[1]).read())
+PYCHECK
+    done
+    [[ "${INSTALL_VISION:-n}" == y ]] || return 0
+    get_server_ip
+    python3 - "$vision_domain" "$domain" "$reality_domain" "$IP4" "$IP6" <<'PYDOMAIN' || return 1
+import ipaddress, re, socket, sys
+name, panel, reality, ipv4, ipv6 = sys.argv[1:]
+if (len(name)>253 or '.' not in name or name.lower() in (panel.lower(), reality.lower())
+    or not all(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label) for label in name.split('.'))):
+    sys.exit('Invalid/conflicting Vision domain; deployment preserved')
+expected = {str(ipaddress.ip_address(ip)) for ip in (ipv4, ipv6) if ip}
+actual = {str(ipaddress.ip_address(row[4][0])) for row in socket.getaddrinfo(name, 443, type=socket.SOCK_STREAM)}
+if not actual or not expected or not actual <= expected:
+    sys.exit('Every Vision A/AAAA record must point to this VPS; deployment preserved')
+PYDOMAIN
+}
+
+render_vision_hook() {
+    printf '#!/usr/bin/env bash\nset -Eeuo pipefail\nVISION_DOMAIN=%q\n' "$1"
+    cat <<'VISIONHOOK'
+[[ "${RENEWED_LINEAGE:-}" == "/etc/letsencrypt/live/$VISION_DOMAIN" ]] || exit 0
+openssl x509 -in "$RENEWED_LINEAGE/fullchain.pem" -noout -checkend 0 -checkhost "$VISION_DOMAIN"
+cert_key=$(openssl x509 -in "$RENEWED_LINEAGE/fullchain.pem" -pubkey -noout)
+private_key=$(openssl pkey -in "$RENEWED_LINEAGE/privkey.pem" -pubout)
+[[ "$cert_key" == "$private_key" ]] || exit 1
+# Xray 26.9.30 polls files hourly; ensure the deployed certificate is used now.
+systemctl restart x-ui
+systemctl is-active --quiet x-ui
+curl -q -fsS --noproxy '*' --http1.1 --resolve "$VISION_DOMAIN:443:127.0.0.1" \
+    --connect-timeout 5 --max-time 20 "https://$VISION_DOMAIN/" >/dev/null
+VISIONHOOK
+}
+
+install_vision() {
+    VISION_RESULT=failed_unverified
+    local new_lineage=0 result=0 vision_output='' hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision vision_port fallback_port
+    vision_port=$(make_port)
+    fallback_port=$(make_port)
+    while [[ "$fallback_port" == "$vision_port" ]]; do fallback_port=$(make_port); done
+    [[ -e "/etc/letsencrypt/live/$vision_domain" || -e "/etc/letsencrypt/renewal/$vision_domain.conf" ]] || new_lineage=1
+    cat > /etc/nginx/sites-available/vision-acme.conf <<EOF
+# Managed by 3x-ui Auto Nginx: Vision
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $vision_domain;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/acme; try_files \$uri =404; }
+    location / { return 301 https://\$host\$request_uri; }
+}
+EOF
+    if ln -s /etc/nginx/sites-available/vision-acme.conf /etc/nginx/sites-enabled/vision-acme.conf &&
+       nginx -t && systemctl reload nginx &&
+       { if (( new_lineage )); then
+             certbot certonly --webroot --webroot-path /var/www/acme --cert-name "$vision_domain" \
+                 -d "$vision_domain" --non-interactive --agree-tos --register-unsafely-without-email;
+         else check_webroot_lineage "$vision_domain";
+         fi; } &&
+       render_vision_hook "$vision_domain" > "$hook" && chown root:root "$hook" && chmod 0755 "$hook" && bash -n "$hook" &&
+       vision_output=$(printf '%s' "$config_password" | python3 "$PANEL_STAGE/managed-vision.py" "$AWG_HELPER" \
+           "$domain" "$panel_path" "$config_username" "$vision_domain" "$vision_port" "$fallback_port"); then
+        VISION_RESULT=configured
+        return 0
+    fi
+    if [[ -n "$vision_output" ]]; then
+        VISION_RESULT=$(printf '%s' "$vision_output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])') || VISION_RESULT=failed_unverified
+    else
+        # Failure before API changes; only newly owned webroot/hook artifacts exist.
+        VISION_RESULT=failed_rolled_back
+    fi
+    if [[ "$VISION_RESULT" == failed_rolled_back ]]; then
+        rm -f "$hook" || result=1
+        rm -f /etc/nginx/sites-enabled/vision-acme.conf /etc/nginx/sites-available/vision-acme.conf || result=1
+        if (( new_lineage )) && [[ -e "/etc/letsencrypt/live/$vision_domain" || -e "/etc/letsencrypt/renewal/$vision_domain.conf" ]]; then
+            certbot delete --cert-name "$vision_domain" --non-interactive || result=1
+        fi
+    else
+        msg_warn 'Vision rollback is unverified; retained certificate and managed renewal artifacts for inspection.'
+    fi
+    nginx -t && systemctl reload nginx && check_installation || result=1
+    if (( result != 0 )); then VISION_RESULT=failed_unverified; fi
+    msg_warn "Vision failed: $VISION_RESULT"
+    return 1
+}
+
+install_security() {
+    local output
+    SECURITY_RESULT=failed_unverified
+    output=$(python3 "$PANEL_STAGE/managed-security.py")
+    SECURITY_RESULT=$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])') || return 1
+    printf '%s' "$output" | python3 -c 'import json,sys; [print("[!] "+w) for w in json.load(sys.stdin)["warnings"]]'
+    [[ "$SECURITY_RESULT" == configured ]]
+}
+
+install_initial_client() {
+    CLIENT_RESULT=failed_unverified
+    CLIENT_OUTPUT=$(printf '%s' "$config_password" | python3 "$PANEL_STAGE/managed-client.py" \
+        "$AWG_HELPER" "$domain" "$panel_path" "$config_username") || return 1
+    CLIENT_RESULT=configured
+}
+
 main() {
     confirm_destructive_reinstall || exit 1
     validate_domains || exit 1
+    select_security || exit 1
+    select_vision || exit 1
     select_amneziawg || exit 1
     select_adguard || exit 1
+    select_client || exit 1
     preflight_panel_release || { msg_err "Release preflight failed; existing deployment was not removed."; exit 1; }
     preflight_amneziawg || { msg_err "AmneziaWG preflight failed; existing deployment was not removed."; exit 1; }
+    preflight_integrated_features || { msg_err 'Optional feature preflight failed; existing deployment was not removed.'; exit 1; }
     cleanup_adguard || { msg_err "Cannot clean AdGuard Home; core deployment was not removed."; exit 1; }
     clean_previous_install
     install_packages || { msg_err "Dependency setup failed."; exit 1; }
@@ -2139,6 +2380,12 @@ main() {
     check_installation || { msg_err "Installation failed mandatory health checks."; exit 1; }
 
     local install_result=0
+    VISION_RESULT=not_requested
+    SECURITY_RESULT=not_requested
+    CLIENT_RESULT=not_requested
+    if [[ "${INSTALL_VISION:-n}" == y ]]; then
+        install_vision || install_result=1
+    fi
     AWG_RESULT=not_requested
     if [[ "${INSTALL_AWG:-n}" == y ]]; then
         AWG_RESULT=failed
@@ -2147,6 +2394,22 @@ main() {
     AGH_RESULT=not_requested
     if [[ "$INSTALL_AGH" == y ]]; then
         install_adguard || install_result=1
+    fi
+    # DNS changes occur only after every requested HTTP-01 certificate has been issued.
+    if [[ "${INSTALL_SECURITY:-n}" == y ]]; then
+        install_security || install_result=1
+    fi
+    if [[ "${CREATE_CLIENT:-n}" == y ]]; then
+        if check_installation; then
+            install_initial_client || install_result=1
+        else
+            install_result=1
+            CLIENT_RESULT=failed_unverified
+        fi
+    fi
+    CORE_RESULT=configured
+    if [[ "${INSTALL_SECURITY:-n}${INSTALL_VISION:-n}${INSTALL_AWG:-n}${INSTALL_AGH:-n}${CREATE_CLIENT:-n}" != nnnnn ]]; then
+        if ! check_installation; then CORE_RESULT=failed_unverified; install_result=1; fi
     fi
     show_results
     return "$install_result"

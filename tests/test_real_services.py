@@ -83,7 +83,7 @@ class RealServices(unittest.TestCase):
                 labels.append(packet[offset:offset+length].decode('ascii'));offset+=length
             offset+=1;kind,klass=struct.unpack('!HH',packet[offset:offset+4]);end=offset+4
             name='.'.join(labels);requests.append((name,kind))
-            address='127.0.0.1' if name in ('panel.example.test','reality.example.test','broken.example.test','unrelated.example.test','example.com','reality.example.com') else '198.51.100.42'
+            address='127.0.0.1' if name in ('panel.example.test','reality.example.test','vision.example.test','broken.example.test','unrelated.example.test','example.com','reality.example.com') else '198.51.100.42'
             data=struct.pack('!6H',int.from_bytes(packet[:2],'big'),0x8180,1,1 if kind==1 else 0,0,0)+packet[12:end]
             if kind==1:data+=b'\xc0\x0c'+struct.pack('!HHIH',1,klass,60,4)+socket.inet_aton(address)
             return data
@@ -324,11 +324,19 @@ class RealServices(unittest.TestCase):
 
     def test_real_certbot_pebble_http01_issuance_renewal_and_negative(self):
         nginx=self.start_nginx();self.start_pebble()
-        for domain in (self.domain,self.reality):self.issue(domain)
-        before={domain:self.lineage(domain) for domain in (self.domain,self.reality)}
+        domains = (self.domain, self.reality, 'vision.example.test')
+        # Use the production separate Vision webroot vhost on the same HTTP listener.
+        from test_personal_xhttp import template, render
+        vision = render('cat > /etc/nginx/sites-available/vision-acme.conf', vision_domain=domains[2])
+        vision = vision.replace('listen 80;', f'listen 127.0.0.1:{self.http};').replace('    listen [::]:80;\n','').replace('/var/www/acme', str(self.webroot))
+        config = self.root/'nginx.conf'; config.write_text(config.read_text().replace('http {', 'http {\n'+vision, 1))
+        subprocess.run([self.nginx, '-t', '-p', str(self.root)+'/', '-c', config], check=True, capture_output=True, timeout=15)
+        subprocess.run([self.nginx, '-s', 'reload', '-p', str(self.root)+'/', '-c', config], check=True, capture_output=True, timeout=15)
+        for domain in domains:self.issue(domain)
+        before={domain:self.lineage(domain) for domain in domains}
         access=(self.root/'access.log').read_text()
         self.assertGreaterEqual(len(re.findall(r'GET /\.well-known/acme-challenge/[^ ]+ HTTP/1.1" 200',access)),2)
-        for domain in (self.domain,self.reality):
+        for domain in domains:
             self.certbot('renew','--cert-name',domain,'--force-renewal','--no-random-sleep-on-renew')
             self.assertNotEqual(self.lineage(domain),before[domain])
             self.assertIsNone(nginx.poll(),'Renewal must not stop nginx')

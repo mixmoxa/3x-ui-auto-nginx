@@ -181,6 +181,8 @@ elif name == 'curl':
         print('200', end=''); sys.exit(0)
     if '/login.html' in url:
         print('<html><script src="login.fixture.js"></script></html>'); sys.exit(0)
+    if url == 'https://vision.example.com/':
+        print('vision cover'); sys.exit(0)
     if url.startswith('http://127.0.0.1/'):
         if '/.well-known/acme-challenge/' in url:
             print((root / 'var/www/acme/.well-known/acme-challenge' / url.rsplit('/', 1)[1]).read_text(), end='')
@@ -400,6 +402,73 @@ class PersonalBackup(unittest.TestCase):
             if extra:
                 dst.addfile(extra, io.BytesIO(b'bad') if extra.isfile() else None)
         return target
+
+    def test_restore_preserves_foreign_certificate_lineages(self):
+        archive = self.backup()
+        foreign = self.path('/etc/letsencrypt/live/administrator.example/fullchain.pem')
+        foreign.parent.mkdir(parents=True); foreign.write_text('administrator-owned certificate')
+        result = self.run_tool('restore', str(archive))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(foreign.exists(), 'Restore deleted a foreign target lineage')
+        self.assertEqual(foreign.read_text(), 'administrator-owned certificate')
+
+    def test_old_archive_custom_vision_remark_is_not_project_ownership(self):
+        with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
+            db.execute("UPDATE inbounds SET remark='vision' WHERE id=(SELECT id FROM inbounds LIMIT 1)")
+        archive=self.backup()
+        result=self.run_tool('restore',archive)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM inbounds WHERE remark='vision'").fetchone()[0],1)
+
+    def test_restore_refuses_foreign_project_named_deploy_hook_before_change(self):
+        archive=self.backup()
+        hook=self.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision')
+        hook.write_text('#!/bin/sh\n# administrator hook\nexit 0\n'); hook.chmod(0o755)
+        self.write('/etc/x-ui/marker','keep-target')
+        (self.root/'commands').write_text('')
+        result=self.run_tool('restore',archive)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('administrator hook',hook.read_text())
+        self.assertEqual(self.path('/etc/x-ui/marker').read_text(),'keep-target')
+        self.assertFalse(any(c[:2]==['systemctl','stop'] for c in self.commands()))
+
+    def seed_vision(self):
+        from test_integrated_features import helper
+        vision = helper('vision')
+        certificates(self.root, extra=('vision.example.com',))
+        row = vision.inbound('vision.example.com', 12000, 12001,
+                str(self.path('/etc/letsencrypt/live/vision.example.com/fullchain.pem')),
+                str(self.path('/etc/letsencrypt/live/vision.example.com/privkey.pem')))
+        with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
+            iid = db.execute('SELECT max(id)+1 FROM inbounds').fetchone()[0]
+            db.execute('INSERT INTO inbounds(id,user_id,remark,enable,listen,port,protocol,settings,stream_settings,tag,sniffing) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                (iid,1,'vision',1,row['listen'],row['port'],row['protocol'],json.dumps(row['settings']),json.dumps(row['streamSettings']),row['tag'],json.dumps(row['sniffing'])))
+            columns = {r[1] for r in db.execute('PRAGMA table_info(hosts)')}
+            for column in ('sni', 'allow_insecure'):
+                if column not in columns: db.execute('ALTER TABLE hosts ADD COLUMN '+column)
+            db.execute('INSERT INTO hosts(inbound_id,sort_order,remark,address,port,security,sni,alpn,allow_insecure) VALUES(?,?,?,?,?,?,?,?,?)',
+                (iid,0,'vision','vision.example.com',443,'same','vision.example.com','["http/1.1"]',0))
+        self.write('/etc/nginx/sites-available/vision.conf', vision.fallback_config('vision.example.com',12001,str(self.path('/var/www/html'))))
+        self.path('/etc/nginx/sites-enabled').mkdir(exist_ok=True)
+        self.path('/etc/nginx/sites-enabled/vision.conf').symlink_to(self.path('/etc/nginx/sites-available/vision.conf'))
+        self.write('/etc/nginx/sites-available/vision-acme.conf', '# Managed by 3x-ui Auto Nginx: Vision\n')
+        self.write('/etc/nginx/stream-enabled/stream.conf','map $ssl_preread_server_name $sni_name {\n    hostnames;\n    vision.example.com vision;\n}\nupstream vision { server 127.0.0.1:12000; }\n')
+        source = relocated(function('render_vision_hook'),self.root)
+        body = subprocess.check_output(['bash','-c',source+'\nrender_vision_hook vision.example.com'],text=True)
+        self.write('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision',body,0o755)
+
+    def test_vision_backup_round_trip_and_missing_third_certificate_rejected(self):
+        self.seed_vision()
+        archive = self.backup()
+        result = self.run_tool('restore',str(archive))
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertTrue(self.path('/etc/letsencrypt/live/vision.example.com/fullchain.pem').is_file())
+        broken = self.changed_archive(archive,omit=self.member('/etc/letsencrypt/live/vision.example.com/fullchain.pem'))
+        marker = self.path('/etc/x-ui/preserved'); marker.write_text('current healthy state')
+        result = self.run_tool('restore',str(broken))
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(marker.read_text(),'current healthy state')
 
     def test_installer_integration(self):
         tuning = function('tune_system')
@@ -848,7 +917,7 @@ class PersonalBackup(unittest.TestCase):
         calls=self.commands()
         pause=calls.index(['systemctl','stop','certbot.timer'])
         idle=calls.index(['systemctl','is-active','certbot.service'])
-        replacement=next(i for i,c in enumerate(calls) if c[0]=='cp' and c[-1]==str(self.path('/etc/letsencrypt')))
+        replacement=next(i for i,c in enumerate(calls) if c[0]=='cp' and c[-1].rstrip('/')==str(self.path('/etc/letsencrypt')))
         activation=calls.index(['systemctl','enable','--now','certbot.timer'])
         health=calls.index(['systemctl','is-enabled','--quiet','certbot.timer'],activation)
         self.assertLess(pause,idle);self.assertLess(idle,replacement)

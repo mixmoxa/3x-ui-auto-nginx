@@ -10,7 +10,9 @@ import unittest
 
 
 SUITES = {
+    'systemd': ('test_security_systemd.SecuritySystemd',),
     'nonroot': (
+        'test_integrated_features.IntegratedFeatures',
         'test_personal_xhttp.PersonalXHTTP',
         'test_amneziawg.AmneziaWG',
         'test_certificate_renewal.CertificateRenewal',
@@ -84,9 +86,9 @@ def main():
     mode.add_argument('--check-completeness', action='store_true')
     mode.add_argument('--suite', choices=SUITES)
     args = parser.parse_args()
-    if args.suite and ((args.suite == 'root') != (os.geteuid() == 0)):
+    if args.suite and ((args.suite in ('root', 'systemd')) != (os.geteuid() == 0)):
         print(f'PRIVILEGE: FAIL — {args.suite} requires '
-              + ('EUID 0' if args.suite == 'root' else 'EUID != 0'), file=sys.stderr)
+              + ('EUID 0' if args.suite in ('root', 'systemd') else 'EUID != 0'), file=sys.stderr)
         return 1
     try:
         suites = collect()

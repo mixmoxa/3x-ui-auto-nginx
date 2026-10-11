@@ -24,15 +24,61 @@ jobs:
       - name: Install explicit service test dependencies
         run: |
           timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends nginx certbot sqlite3 openssl curl python3 python3-configobj python3-cryptography apache2-utils iproute2 tar gzip sudo
+          timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends nginx libnginx-mod-stream certbot sqlite3 openssl curl python3 python3-configobj python3-cryptography apache2-utils iproute2 tar gzip sudo
       - name: Canonical completeness
         run: python3 tests/run_ci.py --check-completeness
       - name: Real AGH, HTTP-01 renewal and private Restore
         env:
           NGINX_BIN: /usr/sbin/nginx
         run: python3 tests/run_ci.py --suite services
-      - name: Real embedded AmneziaWG TCP/UDP and restart
+      - name: Real Vision/client API and embedded AmneziaWG TCP/UDP/restart
         env:
           NGINX_BIN: /usr/sbin/nginx
           PYTHONPATH: tests
-        run: python3 -m unittest -v test_real_integration.RealIntegration.test_amneziawg_tcp_udp_and_panel_restart
+        run: |
+          python3 -m unittest -v \
+            test_real_integration.RealIntegration.test_vision_and_initial_client_official_api \
+            test_real_integration.RealIntegration.test_amneziawg_tcp_udp_and_panel_restart
+
+  debian-native-api:
+    name: Native Vision and client API (debian-13)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Debian 13 native service environment
+        run: docker build --build-arg DISTRO=debian:13 -t xui-debian -f tests/systemd/Dockerfile .
+      - name: Native protocol/API integration with private nonroot state
+        run: |
+          docker run --rm --user 1000:1000 \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/repo,readonly" \
+            -e PYTHONPATH=tests -w /repo xui-debian python3 -m unittest -v \
+            test_real_integration.RealIntegration.test_vision_and_initial_client_official_api \
+            test_real_integration.RealIntegration.test_amneziawg_tcp_udp_and_panel_restart
+
+  security-systemd:
+    name: Security systemd (${{ matrix.distro }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: ['ubuntu:24.04', 'ubuntu:26.04', 'debian:13']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build isolated systemd root filesystem and QEMU tools
+        env:
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          docker build --build-arg "DISTRO=$DISTRO" -t xui-systemd-root -f tests/systemd/Dockerfile .
+          docker build -t xui-systemd-tools -f tests/systemd/tools.Dockerfile .
+      - name: Native sshd, timers, authenticated TLS DNS and rollback inside VM
+        run: |
+          vm_directory=$(mktemp -d)
+          container_id=$(docker create xui-systemd-root)
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true; sudo rm -rf "$vm_directory"' EXIT
+          docker export "$container_id" -o "$vm_directory/rootfs.tar"
+          docker run --rm --network none \
+            --mount "type=bind,src=$vm_directory,dst=/work" \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/repo,readonly" \
+            xui-systemd-tools bash /repo/tests/systemd/boot.sh
