@@ -287,7 +287,7 @@ _panel_initial_config() { :; }
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
             ca=root/'ca.crt';ca.write_text('fixture CA')
-            body=function(source,'bootstrap_panel_dependencies').replace('/etc/ssl/certs/ca-certificates.crt',str(ca))
+            body=function(source,'apt_system')+'\n'+function(source,'bootstrap_panel_dependencies').replace('/etc/ssl/certs/ca-certificates.crt',str(ca))
             mock=r'''
 command() { [[ "$1" != -v ]] || return 1; builtin command "$@"; }
 apt-get() { echo "$*" >> "$CALLS"; [[ "$FAIL_APT" != 1 ]]; }

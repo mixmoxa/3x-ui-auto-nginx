@@ -240,7 +240,7 @@ confirm_destructive_reinstall() {
     msg_warn '  Existing installation detected'
     msg_warn '============================================================'
     for category in "${EXISTING_INSTALL_CATEGORIES[@]}"; do msg_warn " [!] $category"; done
-    printf '\nContinuing will remove the current 3x-ui deployment and replace\nnginx configuration. Copy a backup off-host before continuing.\n\n'
+    printf '\nContinuing will run a full OS dist-upgrade (services may restart),\nremove the current 3x-ui deployment and replace nginx configuration.\nThe OS upgrade cannot be rolled back. Copy a backup off-host first.\n\n'
     printf 'Type YES to remove the existing deployment and continue: '
     if ! IFS= read -r answer || [[ "$answer" != YES ]]; then
         msg_err 'Cancelled. Existing deployment was not changed.'
@@ -363,18 +363,103 @@ validate_domains() {
 # ─────────────────────────────────────────────────────────────────────────────
 # INSTALL PACKAGES
 # ─────────────────────────────────────────────────────────────────────────────
+apt_system() {
+    local output attempt rc deadline=$((SECONDS + 300))
+    output=$(mktemp) || return 1
+    for attempt in {1..30}; do
+        if DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l UCF_FORCE_CONFFOLD=1 \
+            apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef \
+            -o Dpkg::Options::=--force-confold -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
+            --no-remove "$@" > "$output" 2>&1; then
+            cat "$output"; rm -f "$output"; return 0
+        else
+            rc=$?
+        fi
+        # apt update's lists lock does not use DPkg::Lock::Timeout.
+        if ! grep -Eq 'Could not get lock|Unable to acquire.*lock' "$output"; then break; fi
+        (( SECONDS < deadline )) || break
+        sleep 10
+    done
+    cat "$output" >&2; rm -f "$output"; return "$rc"
+}
+
+preflight_base_os() {
+    local audit binary
+    for binary in apt-get apt-config dpkg systemctl timedatectl shutdown getent /usr/sbin/sshd; do
+        command -v "$binary" >/dev/null || { msg_err "Base OS tool unavailable: $binary"; return 1; }
+    done
+    audit=$(dpkg --audit) || return 1
+    [[ -z "$audit" ]] || { msg_err 'Incomplete dpkg state; repair it before installation.'; return 1; }
+    BASE_SSH_POLICY=$(/usr/sbin/sshd -T) || return 1
+    systemctl is-active --quiet ssh.service || systemctl is-active --quiet ssh.socket || {
+        msg_err 'No active SSH service/socket; refusing OS preparation.'; return 1;
+    }
+    BASE_SSH_LISTEN=''
+    if systemctl is-active --quiet ssh.socket; then
+        BASE_SSH_LISTEN=$(systemctl show ssh.socket -p Listen --value) || return 1
+    fi
+    getent ahosts debian.org >/dev/null || { msg_err 'Initial libc DNS resolution failed.'; return 1; }
+}
+
+verify_base_os() {
+    local binary
+    [[ "$(/usr/sbin/sshd -T)" == "$BASE_SSH_POLICY" ]] || { msg_err 'Effective SSH policy changed during OS preparation.'; return 1; }
+    systemctl is-active --quiet ssh.service || systemctl is-active --quiet ssh.socket || return 1
+    if [[ -n "$BASE_SSH_LISTEN" ]]; then
+        [[ "$(systemctl show ssh.socket -p Listen --value)" == "$BASE_SSH_LISTEN" ]] && systemctl is-active --quiet ssh.socket || return 1
+    fi
+    for binary in curl wget jq python3 openssl ip ss ufw; do
+        command -v "$binary" >/dev/null || return 1
+    done
+    getent ahosts debian.org >/dev/null
+}
+
+prepare_base_os() {
+    msg_warn 'Preparing OS: full dist-upgrade; package changes cannot be rolled back.'
+    apt_system -o APT::Update::Error-Mode=any update || return 1
+    # Simulation and execution both reject any package removal.
+    apt_system -s -y dist-upgrade || return 1
+    apt_system -y dist-upgrade || return 1
+    apt_system -y --no-install-recommends install curl wget jq python3 openssl \
+        ca-certificates procps iproute2 ufw tar gzip || return 1
+    verify_base_os || return 1
+    BASE_OS_RESULT=configured
+}
+
+prepare_system_dns() {
+    [[ "${INSTALL_SECURITY:-n}" == y ]] || return 0
+    local output
+    if ! output=$(python3 "$PANEL_STAGE/managed-security.py" --prepare-dns); then
+        printf '%s' "$output" | python3 -c 'import json,sys; [print("[!] DNS preparation: "+w,file=sys.stderr) for w in json.load(sys.stdin)["warnings"]]'
+        return 1
+    fi
+    python3 "$PANEL_STAGE/managed-security.py" --preflight >/dev/null || return 1
+    verify_base_os
+}
+
+finish_initial_reboot() {
+    [[ -e /var/run/reboot-required ]] || return 0
+    if (( $1 != 0 )); then
+        msg_warn 'Reboot required, but installation failed: no reboot scheduled. Inspect and reboot manually.'
+        return 0
+    fi
+    msg_warn 'Initial upgrade requires reboot. Scheduling in one minute; post-reboot acceptance is pending.'
+    shutdown -r +1 || { msg_err 'Reboot scheduling failed; reboot manually after inspection.'; return 1; }
+}
+
 install_packages() {
     if [[ ${INSTALL} == *"y"* ]]; then
         local version
         version=$(grep -oP '(?<=VERSION_ID=")[0-9]+' /etc/os-release)
         [[ "$version" == "20" || "$version" == "22" ]] && echo "System: Ubuntu $version"
 
-        $Pak -y update || return 1
-        $Pak -y install curl wget jq bash sudo nginx-full certbot sqlite3 ufw netcat-openbsd mtr python3 python3-configobj python3-cryptography libcap2-bin openssl procps iproute2 tar gzip tzdata ca-certificates || return 1
+        apt_system -o APT::Update::Error-Mode=any update || return 1
+        apt_system -y install curl wget jq bash sudo nginx-full certbot sqlite3 ufw netcat-openbsd mtr python3 python3-configobj python3-cryptography libcap2-bin openssl procps iproute2 tar gzip tzdata ca-certificates || return 1
         systemctl daemon-reload && systemctl enable --now nginx || return 1
     fi
 
-    apt-get install -yqq --no-install-recommends ca-certificates || return 1
+    apt_system -yqq --no-install-recommends install ca-certificates || return 1
     local binary
     for binary in openssl sysctl ip ss tar gzip curl wget jq bash sudo nginx certbot sqlite3 ufw nc mtr python3 setcap; do
         command -v "$binary" >/dev/null || { msg_err "Required binary is missing: $binary"; return 1; }
@@ -939,16 +1024,16 @@ VERIFIED_RELEASE_JSON
 
 bootstrap_panel_dependencies() {
     local binary missing=0
-    for binary in curl python3 tar gzip sha256sum; do
+    for binary in curl python3 tar gzip sha256sum ip ss; do
         command -v "$binary" >/dev/null 2>&1 || missing=1
     done
     [[ -s /etc/ssl/certs/ca-certificates.crt ]] || missing=1
     if (( missing )); then
-        apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update || return 1
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            curl ca-certificates python3 tar gzip || return 1
+        apt_system -o APT::Update::Error-Mode=any update || return 1
+        apt_system -y --no-install-recommends install \
+            curl ca-certificates python3 tar gzip iproute2 || return 1
     fi
-    for binary in curl python3 tar gzip sha256sum; do
+    for binary in curl python3 tar gzip sha256sum ip ss; do
         command -v "$binary" >/dev/null 2>&1 || { msg_err "Release preflight requires $binary."; return 1; }
     done
     [[ -s /etc/ssl/certs/ca-certificates.crt ]]
@@ -2043,6 +2128,12 @@ show_results() {
 
     echo
     msg_inf '============================================================'
+    msg_inf " [i] Base OS                ${BASE_OS_RESULT:-not_prepared} (full upgrade is not rollbackable)"
+    msg_inf " [i] Local timezone         $(timedatectl show -p Timezone --value)"
+    if [[ "${INSTALL_SECURITY:-n}" == y ]]; then
+        msg_inf ' [i] APT schedule           update 02:30 / upgrade 02:50; reboot 04:38, including logged-in users'
+    fi
+    [[ ! -e /var/run/reboot-required ]] || msg_warn ' [!] Reboot required; post-reboot acceptance pending'
     msg_inf '  3x-ui Auto Nginx — Installation Result'
     msg_inf '============================================================'
     # The core passed its initial gate; optional rollback may leave its current health unverified.
@@ -2163,6 +2254,7 @@ select_security() {
     printf 'CONFIGURE VPS SECURITY + DoT? [Y/n]:\n'
     echo 'Fail2ban, automatic security updates, encrypted system DNS.'
     echo 'Existing SSH configuration will not be changed.'
+    echo 'Local time: APT update 02:30, upgrade 02:50, automatic reboot 04:38 (even with logged-in users).'
     while IFS= read -r answer; do
         case "$answer" in
             ''|y|Y) INSTALL_SECURITY=y; return 0 ;;
@@ -2278,7 +2370,7 @@ PYCHECK
     preflight_vision_artifacts || return 1
     if [[ "${INSTALL_SECURITY:-n}" == y ]]; then
         local security_preflight
-        if ! security_preflight=$(python3 "$PANEL_STAGE/managed-security.py" --preflight); then
+        if ! security_preflight=$(python3 "$PANEL_STAGE/managed-security.py" --preflight-install); then
             printf '%s' "$security_preflight" | python3 -c 'import json,sys; [print("[!] Security preflight: "+w, file=sys.stderr) for w in json.load(sys.stdin)["warnings"]]'
             return 1
         fi
@@ -2386,9 +2478,13 @@ main() {
     select_amneziawg || exit 1
     select_adguard || exit 1
     select_client || exit 1
+    msg_warn 'Initial full OS upgrade is mandatory; services may restart. A required reboot follows only a successful installation report.'
+    preflight_base_os || { msg_err 'Base OS preflight failed; existing deployment was not removed.'; exit 1; }
     preflight_panel_release || { msg_err "Release preflight failed; existing deployment was not removed."; exit 1; }
     preflight_amneziawg || { msg_err "AmneziaWG preflight failed; existing deployment was not removed."; exit 1; }
     preflight_integrated_features || { msg_err 'Optional feature preflight failed; existing deployment was not removed.'; exit 1; }
+    prepare_base_os || { msg_err 'OS preparation failed; deployment was not removed, package changes may remain.'; exit 1; }
+    prepare_system_dns || { msg_err 'DNS preparation failed; existing deployment was not removed.'; exit 1; }
     cleanup_adguard || { msg_err "Cannot clean AdGuard Home; core deployment was not removed."; exit 1; }
     clean_previous_install
     install_packages || { msg_err "Dependency setup failed."; exit 1; }
@@ -2430,7 +2526,7 @@ main() {
     if [[ "$INSTALL_AGH" == y ]]; then
         install_adguard || install_result=1
     fi
-    # DNS changes occur only after every requested HTTP-01 certificate has been issued.
+    # DNS was prepared and verified before cleanup; repeat runtime checks here.
     if [[ "${INSTALL_SECURITY:-n}" == y ]]; then
         install_security || install_result=1
     fi
@@ -2448,6 +2544,7 @@ main() {
         if ! check_installation; then CORE_RESULT=failed_unverified; install_result=1; fi
     fi
     show_results
+    finish_initial_reboot "$install_result" || install_result=1
     return "$install_result"
 }
 

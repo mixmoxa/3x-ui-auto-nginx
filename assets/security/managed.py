@@ -37,8 +37,9 @@ SERVICES = ('fail2ban.service', 'apt-daily.timer', 'apt-daily-upgrade.timer', 's
 
 
 def command(*args, check=True):
-    result = subprocess.run(args, capture_output=True, text=True, timeout=90,
-                            env={**os.environ, 'LC_ALL': 'C'})
+    result = subprocess.run(args, capture_output=True, text=True, timeout=1800 if args[0]=='apt-get' else 90,
+                            env={**os.environ, 'LC_ALL': 'C', 'DEBIAN_FRONTEND': 'noninteractive',
+                                 'NEEDRESTART_MODE': 'l', 'UCF_FORCE_CONFFOLD': '1'})
     if check and result.returncode:
         detail = ': ' + result.stderr.strip()[:400] if args[0] == 'resolvectl' else ''
         raise ValueError('Command failed: ' + ' '.join(args) + detail)
@@ -67,9 +68,10 @@ def password_warning(effective):
 
 
 def timer(hour):
+    hour = hour if ':' in hour else hour + ':30'
     return MARKER + f'''[Timer]
 OnCalendar=
-OnCalendar=*-*-* {hour}:30:00
+OnCalendar=*-*-* {hour}:00
 RandomizedDelaySec=0
 AccuracySec=1min
 Persistent=true
@@ -85,7 +87,9 @@ def apt_config(os_id):
         raise ValueError('Unsupported security update origin')
     return MARKER + '''APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
-Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
+Unattended-Upgrade::Automatic-Reboot-Time "04:38";
 // Add the required distro security origin; retain administrator/distro origins.
 Unattended-Upgrade::Origins-Pattern { "''' + origins + '''"; };
 '''
@@ -120,7 +124,46 @@ def global_servers(dns):
     return global_block[1].split() if global_block else []
 
 
-def preflight(root=Path('/')):
+def minimal_dns(root):
+    """Narrow opt-in takeover, not a claim of ownership of arbitrary provider DNS."""
+    resolv = root / 'etc/resolv.conf'
+    status = command('dpkg-query', '-W', '-f=${db:Status-Abbrev}', 'systemd-resolved', check=False)
+    if status.startswith('ii') or command('systemctl', 'is-active', 'systemd-resolved.service', check=False) == 'active':
+        raise ValueError('Inactive installed resolver/custom DNS state preserved')
+    if (resolv.is_symlink() or not resolv.is_file() or resolv.stat().st_uid != 0 or
+            resolv.stat().st_gid != 0 or resolv.stat().st_mode & 0o022 or resolv.stat().st_nlink != 1):
+        raise ValueError('Nonstandard/provider resolv.conf ownership; DNS preserved')
+    content = resolv.read_text()
+    servers = []
+    for line in content.splitlines():
+        if re.search(r'generated|managed|provider|cloud|networkmanager|resolvconf|dhcp', line, re.I):
+            raise ValueError('Provider-managed DNS file preserved')
+        line = line.partition('#')[0].strip()
+        if not line:
+            continue
+        fields = line.split()
+        if len(fields) != 2 or fields[0] != 'nameserver' or fields[1] not in ('1.1.1.1','1.0.0.1','8.8.8.8','8.8.4.4'):
+            raise ValueError('Custom/provider DNS directives preserved')
+        servers.append(fields[1])
+    if not servers:
+        raise ValueError('No recognized working minimal-image DNS')
+    for service in ('NetworkManager.service','dnsmasq.service','named.service','unbound.service','resolvconf.service'):
+        if command('systemctl', 'is-active', service, check=False) == 'active':
+            raise ValueError('Competing DNS/network manager preserved: ' + service)
+    for directory in ('etc/netplan','etc/systemd/network','run/systemd/network','usr/lib/systemd/network',
+                      'etc/network','etc/cloud/cloud.cfg.d','etc/NetworkManager/system-connections'):
+        for path in (root / directory).rglob('*'):
+            if path.is_file() and re.search(r'^\s*(?:DNS|Domains|DNSDefaultRoute|dns[-_]|nameservers\s*:|manage_resolv_conf\s*:|resolv_conf\s*:)', path.read_text(errors='replace'), re.M | re.I):
+                raise ValueError('Interface/cloud/VPN DNS policy preserved in /' + directory)
+    if command('dpkg-query', '-W', '-f=${db:Status-Abbrev}', 'resolvconf', check=False).startswith('ii'):
+        raise ValueError('Existing resolvconf manager preserved')
+    if re.search(r':53\s', command('ss','-lntu', check=False)):
+        raise ValueError('Existing local DNS listener preserved')
+    if re.search(r'\b(?:wireguard|tun|tap|ppp)\b', command('ip','-d','-o','link','show',check=False)):
+        raise ValueError('Existing VPN interface policy preserved')
+
+
+def preflight(root=Path('/'), allow_minimal=False):
     for filename in FILES:
         path = root / filename.lstrip('/')
         if path.is_symlink() or (path.exists() and (not path.is_file() or not path.read_text().startswith(MARKER))):
@@ -153,13 +196,17 @@ def preflight(root=Path('/')):
                         continue  # Unmodified distro jail; do not mistake it for an administrator override.
                 raise ValueError('Administrator SSH/DEFAULT Fail2ban jail present; preserved')
     resolv = root / 'etc/resolv.conf'
-    if not resolv.is_symlink() or os.readlink(resolv) not in (
+    standard = resolv.is_symlink() and os.readlink(resolv) in (
         '/run/systemd/resolve/stub-resolv.conf', '/run/systemd/resolve/resolv.conf',
-        '../run/systemd/resolve/stub-resolv.conf', '../run/systemd/resolve/resolv.conf'):
+        '../run/systemd/resolve/stub-resolv.conf', '../run/systemd/resolve/resolv.conf')
+    if standard:
+        if command('systemctl', 'is-active', 'systemd-resolved.service', check=False) != 'active':
+            raise ValueError('Existing active systemd-resolved required; DNS preserved')
+        dns_routes(command('resolvectl', 'dns'), command('resolvectl', 'domain'))
+    elif allow_minimal:
+        minimal_dns(root)
+    else:
         raise ValueError('Nonstandard/provider resolv.conf ownership; DNS preserved')
-    if command('systemctl', 'is-active', 'systemd-resolved.service', check=False) != 'active':
-        raise ValueError('Existing active systemd-resolved required; DNS preserved')
-    dns_routes(command('resolvectl', 'dns'), command('resolvectl', 'domain'))
     for service in SERVICES:
         if command('systemctl', 'is-enabled', service, check=False) not in ('enabled', 'disabled', 'static', 'not-found', ''):
             raise ValueError('Custom/masked service enable state preserved: ' + service)
@@ -169,12 +216,15 @@ def preflight(root=Path('/')):
         raise ValueError('Unsupported OS for VPS Security')
     apt_file = root / FILES[1].lstrip('/')
     current = apt_config(os_id)
-    legacy = current.replace('// Add the required distro security origin; retain administrator/distro origins.',
+    previous = current.replace('Automatic-Reboot "true";\nUnattended-Upgrade::Automatic-Reboot-WithUsers "true";\nUnattended-Upgrade::Automatic-Reboot-Time "04:38";', 'Automatic-Reboot "false";')
+    legacy = previous.replace('// Add the required distro security origin; retain administrator/distro origins.',
                              '// Reset effective origins in this final managed drop-in; preserve administrator files.\n'
                              '#clear Unattended-Upgrade::Allowed-Origins;\n#clear Unattended-Upgrade::Origins-Pattern;')
-    if apt_file.exists() and apt_file.read_text() not in (current, legacy):
+    if apt_file.exists() and apt_file.read_text() not in (current, previous, legacy):
         raise ValueError('Administrator changes in managed APT drop-in preserved; refusing replacement')
     for tool in ('systemctl', 'resolvectl', 'busctl', 'apt-config', 'journalctl', '/usr/sbin/sshd'):
+        if tool == 'resolvectl' and not standard:
+            continue  # Installed only after the complete read-only preflight.
         if not shutil.which(tool):
             raise ValueError('Security diagnostic tool unavailable: ' + tool)
     effective = command('/usr/sbin/sshd', '-T')
@@ -189,7 +239,7 @@ def preflight(root=Path('/')):
 
 
 class Transaction:
-    def __init__(self, root=Path('/')):
+    def __init__(self, root=Path('/'), services=SERVICES):
         self.root = root
         self.temp = tempfile.TemporaryDirectory(prefix='xui-security-')
         os.chmod(self.temp.name, 0o700)
@@ -203,7 +253,7 @@ class Transaction:
             else:
                 self.saved[filename] = None
         self.states = {s: (command('systemctl', 'is-active', s, check=False),
-                           command('systemctl', 'is-enabled', s, check=False)) for s in SERVICES}
+                           command('systemctl', 'is-enabled', s, check=False)) for s in services}
 
     def write(self, filename, text):
         path = self.root / filename.lstrip('/')
@@ -266,19 +316,24 @@ def verify(ports, effective, os_id, previous_origins=frozenset()):
     if not all(str(p) in dump for p in ports):
         raise ValueError('SSH jail ports not effective')
     apt = command('apt-config', 'dump')
-    if 'Unattended-Upgrade::Automatic-Reboot "false";' not in apt:
-        raise ValueError('Automatic reboot is not disabled')
+    for setting in ('Automatic-Reboot "true";', 'Automatic-Reboot-WithUsers "true";', 'Automatic-Reboot-Time "04:38";'):
+        if 'Unattended-Upgrade::' + setting not in apt:
+            raise ValueError('Automatic reboot policy not effective')
     origins = apt_origins(apt)
     required = ('Origins-Pattern', re.search(r'Origins-Pattern \{ "([^"]+)"', apt_config(os_id))[1])
     if required not in origins or not previous_origins <= origins:
         raise ValueError('Required security origin missing or existing APT origins changed')
     apt_preflight(apt)
-    for service, hour in (('apt-daily.timer', '02'), ('apt-daily-upgrade.timer', '03')):
+    for service, hour in (('apt-daily.timer', '02:30'), ('apt-daily-upgrade.timer', '02:50')):
         command('systemctl', 'is-active', '--quiet', service)
         command('systemctl', 'is-enabled', '--quiet', service)
         timers = command('systemctl', 'show', service, '-p', 'TimersCalendar', '-p', 'RandomizedDelayUSec')
-        if f'{hour}:30:00' not in timers or 'RandomizedDelayUSec=0' not in timers:
+        if f'{hour}:00' not in timers or 'RandomizedDelayUSec=0' not in timers:
             raise ValueError('APT timer not effective')
+    verify_dns()
+
+
+def verify_dns():
     dns_routes(command('resolvectl', 'dns'), command('resolvectl', 'domain'))
     mode = command('busctl', 'get-property', 'org.freedesktop.resolve1',
                    '/org/freedesktop/resolve1', 'org.freedesktop.resolve1.Manager', 'DNSOverTLS')
@@ -296,6 +351,35 @@ def verify(ports, effective, os_id, previous_origins=frozenset()):
     command('getent', 'ahosts', 'debian.org')
 
 
+def prepare_dns(root=Path('/')):
+    # Capture DNS and service state BEFORE package maintainer scripts can change it.
+    preflight(root, allow_minimal=True)
+    command('getent', 'ahosts', 'debian.org')
+    txn = Transaction(root, services=('systemd-resolved.service',))
+    try:
+        if not (root/'etc/resolv.conf').is_symlink():
+            command('apt-get', '-o', 'DPkg::Lock::Timeout=300', '-o', 'Dpkg::Options::=--force-confdef',
+                    '-o', 'Dpkg::Options::=--force-confold', '--no-remove', '--no-install-recommends', '-y', 'install', 'systemd-resolved')
+        txn.write(FILES[4], DOT)
+        resolv=root/'etc/resolv.conf'; resolv.unlink(); resolv.symlink_to('/run/systemd/resolve/stub-resolv.conf')
+        command('systemctl','daemon-reload')
+        command('systemctl','enable','systemd-resolved.service')
+        command('systemctl','restart','systemd-resolved.service')
+        verify_dns()
+        preflight(root)
+        return {'status':'configured', 'dot':'configured', 'warnings':[]}
+    except Exception as error:
+        status='failed_rolled_back'
+        try:
+            txn.rollback()
+            command('getent','ahosts','debian.org')
+        except Exception:
+            status='failed_unverified'
+        return {'status':status, 'dot':status, 'warnings':[str(error), 'Package installation is not rolled back; original DNS/service state was restored only if verified.']}
+    finally:
+        txn.temp.cleanup()
+
+
 def configure(root=Path('/')):
     # Repeat the same read-only compatibility check immediately before writes.
     os_id, effective, ports, previous_origins = preflight(root)
@@ -305,7 +389,8 @@ def configure(root=Path('/')):
     warnings.append('sshd -T covers the default context; administrator Match rules may permit other password authentication.')
     txn = Transaction(root)
     try:
-        command('apt-get', 'install', '-y', '--no-install-recommends', 'fail2ban', 'python3-systemd', 'unattended-upgrades', 'nftables')
+        command('apt-get', '-o', 'DPkg::Lock::Timeout=300', '-o', 'Dpkg::Options::=--force-confdef',
+                '-o', 'Dpkg::Options::=--force-confold', '--no-remove', 'install', '-y', '--no-install-recommends', 'fail2ban', 'python3-systemd', 'unattended-upgrades', 'nftables')
         backend = 'systemd' if command('journalctl', '-n', '1', '--no-pager', check=False) else 'auto'
         if backend == 'auto' and not (root / 'var/log/auth.log').is_file():
             raise ValueError('No SSH journaling/log backend')
@@ -318,7 +403,7 @@ findtime = 1800
 bantime = 3600
 ''')
         txn.write(FILES[1], apt_config(os_id))
-        txn.write(FILES[2], timer('02')); txn.write(FILES[3], timer('03'))
+        txn.write(FILES[2], timer('02:30')); txn.write(FILES[3], timer('02:50'))
         txn.write(FILES[4], DOT)
         resolv = root / 'etc/resolv.conf'
         resolv.unlink(); resolv.symlink_to('/run/systemd/resolve/stub-resolv.conf')
@@ -343,11 +428,13 @@ bantime = 3600
 
 if __name__ == '__main__':
     try:
-        if sys.argv[1:] == ['--preflight']:
-            preflight()
+        if sys.argv[1:] in (['--preflight'], ['--preflight-install']):
+            preflight(allow_minimal=sys.argv[1:] == ['--preflight-install'])
             result = {'status': 'compatible', 'warnings': []}
+        elif sys.argv[1:] == ['--prepare-dns']:
+            result = prepare_dns()
         elif sys.argv[1:]:
-            raise ValueError('Usage: managed-security.py [--preflight]')
+            raise ValueError('Usage: managed-security.py [--preflight|--preflight-install|--prepare-dns]')
         else:
             result = configure()
     except Exception as error:

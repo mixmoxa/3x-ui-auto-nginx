@@ -237,6 +237,7 @@ printf 'CPU_STATE|%s|%s\n' "$CPU_SUPPORT_LEVEL" "$CPU_SUPPORT_TEXT"
         helpers = '\n'.join(re.findall(r'^msg_\w+\(\).*$', SOURCE, re.M))
         # Run the actual main ordering/summary on files; installer operations are no-ops.
         mocks = '\n'.join(name + '() { :; }' for name in (
+            "preflight_base_os", "prepare_base_os", "prepare_system_dns", "finish_initial_reboot",
             "select_security", "select_vision", "select_client", "preflight_integrated_features", "select_amneziawg", "preflight_amneziawg", "preflight_panel_release", "select_adguard", "cleanup_adguard", "validate_domains", "clean_previous_install", "install_packages", "setup_firewall", "get_server_ip",
             "get_ssl_certs", "install_panel", "configure_nginx", "configure_xui_db", "install_clash_sub",
             "install_fake_site", "install_diagnostics", "tune_system", "install_backup_tool", "setup_certificate_renewal", "setup_acme_http", "confirm_destructive_reinstall",
@@ -478,13 +479,14 @@ python3() { echo "python3 $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != python-import ]]
         for failure in ("", "apt", "sysctl", "ip", "nginx", "python-import"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
                 log = Path(tmp) / "calls"
-                result = subprocess.run(["bash", "-u", "-c", mock + function("install_packages") + "\ninstall_packages\n"],
+                result = subprocess.run(["bash", "-u", "-c", mock + function("apt_system") + '\n' + function("install_packages") + "\ninstall_packages\n"],
                                         capture_output=True, text=True, env={**os.environ, "Pak": "apt", "INSTALL": "y",
                                                                             "TEST_LOG": str(log), "FAIL_DEP": failure})
                 self.assertEqual(result.returncode, 1 if failure else 0, result.stderr)
                 if not failure:
                     calls = log.read_text().splitlines()
-                    packages = next(c.split()[3:] for c in calls if c.startswith("apt -y install "))
+                    packages = next(c.split()[c.split().index('install')+1:] for c in calls if ' install curl ' in c)
+                    self.assertTrue(all('--no-remove' in c for c in calls if c.startswith('apt-get ')))
                     self.assertTrue(required.issubset(packages))
                     self.assertNotIn("cron", packages)
                     self.assertNotIn("python3-certbot-nginx", packages)
