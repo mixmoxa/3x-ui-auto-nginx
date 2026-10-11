@@ -133,7 +133,7 @@ class AmneziaWG(unittest.TestCase):
             root=Path(directory)
             paths=('tests/test_fixture.py','x-ui-latest.sh','assets/clash/clash.yaml',
                    'assets/diagnostics/mtr-backend.py','.github/workflows/upstream-canary.yml',
-                   'assets/amneziawg/managed.py')
+                   'assets/amneziawg/managed.py','assets/vision/managed.py','assets/client/managed.py')
             for name in paths:
                 path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('fixture')
             with patch.object(upstream_canary,'ROOT',root):
