@@ -29,11 +29,11 @@ jobs:
           import sys
           import urllib.error
           import urllib.request
-          
+
           token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
           if not token:
               sys.exit("Missing TELEGRAM_BOT_TOKEN repository secret")
-          
+
           name = os.environ["RELEASE_PROJECT"]
           emoji = os.environ["RELEASE_EMOJI"]
           if os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch":
@@ -70,7 +70,7 @@ jobs:
                   highlights.append("• " + html.escape(item))
                   if len(highlights) == 3:
                       break
-          
+
               message = (
                   f"{emoji} <b>{html.escape(name)} · {html.escape(version)}</b>\n"
                   "Новый релиз / New release"
@@ -81,7 +81,7 @@ jobs:
                   "\n\n📦 <a href=\"" + html.escape(url, quote=True) +
                   "\">Описание и загрузка / Release notes</a>"
               )
-          
+
           payload = json.dumps({
               "chat_id": "@promsdev",
               "text": message,
