@@ -128,7 +128,7 @@ def minimal_dns(root):
     """Narrow opt-in takeover, not a claim of ownership of arbitrary provider DNS."""
     resolv = root / 'etc/resolv.conf'
     status = command('dpkg-query', '-W', '-f=${db:Status-Abbrev}', 'systemd-resolved', check=False)
-    if status.startswith('ii') or command('systemctl', 'is-active', 'systemd-resolved.service', check=False) == 'active':
+    if (status and (len(status)<2 or status[1] not in ('n','c'))) or command('systemctl', 'is-active', 'systemd-resolved.service', check=False) == 'active':
         raise ValueError('Inactive installed resolver/custom DNS state preserved')
     if (resolv.is_symlink() or not resolv.is_file() or resolv.stat().st_uid != 0 or
             resolv.stat().st_gid != 0 or resolv.stat().st_mode & 0o022 or resolv.stat().st_nlink != 1):
@@ -155,7 +155,8 @@ def minimal_dns(root):
         for path in (root / directory).rglob('*'):
             if path.is_file() and re.search(r'^\s*(?:DNS|Domains|DNSDefaultRoute|dns[-_]|nameservers\s*:|manage_resolv_conf\s*:|resolv_conf\s*:)', path.read_text(errors='replace'), re.M | re.I):
                 raise ValueError('Interface/cloud/VPN DNS policy preserved in /' + directory)
-    if command('dpkg-query', '-W', '-f=${db:Status-Abbrev}', 'resolvconf', check=False).startswith('ii'):
+    status = command('dpkg-query', '-W', '-f=${db:Status-Abbrev}', 'resolvconf', check=False)
+    if status and (len(status)<2 or status[1] not in ('n','c')):
         raise ValueError('Existing resolvconf manager preserved')
     if re.search(r':53\s', command('ss','-lntu', check=False)):
         raise ValueError('Existing local DNS listener preserved')
