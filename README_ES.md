@@ -75,7 +75,9 @@ Las opciones se eligen antes de reinstalar. Security y la creación del cliente 
 
 ### VPS Security + DNS-over-TLS opcional
 
-`CONFIGURE VPS SECURITY + DoT? [Y/n]:` configura Fail2ban para SSH, los temporizadores APT de actualizaciones de seguridad hacia las 02:30/03:30 locales y DNS-over-TLS estricto del sistema. Conserva la política SSH, la zona horaria y UFW; desactiva el reinicio automático. Conserva DNS personalizados o del proveedor incompatibles, con una advertencia y estado fallido de la opción. Backup / Restore no transfiere estos ajustes específicos del servidor.
+Antes de eliminar un despliegue anterior, el instalador comprueba la compatibilidad, ejecuta obligatoriamente `apt-get --no-remove -y dist-upgrade`, instala dependencias y vuelve a comprobar SSH/DNS. La reinstalación requiere confirmación: la actualización puede reiniciar servicios y no se puede revertir. Si hace falta reiniciar, se programa solo tras la instalación, las comprobaciones y el informe correctos; el propietario verifica el funcionamiento después del reinicio.
+
+`CONFIGURE VPS SECURITY + DoT? [Y/n]:` configura Fail2ban para SSH, APT update a las 02:30, unattended upgrade a las 02:50 y reinicio automático a las 04:38, incluso con usuarios conectados. Conserva y muestra la zona horaria local; no cambia la política ni las claves SSH. En una imagen mínima reconocida sin resolved, con resolv.conf normal que solo contiene DNS públicos de Cloudflare/Google, instala el paquete y verifica DoT estricto antes de cleanup. Guarda el DNS y estado del servicio originales para una recuperación verificada; no revierte los paquetes instalados. DNS personalizados/del proveedor, rutas VPN y servicios DNS competidores causan rechazo seguro antes de cleanup. No reescribe interfaces. N conserva el DNS; el full upgrade inicial sigue siendo obligatorio. Backup / Restore no transfiere seguridad/DNS específicos del servidor.
 
 ### VLESS RAW TLS Vision opcional
 

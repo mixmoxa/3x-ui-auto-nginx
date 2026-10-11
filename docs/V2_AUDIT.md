@@ -13,7 +13,8 @@ boundaries; it is not an assertion that independent audit or live acceptance pas
 
 All choices and release/domain preflights precede managed cleanup. Security also
 runs its read-only compatibility preflight before cleanup and repeats it immediately
-before applying changes; certificate issuance still precedes DoT. Defaults:
+before applying changes. Base OS and DNS preparation now precede cleanup;
+verified strict DNS must be usable before certificate issuance. Defaults:
 Security + DoT Y, Vision N, AWG N, AGH N, initial client Y. EOF declines the new
 options; an empty interactive answer applies the displayed default.
 
@@ -38,7 +39,7 @@ it does not roll back the VPS or print a subscription URL.
 
 Production uses standard Fail2ban, unattended-upgrades, systemd timer drop-ins
 and systemd-resolved. No SSH policy, timezone, cron, UFW, Ubuntu Pro, Livepatch or
-additional provisioning is changed by this option. Existing core sysctl/firewall
+personal provisioning is changed by this option. Existing core sysctl/firewall
 behavior is retained.
 
 Fail2ban reads `sshd -T` and active `ssh.socket` listeners. SSH jail values are
@@ -52,8 +53,9 @@ or Debian's Debian-Security/codename-security origin. Existing effective distro,
 ESM and administrator origins remain permitted; they are neither cleared nor
 replaced. Explicitly disabled periodic APT causes early refusal. An administrator
 modified project APT drop-in also causes early refusal; both previous and current
-canonical project drop-ins remain supported. The managed
-drop-in disables automatic reboot. Native timers run at about 02:30 and 03:30 local system time.
+canonical project drop-ins remain supported. The managed drop-in enables automatic
+reboot, including logged-in users, at 04:38. Native timers run at 02:30 (lists)
+and 02:50 (unattended upgrade), using the displayed local system timezone.
 Updates outside APT, including 3x-ui/Xray/containers, are not scheduled.
 
 Strict resolved policy uses four named Cloudflare/Google TLS endpoints, empty
@@ -62,14 +64,37 @@ stub listener. Effective D-Bus mode, TLS server names, interface routes, uncache
 queries and libc resolution must pass. Named TLS endpoints use the system CA
 store. Port 853 is outbound only.
 
-The DNS preflight deliberately requires an already active systemd-resolved with
-a standard resolved stub/uplink resolv.conf symlink. It refuses regular/provider
-files, custom symlinks, conflicting global policy, per-link/VPN DNS domains and
-local interface DNS that could form a loop. It preserves provider/cloud-init
-files instead of guessing ownership. A Debian/provider image lacking this
-baseline may therefore refuse the option safely; OS support does not imply every
-cloud image's DNS can be taken over automatically. AGH's existing DoH upstreams
-are not rewritten or used as the system resolver.
+Read-only DNS preflight accepts an active systemd-resolved with its standard
+stub/uplink symlink, or a narrowly recognized minimal image: no installed/active
+resolved, a root-owned non-writable regular resolv.conf containing only the four
+public Cloudflare/Google nameservers, no generated/provider ownership notice,
+search/options, competing DNS/network manager, local DNS listener or explicit
+interface/cloud/VPN DNS policy. It is not proof of ownership of arbitrary provider
+files. Unknown configurations fail safely before cleanup; network interfaces are
+never rewritten. After taking a private snapshot, preparation installs the real
+resolved package, applies strict DoT, checks effective routes/TLS and libc DNS,
+then repeats the readiness preflight. Failure restores the original file/link
+and service active/enable state and verifies libc resolution. A newly installed
+package remains installed but inactive/disabled; retry of such a residual state
+requires administrator review rather than assuming ownership. AGH's DoH
+upstreams are not rewritten or used as the system resolver.
+
+Initial preparation is mandatory even with Security=N: error-checked APT update,
+no-remove upgrade simulation, `apt-get --no-remove -y dist-upgrade`, dependency
+installation and SSH/tool/libc DNS readiness checks, all before cleanup. APT waits
+for dpkg locks and retries the lists lock with a bounded deadline; noninteractive
+dpkg/UCF preserve existing configuration, and needrestart reports pending restarts.
+APT origins are not changed by the initial upgrade. Existing-deployment confirmation
+explicitly covers possible service restarts and the non-rollbackable OS upgrade.
+Package maintainer scripts can still restart services; package installation and
+dist-upgrade are not transactional and are not claimed to be rolled back.
+
+A reboot-required flag schedules reboot one minute after a successful final
+report, never after a failed installation. Failure to schedule returns nonzero;
+post-reboot acceptance remains pending. The Security=N path leaves DNS and the
+unattended reboot policy unchanged, but initial full upgrade and its required
+reboot still apply. Timezone, SSH policy/keys and existing firewall rules remain
+unchanged by preparation; missing UFW is installed without activating it here.
 
 Project-owned drop-ins:
 
@@ -219,7 +244,17 @@ management remains fixtures. These boundaries must accompany reported PASS.
 
 Live acceptance remains necessary for public A/AAAA, Let's Encrypt, the actual
 provider/VPN DNS environment, cloud firewall, each distro kernel, a complete
-same-host/new-host recovery and reboot. Functional integration covers amd64;
+same-host/new-host recovery and full VPS reboot acceptance. The systemd matrix
+starts without resolved/resolvectl/UFW and with regular Google resolv.conf. It
+uses real APT with a local repository containing distro resolved/UFW packages
+and tiny upgrade/retention fixtures: upgrade changes the fixture version, retains
+the unrelated package and sets reboot-required. It exercises real TLS DNS failure,
+original plain DNS rollback, strict TLS preparation, socket/service SSH, and
+systemd shutdown scheduling. A second real kernel/systemd cold boot checks the
+persisted APT policy, administrator origins and enabled/active local-time timers.
+Only the tested policy is transferred to this second disposable boot; this is not
+an end-to-end reboot of a full installed stack. The CI host is never upgraded.
+Functional integration covers amd64;
 archive checksum pins do not certify every architecture. No claim of a live
 installation, merge or release follows from CI success.
 

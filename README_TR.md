@@ -75,7 +75,9 @@ Seçimler yeniden kurulumdan önce alınır. Security ve istemci oluşturma vars
 
 ### İsteğe bağlı VPS Security + DNS-over-TLS
 
-`CONFIGURE VPS SECURITY + DoT? [Y/n]:` SSH için Fail2ban, yerel saatle yaklaşık 02:30/03:30 APT güvenlik güncelleme zamanlayıcıları ve katı sistem DNS-over-TLS yapılandırır. SSH ilkesi, saat dilimi ve UFW korunur; otomatik yeniden başlatma kapatılır. Çakışan özel/sağlayıcı DNS ayarları uyarıyla korunur ve seçenek başarısız olarak bildirilir. Sunucuya özel güvenlik/DNS ayarları Backup / Restore ile taşınmaz.
+Önceki kurulumu silmeden önce yükleyici uyumluluğu denetler, zorunlu `apt-get --no-remove -y dist-upgrade` çalıştırır, sistem bağımlılıklarını kurar ve SSH/DNS hazır durumunu yeniden doğrular. Yeniden kurulum onay gerektirir: işletim sistemi güncellemesi hizmetleri yeniden başlatabilir ve geri alınamaz. Gerekli yeniden başlatma yalnızca başarılı kurulum, kontroller ve son rapordan sonra planlanır; sonrasındaki kabulü sunucu sahibi doğrular.
+
+`CONFIGURE VPS SECURITY + DoT? [Y/n]:` SSH Fail2ban jail, 02:30 APT update, 02:50 unattended upgrade ve kullanıcılar bağlı olsa bile 04:38 otomatik yeniden başlatma ayarlar. Gösterilen yerel VPS saat dilimi korunur; SSH ilkesi ve anahtarları değişmez. resolved bulunmayan, yalnızca Cloudflare/Google genel DNS adreslerini içeren normal resolv.conf dosyalı tanınan minimal imajda paket kurulur ve cleanup öncesinde katı DoT doğrulanır. Hata durumunda doğrulanmış geri dönüş için özgün DNS ve hizmet durumu saklanır; kurulan paketler geri alınmaz. Özel/sağlayıcı DNS, VPN yolları ve başka DNS hizmetleri cleanup öncesinde güvenli ret oluşturur. Ağ arayüzleri yeniden yazılmaz. N seçimi DNS değiştirmez; ilk full upgrade zorunludur. Sunucuya özel güvenlik/DNS Backup / Restore ile taşınmaz.
 
 ### İsteğe bağlı VLESS RAW TLS Vision
 

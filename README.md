@@ -75,7 +75,9 @@ Choices are collected before the rebuild. Security and initial client creation d
 
 ### Optional VPS Security + DNS-over-TLS
 
-`CONFIGURE VPS SECURITY + DoT? [Y/n]:` configures the SSH Fail2ban jail, security-only APT timers at about 02:30/03:30 local time, and strict system DNS-over-TLS. SSH policy, timezone and UFW are preserved; automatic reboot is disabled. Conflicting provider/custom DNS is preserved with a warning and a failed optional status. Host-specific security/DNS files are not transported by Backup / Restore.
+Before removing a previous deployment, the installer checks compatibility, runs mandatory `apt-get --no-remove -y dist-upgrade`, installs system dependencies and rechecks SSH/DNS. Reinstallation requires confirmation: OS upgrades may restart services and cannot be rolled back. A required reboot is scheduled only after successful installation, checks and the final report; the owner verifies post-reboot acceptance.
+
+`CONFIGURE VPS SECURITY + DoT? [Y/n]:` configures the SSH Fail2ban jail, APT update at 02:30, unattended upgrade at 02:50 and automatic reboot at 04:38, including when users are logged in. The displayed local VPS timezone is preserved; SSH policy and keys remain unchanged. On a recognized minimal image without resolved, with a regular resolv.conf containing only public Cloudflare/Google DNS, the package is installed and strict system DoT is verified before cleanup. Original DNS and service state are saved for verified rollback on failure; installed packages are not rolled back. Custom/provider DNS, VPN routes and competing DNS services cause safe refusal before cleanup. Network interfaces are not rewritten. Selecting N leaves DNS unchanged; initial full upgrade remains mandatory. Host-specific security/DNS is not transported by Backup / Restore.
 
 ### Optional VLESS RAW TLS Vision
 

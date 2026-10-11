@@ -75,7 +75,9 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ### 可选 VPS Security + DNS-over-TLS
 
-`CONFIGURE VPS SECURITY + DoT? [Y/n]:` 配置 SSH Fail2ban、约本地时间 02:30/03:30 执行的 APT 安全更新定时器以及严格的系统 DNS-over-TLS。保留 SSH 策略、时区和 UFW，禁止自动重启。冲突的自定义或服务商 DNS 设置会被保留，并显示警告及选项失败状态。Backup / Restore 不迁移这些与主机相关的安全和 DNS 设置。
+删除原部署前，安装器先检查兼容性，执行必要的 `apt-get --no-remove -y dist-upgrade`，安装系统依赖并再次检查 SSH/DNS。重装需要确认：系统升级可能重启服务，且无法回滚。若需要重启，只在安装、检查和最终报告均成功后安排；重启后的验收由所有者完成。
+
+`CONFIGURE VPS SECURITY + DoT? [Y/n]:` 配置 SSH Fail2ban、02:30 APT update、02:50 unattended upgrade，以及 04:38 自动重启，即使仍有用户登录。显示并保留 VPS 本地时区，不修改 SSH 策略或密钥。对识别出的最小镜像，若未安装 resolved，普通 resolv.conf 仅含 Cloudflare/Google 公共 DNS，则安装该软件包并在 cleanup 前验证严格系统 DoT。保存原 DNS 和服务状态以便失败时验证回滚，但不回滚已安装的软件包。自定义或服务商 DNS、VPN 路由及竞争 DNS 服务会在 cleanup 前安全拒绝。不会重写网络接口。选择 N 不修改 DNS，但初次 full upgrade 仍为必需。Backup / Restore 不迁移主机特定安全/DNS 设置。
 
 ### 可选 VLESS RAW TLS Vision
 
