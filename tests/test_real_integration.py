@@ -574,12 +574,36 @@ proxy-providers:
 proxy-groups:
   - name: VPN
     type: select
+    proxies: [DIRECT]
     use: [sub]
 rules:
   - MATCH,VPN
 ''')
             mihomo = self.launch([self.mihomo,'-d',self.root,'-f',mihomo_config],'vision-mihomo')
             self.ready(mihomo,('127.0.0.1',control)); self.ready(mihomo,('127.0.0.1',mixed))
+            # A direct option must never satisfy the Vision transfer assertion.
+            from urllib.request import build_opener, ProxyHandler, Request
+            from urllib.error import URLError
+            controller=build_opener(ProxyHandler({}))
+            deadline=time.monotonic()+15
+            while time.monotonic()<deadline:
+                self.assertIsNone(mihomo.poll(),'Mihomo exited before provider readiness')
+                try:
+                    with controller.open(f'http://127.0.0.1:{control}/providers/proxies/sub',timeout=1) as response:
+                        proxies=json.load(response).get('proxies',[])
+                    if len(proxies)==1 and proxies[0].get('type','').lower()=='vless':
+                        break
+                except (URLError,TimeoutError): pass
+                time.sleep(.05)
+            else: self.fail('Official Vision provider did not load in Mihomo')
+            selection=Request(f'http://127.0.0.1:{control}/proxies/VPN',
+                              data=json.dumps({'name':proxies[0]['name']}).encode(),
+                              headers={'Content-Type':'application/json'},method='PUT')
+            with controller.open(selection,timeout=3) as response:
+                self.assertEqual(response.status,204)
+            with controller.open(f'http://127.0.0.1:{control}/proxies/VPN',timeout=3) as response:
+                selected=json.load(response)
+            self.assertEqual(selected['now'],proxies[0]['name'],'Mihomo did not select the imported VLESS Vision profile')
             imported = subprocess.run(['curl','-fsS','--noproxy','','--socks5-hostname',f'127.0.0.1:{mixed}',
                 '--connect-timeout','5','--max-time','10',f'http://127.0.0.1:{self.origin.server_port}/mihomo-vision'],capture_output=True,text=True,timeout=15)
             self.assertEqual(imported.returncode,0,imported.stderr); self.assertEqual(imported.stdout,self.marker)

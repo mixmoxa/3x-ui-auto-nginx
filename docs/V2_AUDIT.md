@@ -147,6 +147,10 @@ Before stopping services, Restore rejects foreign/corrupt project-named hooks
 and existing same-name certificate lineages without canonical project ownership.
 It does not guess that an administrator's artifact belongs to this project.
 
+The real Mihomo Vision transfer waits for the official file provider to load and
+explicitly selects its VLESS profile through the local controller. A DIRECT
+option is present in that test as a guard: direct traffic cannot satisfy it.
+
 ## 4. Native client and subscription
 
 The helper reuses the existing local verified HTTPS Panel session, login and
