@@ -435,6 +435,69 @@ http {{ access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {mai
 
     def test_reality(self): self.transport('reality')
 
+    def test_vision_deploy_hook_waits_for_delayed_xray(self):
+        from certificate_fixtures import certificates, function, relocate
+        from test_integrated_features import helper
+        self.vision_module = helper('vision')
+        self.vision_port, fallback = port(self.allocated_ports), port(self.allocated_ports)
+        certificates(self.root, extra=('vision.example',))
+        lineage = self.root/'etc/letsencrypt/live/vision.example'
+        cover = self.root/'vision-site'; cover.mkdir(); (cover/'index.html').write_text('vision-cover')
+        self.vision_site = self.vision_module.fallback_config('vision.example', fallback, str(cover))
+        self.nginx_config()
+        inbound = self.vision_module.inbound('vision.example', self.vision_port, fallback,
+            str(lineage/'fullchain.pem'), str(lineage/'privkey.pem'))
+        config = self.validate({'inbounds': [inbound], 'outbounds': [{'protocol': 'freedom'}]}, 'hook-vision')
+        backup = (ROOT/'assets/backup/x-ui-backup.sh').read_text()
+        self.assertEqual(function('render_vision_hook'), function('render_vision_hook', backup))
+        generator = relocate(function('render_vision_hook'), self.root)
+        body = subprocess.check_output(['bash', '-c', generator+'\nrender_vision_hook vision.example'], text=True)
+        # Only host service control, privileged port and private CA are mapped;
+        # the rendered hook, curl, nginx stream, TLS and Xray fallback are real.
+        trigger, pidfile = self.root/'restart', self.root/'service-pid'
+        failures = []
+        def restart():
+            try:
+                deadline = time.monotonic()+10
+                while not trigger.exists():
+                    if time.monotonic() >= deadline: raise RuntimeError('Hook did not restart its service')
+                    time.sleep(.01)
+                process = self.launch(['bash', '-c', 'sleep 1.2; exec "$@"', 'delayed-xray',
+                    self.xray, 'run', '-c', config], 'hook-xray')
+                pidfile.write_text(str(process.pid))
+            except Exception as error:
+                failures.append(type(error).__name__)
+        worker = threading.Thread(target=restart, daemon=True); worker.start()
+        mapping = '''systemctl() {
+    if [[ "$*" == 'restart x-ui' ]]; then
+        touch "$TRIGGER"
+        for attempt in {1..100}; do [[ ! -f "$PIDFILE" ]] || return 0; sleep .01; done
+        return 1
+    fi
+    [[ "$*" == 'is-active --quiet x-ui' ]] && kill -0 "$(cat "$PIDFILE")"
+}
+curl() { command curl --cacert "$TRUST" "$@"; }
+'''
+        body = body.replace('$VISION_DOMAIN:443:', f'$VISION_DOMAIN:{self.public}:').replace(
+            'https://$VISION_DOMAIN/', f'https://$VISION_DOMAIN:{self.public}/')
+        env = {**os.environ, 'TRIGGER': str(trigger), 'PIDFILE': str(pidfile), 'TRUST': str(lineage/'fullchain.pem'),
+               'RENEWED_LINEAGE': str(lineage)}
+        started = time.monotonic()
+        result = subprocess.run(['bash', '-c', mapping+body], env=env, capture_output=True, text=True, timeout=18)
+        worker.join(timeout=2)
+        self.assertFalse(worker.is_alive()); self.assertEqual(failures, [])
+        self.assertEqual(result.returncode, 0, 'Delayed Xray readiness: '+result.stderr)
+        self.assertGreaterEqual(time.monotonic()-started, 1.2)
+        self.assertIn('curl:', result.stderr, 'The regression must actually attempt HTTPS before Xray is ready')
+        # A genuinely untrusted certificate remains fail-closed within the bound.
+        env['TRUST'] = str(self.cert)
+        result = subprocess.run(['bash', '-c', 'systemctl() { return 0; };\ncurl() { command curl --cacert "$TRUST" "$@"; }\n'+body],
+            env=env, capture_output=True, text=True, timeout=18)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('certificate', result.stderr.lower())
+        self.assertNotIn('--insecure', body)
+        self.passed.append('Vision deploy-hook delayed Xray / strict TLS')
+
     def test_vision_and_initial_client_official_api(self):
         from test_integrated_features import helper
         client, awg, self.vision_module = helper('client'), helper('amneziawg'), helper('vision')

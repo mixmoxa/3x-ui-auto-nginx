@@ -2358,7 +2358,8 @@ preflight_vision_artifacts() {
         [[ -f "$hook" && ! -L "$hook" && "$(stat -c '%u:%g:%a' "$hook")" == '0:0:755' ]] || return 1
         old_domain=$(sed -n 's/^VISION_DOMAIN=//p' "$hook")
         [[ "$old_domain" =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ && "$old_domain" == *.* ]] || return 1
-        cmp -s "$hook" <(render_vision_hook "$old_domain") || { msg_err 'Unowned Vision deploy-hook; deployment preserved.'; return 1; }
+        cmp -s "$hook" <(render_vision_hook "$old_domain") ||
+            cmp -s "$hook" <(render_vision_hook "$old_domain" legacy) || { msg_err 'Unowned Vision deploy-hook; deployment preserved.'; return 1; }
         [[ -z "$nginx_domain" || "$old_domain" == "$nginx_domain" ]] || { msg_err 'Vision hook/nginx domains differ.'; return 1; }
         VISION_PREVIOUS_HOOK=owned
     fi
@@ -2421,6 +2422,9 @@ PYDOMAIN
 }
 
 render_vision_hook() {
+    local readiness="--connect-timeout 2 --max-time 3 --retry 4 --retry-delay 1 --retry-max-time 10 --retry-all-errors"
+    # Recognize only the exact previous canonical hook for existing installations/archives.
+    [[ "${2:-}" != legacy ]] || readiness="--connect-timeout 5 --max-time 20"
     printf '#!/usr/bin/env bash\nset -Eeuo pipefail\nVISION_DOMAIN=%q\n' "$1"
     cat <<'VISIONHOOK'
 [[ "${RENEWED_LINEAGE:-}" == "/etc/letsencrypt/live/$VISION_DOMAIN" ]] || exit 0
@@ -2432,8 +2436,8 @@ private_key=$(openssl pkey -in "$RENEWED_LINEAGE/privkey.pem" -pubout)
 systemctl restart x-ui
 systemctl is-active --quiet x-ui
 curl -q -fsS --noproxy '*' --http1.1 --resolve "$VISION_DOMAIN:443:127.0.0.1" \
-    --connect-timeout 5 --max-time 20 "https://$VISION_DOMAIN/" >/dev/null
 VISIONHOOK
+    printf '    %s "https://$VISION_DOMAIN/" >/dev/null\n' "$readiness"
 }
 
 install_vision() {

@@ -38,6 +38,7 @@ jobs:
         run: |
           python3 -m unittest -v \
             test_real_integration.RealIntegration.test_vision_and_initial_client_official_api \
+            test_real_integration.RealIntegration.test_vision_deploy_hook_waits_for_delayed_xray \
             test_real_integration.RealIntegration.test_amneziawg_tcp_udp_and_panel_restart
 
   debian-native-api:
@@ -54,6 +55,7 @@ jobs:
             --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/repo,readonly" \
             -e PYTHONPATH=tests -w /repo xui-debian python3 -m unittest -v \
             test_real_integration.RealIntegration.test_vision_and_initial_client_official_api \
+            test_real_integration.RealIntegration.test_vision_deploy_hook_waits_for_delayed_xray \
             test_real_integration.RealIntegration.test_amneziawg_tcp_udp_and_panel_restart
 
   security-systemd:

@@ -169,6 +169,13 @@ port, with root ownership and mode 0644. Reusing an existing Vision lineage requ
 the canonical deploy-hook, matching nginx domain/configuration and valid webroot
 renewal configuration; a matching certificate name alone is insufficient.
 
+The Vision renewal deploy-hook also waits for trusted HTTPS after restarting
+3X-UI: at most four curl retries within a ten-second retry window, with a
+two-second connection timeout and three seconds per request. A certificate or
+backend failure remains fatal. Installer and Backup use the identical generator;
+only the exact former canonical hook remains recognized for ownership. Restoring
+an older Vision archive installs the current hook without changing its lineage.
+
 Initial configuration restarts Xray through the native API, preserving the
 administrator session for rollback. API restart success does not establish
 listener readiness: preparation polls the loopback inbound for at most 10 seconds,

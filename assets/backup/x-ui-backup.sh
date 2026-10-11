@@ -565,7 +565,12 @@ restore_project_certificates() {
     mkdir -p /etc/letsencrypt/renewal-hooks/deploy
     for name in 3x-ui-auto-nginx 3x-ui-auto-nginx-vision; do
         [[ -f "$source/renewal-hooks/deploy/$name" ]] || continue
-        cp -a -- "$source/renewal-hooks/deploy/$name" /etc/letsencrypt/renewal-hooks/deploy/ || die 'Cannot restore verified project hook.'
+        if [[ "$name" == 3x-ui-auto-nginx-vision ]]; then
+            render_vision_hook "$vision" > "/etc/letsencrypt/renewal-hooks/deploy/$name" || die 'Cannot restore verified Vision hook.'
+            chmod 0755 "/etc/letsencrypt/renewal-hooks/deploy/$name" || die 'Cannot set Vision hook permissions.'
+        else
+            cp -a -- "$source/renewal-hooks/deploy/$name" /etc/letsencrypt/renewal-hooks/deploy/ || die 'Cannot restore verified project hook.'
+        fi
     done
     while IFS= read -r file; do
         [[ -n "$file" ]] || continue
@@ -801,7 +806,8 @@ if len(values)!=1 or len(values[0])>253 or '.' not in values[0] or not all(
 print(values[0])
 PYVISION
     ) || return 1
-    cmp -s "$hook" <(render_vision_hook "$value") || return 1
+    cmp -s "$hook" <(render_vision_hook "$value") ||
+        cmp -s "$hook" <(render_vision_hook "$value" legacy) || return 1
     printf '%s\n' "$value"
 }
 
@@ -816,6 +822,9 @@ check_vision_renewal() {
 }
 
 render_vision_hook() {
+    local readiness="--connect-timeout 2 --max-time 3 --retry 4 --retry-delay 1 --retry-max-time 10 --retry-all-errors"
+    # Recognize only the exact previous canonical hook for existing installations/archives.
+    [[ "${2:-}" != legacy ]] || readiness="--connect-timeout 5 --max-time 20"
     printf '#!/usr/bin/env bash\nset -Eeuo pipefail\nVISION_DOMAIN=%q\n' "$1"
     cat <<'VISIONHOOK'
 [[ "${RENEWED_LINEAGE:-}" == "/etc/letsencrypt/live/$VISION_DOMAIN" ]] || exit 0
@@ -827,8 +836,8 @@ private_key=$(openssl pkey -in "$RENEWED_LINEAGE/privkey.pem" -pubout)
 systemctl restart x-ui
 systemctl is-active --quiet x-ui
 curl -q -fsS --noproxy '*' --http1.1 --resolve "$VISION_DOMAIN:443:127.0.0.1" \
-    --connect-timeout 5 --max-time 20 "https://$VISION_DOMAIN/" >/dev/null
 VISIONHOOK
+    printf '    %s "https://$VISION_DOMAIN/" >/dev/null\n' "$readiness"
 }
 
 # Same canonical runtime contract in installer/backup; embedded in the trusted deploy hook.

@@ -694,6 +694,10 @@ class IntegratedFeatures(unittest.TestCase):
             acme='# Managed by 3x-ui Auto Nginx: Vision\nserver {\n    listen 80;\n    listen [::]:80;\n    server_name vision.example;\n    location ^~ /.well-known/acme-challenge/ { root /var/www/acme; try_files $uri =404; }\n    location / { return 301 https://$host$request_uri; }\n}\n'
             (available/'vision-acme.conf').write_text(acme)
             self.assertEqual(run().returncode,0)
+            hook.write_text(subprocess.check_output(['bash','-c',relocated(function('render_vision_hook'),root)+'\nrender_vision_hook vision.example legacy'],text=True))
+            self.assertEqual(run().returncode,0,'Previous canonical hook must permit a safe reinstall')
+            hook.write_text(hook.read_text()+'\n# administrator modification\n')
+            self.assertNotEqual(run().returncode,0,'Modified legacy hooks must remain unowned')
             self.assertEqual((lineage/'fullchain.pem').read_text(),'administrator certificate')
 
     def test_initial_client_random_subscription_and_no_plaintext_success(self):
