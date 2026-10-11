@@ -1,0 +1,107 @@
+name: Telegram release announcements
+
+'on':
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Notify @promsdev
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.release.draft == false && github.event.release.prerelease == false) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Publish release or test message
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          RELEASE_PROJECT: 3X-UI AUTO NGINX
+          RELEASE_EMOJI: 🚀
+        run: |
+          python3 - <<'PY'
+          import html
+          import json
+          import os
+          import re
+          import sys
+          import urllib.error
+          import urllib.request
+          
+          token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          if not token:
+              sys.exit("Missing TELEGRAM_BOT_TOKEN repository secret")
+          
+          name = os.environ["RELEASE_PROJECT"]
+          emoji = os.environ["RELEASE_EMOJI"]
+          if os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch":
+              message = (
+                  "🧪 <b>Проверка уведомлений / Release bot test</b>\n\n"
+                  f"{html.escape(emoji + ' ' + name)}\n"
+                  "GitHub Actions → Telegram: тестовое сообщение."
+              )
+          else:
+              with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as file:
+                  release = json.load(file)["release"]
+              if release.get("draft") or release.get("prerelease"):
+                  sys.exit("Not a stable published release")
+              version = str(release["tag_name"])[:80]
+              url = release["html_url"]
+              expected = "https://github.com/" + os.environ["GITHUB_REPOSITORY"] + "/releases/"
+              if not url.startswith(expected):
+                  sys.exit("Unexpected release URL")
+              highlights = []
+              for line in (release.get("body") or "").splitlines():
+                  match = re.match(r"^\s*[-*]\s+(.+)", line)
+                  if not match:
+                      continue
+                  item = match.group(1).strip()
+                  if item.startswith(("!", "http://", "https://")):
+                      continue
+                  item = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", item)
+                  item = item.replace(chr(96), "").replace("*", "").replace("~", "")
+                  item = re.sub(r"\s+", " ", item).strip()
+                  if len(item) < 6:
+                      continue
+                  if len(item) > 170:
+                      item = item[:167].rstrip() + "..."
+                  highlights.append("• " + html.escape(item))
+                  if len(highlights) == 3:
+                      break
+          
+              message = (
+                  f"{emoji} <b>{html.escape(name)} · {html.escape(version)}</b>\n"
+                  "Новый релиз / New release"
+              )
+              if highlights:
+                  message += "\n\n✨ <b>Главное / Highlights</b>\n" + "\n".join(highlights)
+              message += (
+                  "\n\n📦 <a href=\"" + html.escape(url, quote=True) +
+                  "\">Описание и загрузка / Release notes</a>"
+              )
+          
+          payload = json.dumps({
+              "chat_id": "@promsdev",
+              "text": message,
+              "parse_mode": "HTML",
+              "link_preview_options": {"is_disabled": True},
+          }, ensure_ascii=False).encode("utf-8")
+          request = urllib.request.Request(
+              "https://api.telegram.org/bot" + token + "/sendMessage",
+              data=payload,
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  answer = json.load(response)
+          except urllib.error.HTTPError as error:
+              sys.exit(f"Telegram API HTTP {error.code}: check token and channel posting permission")
+          except urllib.error.URLError:
+              sys.exit("Telegram API network error")
+          if not answer.get("ok"):
+              sys.exit("Telegram API did not confirm sending")
+          print("Telegram channel message sent")
+          PY
