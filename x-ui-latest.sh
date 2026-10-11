@@ -500,10 +500,11 @@ EOF
     # Shared proxy locations for xray inbounds (included by both vhosts)
     cat > /etc/nginx/snippets/includes.conf <<EOF
     #Subscription — prefix location covers all sub-paths (assets, JS, etc.)
+    # Local error_page overrides inherited cover-page redirects; backend 5xx retain their status.
     location /${sub_path}/ {
         access_log off;
         error_log /dev/null crit;
-        error_page 400 401 402 403 500 501 502 503 504 =404 @subscription_error;
+        error_page 404 =404 @subscription_error;
         if (\$hack = 1) { return 404; }
         proxy_redirect off;
         proxy_set_header Host \$host;
@@ -514,7 +515,7 @@ EOF
     location = /${sub_path} {
         access_log off;
         error_log /dev/null crit;
-        error_page 400 401 402 403 500 501 502 503 504 =404 @subscription_error;
+        error_page 404 =404 @subscription_error;
         if (\$hack = 1) { return 404; }
         proxy_redirect off;
         proxy_set_header Host \$host;
@@ -527,7 +528,7 @@ EOF
     location ~ ^/${sub_path}/(?<clash_sub_id>[^/]+)$ {
         access_log off;
         error_log /dev/null crit;
-        error_page 400 401 402 403 500 501 502 503 504 =404 @subscription_error;
+        error_page 404 =404 @subscription_error;
         if (\$hack = 1) { return 404; }
         if (\$serve_clash_yaml = 1) { rewrite ^ /__clash_api?sub_id=\$clash_sub_id last; }
         proxy_redirect off;
@@ -543,7 +544,7 @@ EOF
     location /${json_path} {
         access_log off;
         error_log /dev/null crit;
-        error_page 400 401 402 403 500 501 502 503 504 =404 @subscription_error;
+        error_page 404 =404 @subscription_error;
         if (\$hack = 1) { return 404; }
         proxy_redirect off;
         proxy_set_header Host \$host;
@@ -554,7 +555,7 @@ EOF
     location /${json_path}/ {
         access_log off;
         error_log /dev/null crit;
-        error_page 400 401 402 403 500 501 502 503 504 =404 @subscription_error;
+        error_page 404 =404 @subscription_error;
         if (\$hack = 1) { return 404; }
         proxy_redirect off;
         proxy_set_header Host \$host;
@@ -823,7 +824,7 @@ server {
         internal;
         access_log off;
         error_log /dev/null crit;
-        error_page 400 401 402 403 500 501 502 503 504 =404 @subscription_error;
+        error_page 404 =404 @subscription_error;
         proxy_pass          http://127.0.0.1:${mtr_backend_port}/api/clash\$is_args\$args;
         proxy_http_version  1.1;
         proxy_set_header    X-Real-IP \$remote_addr;

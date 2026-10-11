@@ -11,6 +11,7 @@ import re
 import shlex
 import shutil
 import socket
+import ssl
 import sqlite3
 import subprocess
 import tempfile
@@ -681,6 +682,66 @@ sleep() { :; }
         # The only regex route remains the existing subscription handler.
         self.assertEqual(re.findall(r"location ~[^\n]+", shared), ["location ~ ^/subscription/(?<clash_sub_id>[^/]+)$ {"])
 
+
+    def test_subscription_real_nginx_status_and_secret_log_boundaries(self):
+        nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
+        self.assertTrue(nginx,'Real nginx is required for this regression')
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(handler):
+                status=404 if 'missing-fixture' in handler.path else handler.server.status
+                handler.send_response(status); handler.send_header('Content-Length','0'); handler.end_headers()
+            def log_message(handler,*args): pass
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); cert=root/'cert.pem'; key=root/'key.pem'
+            subprocess.run(['openssl','req','-x509','-newkey','ec','-pkeyopt','ec_paramgen_curve:prime256v1','-nodes','-days','1','-subj','/CN=localhost','-out',cert,'-keyout',key],check=True,capture_output=True)
+            tls=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); tls.load_cert_chain(cert,key)
+            secure=ThreadingHTTPServer(('127.0.0.1',0),Handler); secure.socket=tls.wrap_socket(secure.socket,server_side=True)
+            plain=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+            for server in (secure,plain):
+                server.status=200; threading.Thread(target=server.serve_forever,daemon=True).start()
+                self.addCleanup(server.server_close); self.addCleanup(server.shutdown)
+            with socket.socket() as reserved:
+                reserved.bind(('127.0.0.1',0)); public=reserved.getsockname()[1]
+            with socket.socket() as reserved:
+                reserved.bind(('127.0.0.1',0)); unavailable=reserved.getsockname()[1]
+            config=root/'nginx.conf'; includes=root/'includes.conf'
+            temp_paths=''.join(f'{kind}_temp_path {root}/{kind};\n' for kind in ('client_body','proxy','fastcgi','uwsgi','scgi'))
+            config.write_text(f'pid {root}/nginx.pid; error_log {root}/error.log info; events {{}} http {{ access_log {root}/access.log; '+temp_paths+f'map $http_user_agent $serve_clash_yaml {{ default 0; ~Mihomo 1; }} server {{ listen 127.0.0.1:{public}; set $hack 0; error_page 400 401 403 500 502 503 504 =404 /404; location = /404 {{ return 404; }} include {includes}; }} }}')
+            def update(sub,clash):
+                shared=render(SHARED,sub_port=str(sub))
+                main=render(MAIN,mtr_backend_port=str(clash))
+                block=re.search(r'    location = /__clash_api \{.*?^    \}',main,re.M|re.S).group()
+                includes.write_text(shared+'\n'+block)
+            update(secure.server_port,plain.server_port)
+            startup=(root/'nginx-startup.log').open('wb'); self.addCleanup(startup.close)
+            process=subprocess.Popen([nginx,'-p',str(root)+'/', '-c',config,'-g','daemon off;'],stdout=subprocess.DEVNULL,stderr=startup)
+            self.addCleanup(lambda: (process.terminate(),process.wait(timeout=10)) if process.poll() is None else None)
+            for attempt in range(100):
+                self.assertIsNone(process.poll(),'nginx did not start')
+                try:
+                    with socket.create_connection(('127.0.0.1',public),timeout=.1): break
+                except OSError: time.sleep(.02)
+            else: self.fail('nginx readiness expired')
+            cases=('ready','missing','500','503','unavailable','tls-failure')
+            for case in cases:
+                secure.status=plain.status=int(case) if case.isdigit() else 200
+                sub=unavailable if case=='unavailable' else plain.server_port if case=='tls-failure' else secure.server_port
+                clash=unavailable if case=='unavailable' else plain.server_port
+                update(sub,clash)
+                subprocess.run([nginx,'-p',str(root)+'/', '-c',config,'-s','reload'],check=True,capture_output=True)
+                time.sleep(.15)
+                token='missing-fixture' if case=='missing' else 'private-fixture-'+case
+                for route,agent in ((f'/subscription/{token}','RawClient'),(f'/subscription/nested/{token}','RawClient'),(f'/jsonsub/{token}','JsonClient'),(f'/subscription/{token}','Mihomo')):
+                    with self.subTest(case=case,route=route,agent=agent):
+                        connection=http.client.HTTPConnection('127.0.0.1',public,timeout=5)
+                        try:
+                            connection.request('GET',route,headers={'User-Agent':agent})
+                            response=connection.getresponse(); response.read()
+                            expected=404 if case=='missing' else int(case) if case.isdigit() else 502 if case=='unavailable' or (case=='tls-failure' and agent!='Mihomo') else 200
+                            self.assertEqual(response.status,expected)
+                        finally: connection.close()
+                        for log in ('access.log','error.log'):
+                            self.assertNotIn(token,(root/log).read_text(),log+' leaked subscription identifier')
 
     def test_nginx_runtime_rejects_arbitrary_ports_and_preserves_ws(self):
         nginx = os.environ.get("NGINX_BIN") or shutil.which("nginx")
