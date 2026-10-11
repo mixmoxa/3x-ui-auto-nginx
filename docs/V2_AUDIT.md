@@ -11,7 +11,9 @@ boundaries; it is not an assertion that independent audit or live acceptance pas
 
 ## 1. Installer sequence and results
 
-All choices and release/domain preflights precede managed cleanup. Defaults:
+All choices and release/domain preflights precede managed cleanup. Security also
+runs its read-only compatibility preflight before cleanup and repeats it immediately
+before applying changes; certificate issuance still precedes DoT. Defaults:
 Security + DoT Y, Vision N, AWG N, AGH N, initial client Y. EOF declines the new
 options; an empty interactive answer applies the displayed default.
 
@@ -45,10 +47,11 @@ the log backend requires an existing auth log. Effective SSH policy is compared
 after configuration. Password/keyboard-interactive access triggers a warning;
 Match contexts still require administrator review. No recidive jail is added.
 
-APT selects only the distro security origin: Ubuntu's codename-security archive,
-or Debian's Debian-Security/codename-security origin. Administrator files remain
-in place; the managed final drop-in resets the effective origin list and disables
-automatic reboot. Native timers run at about 02:30 and 03:30 local system time.
+APT adds the required distro security origin: Ubuntu's codename-security archive,
+or Debian's Debian-Security/codename-security origin. Existing effective distro,
+ESM and administrator origins remain permitted; they are neither cleared nor
+replaced. Explicitly disabled periodic APT causes early refusal. The managed
+drop-in disables automatic reboot. Native timers run at about 02:30 and 03:30 local system time.
 Updates outside APT, including 3x-ui/Xray/containers, are not scheduled.
 
 Strict resolved policy uses four named Cloudflare/Google TLS endpoints, empty
@@ -75,7 +78,8 @@ Project-owned drop-ins:
 - `/etc/systemd/resolved.conf.d/90-3x-ui-auto-nginx.conf`
 
 Existing managed files must have the project marker and safe root ownership.
-Administrator SSH/DEFAULT Fail2ban overrides cause refusal. A private snapshot
+Administrator SSH/DEFAULT Fail2ban overrides cause refusal; unmodified package
+`.conf` defaults are identified using dpkg conffile checksums. A private snapshot
 restores file contents/permissions, resolv.conf link and prior enabled/active
 service state on failure. Packages installed during the attempt may remain;
 rollback does not uninstall shared package dependencies.
@@ -111,13 +115,18 @@ reloaded. Failure restores the original stream, reconciles uncertain API state
 before deleting an exactly owned empty inbound, removes only new artifacts and
 checks core readiness. An ambiguous/modified record is retained with an
 unverified status. Reinstallation recognizes owned files and canonical hooks;
-foreign artifacts cause refusal before cleanup.
+foreign artifacts cause refusal before cleanup. Existing Vision nginx files must
+match the canonical generators exactly, including the dynamic domain and loopback
+port, with root ownership and mode 0644. Reusing an existing Vision lineage requires
+the canonical deploy-hook, matching nginx domain/configuration and valid webroot
+renewal configuration; a matching certificate name alone is insufficient.
 
 Initial configuration restarts Xray through the native API, preserving the
 administrator session for rollback. If rollback is unverified, the new
 certificate and renewal artifacts remain for inspection rather than breaking
 an inbound that might still reference them. Subscription routes suppress nginx
-access/error logging, including upstream error redirects, so subscription
+access/error logging, including internal redirects. Missing subscriptions retain
+404; upstream 500/503 and nginx-generated 502 remain errors of the same class, so subscription
 identifiers do not enter shared logs. Initial client creation is deferred if
 Vision rollback remains unverified: a retained inbound might lack its SNI route.
 
@@ -127,6 +136,13 @@ declaration retain the two-lineage contract. A declared Vision archive missing
 its mandatory certificate fails before replacement. Existing certificate path,
 SAN/key, webroot and nginx validations remain. Foreign target Certbot lineages,
 options and hooks are preserved rather than replacing the entire tree.
+Restore imports only declared project live/archive/renewal PEM state and verified
+project hooks. Foreign archived lineages, hooks, cli.ini and unrelated accounts
+are ignored. Only meta.json, private_key.json and regr.json for accounts explicitly
+referenced by managed renewal configurations are imported. Account paths/JSON
+are validated; conflicting target account data and symlinks cause early refusal.
+Actual Certbot/Pebble renewal after this selective Restore is tested; directory
+hooks are disabled for that isolated renewal, with hook execution covered separately.
 Before stopping services, Restore rejects foreign/corrupt project-named hooks
 and existing same-name certificate lineages without canonical project ownership.
 It does not guess that an administrator's artifact belongs to this project.
