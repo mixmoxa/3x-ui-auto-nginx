@@ -41,7 +41,7 @@ Configura los registros DNS de **dos dominios** para que apunten a la IP de tu V
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-El instalador pide ambos dominios y ofrece AmneziaWG y AdGuard Home como opciones. También puedes indicar los dominios directamente:
+Antes de reinstalar, se solicitan ambos dominios y las opciones VPS Security + DoT, RAW TLS Vision, AmneziaWG, AdGuard Home y creación del cliente. El tercer dominio solo es necesario para Vision. Puedes indicar los dominios principales directamente:
 
 ```bash
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
@@ -49,7 +49,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 > **⚠️ Solo para instalaciones nuevas o reinstalaciones completas.** `x-ui-latest.sh` elimina la base de datos anterior de 3x-ui y la configuración de nginx. **No lo utilices para actualizar un VPS en funcionamiento.** Guarda primero una copia de seguridad fuera del servidor. Si detecta una instalación existente, la reinstalación o desinstalación requiere escribir exactamente `YES` en mayúsculas.
 
-Al terminar recibirás la **URL del panel, credenciales aleatorias y la URL de diagnóstico** (MTR/LibreSpeed con autenticación mediante 3x-ui). Si instalas AdGuard Home, también verás su URL de administración, contraseña y dirección DoH.
+Al terminar recibirás la **URL del panel, credenciales aleatorias y la URL de diagnóstico** (MTR/LibreSpeed con autenticación mediante 3x-ui). Si instalas AdGuard Home, también verás su URL de administración, contraseña y dirección DoH. Si eliges crear el cliente, también se muestra la URL de suscripción verificada.
 
 ## 🚀 Perfiles de conexión
 
@@ -61,8 +61,9 @@ Al terminar recibirás la **URL del panel, credenciales aleatorias y la URL de d
 | VLESS + WebSocket | ✅ Listo para usar |
 | Trojan + gRPC | ✅ Listo para usar |
 | AmneziaWG 3.1 | ✅ Opcional |
+| VLESS + RAW TLS Vision | ✅ Opcional |
 
-Los cinco perfiles principales ya están configurados. Activa en 3x-ui los que necesites sin modificar nginx. AmneziaWG solo se añade si lo seleccionas durante la instalación. **Crea los clientes en el panel**; la compatibilidad depende de la aplicación y su versión.
+Los cinco perfiles principales ya están configurados. Activa en 3x-ui los que necesites sin modificar nginx. AmneziaWG solo se añade si lo seleccionas durante la instalación. El cliente puede crearse automáticamente o desde el panel; la compatibilidad depende de la aplicación y su versión.
 
 ### Suscripciones
 
@@ -70,7 +71,20 @@ Las suscripciones estándar, JSON y **Mihomo / Clash** se ofrecen mediante nginx
 
 ## 🧩 Funciones opcionales
 
-Ambas funciones se pueden seleccionar durante la instalación y vienen desactivadas por defecto.
+Las opciones se eligen antes de reinstalar. Security y la creación del cliente están activadas por defecto; Vision, AWG y AGH están desactivadas.
+
+### VPS Security + DNS-over-TLS opcional
+
+`CONFIGURE VPS SECURITY + DoT? [Y/n]:` configura Fail2ban para SSH, los temporizadores APT de actualizaciones de seguridad hacia las 02:30/03:30 locales y DNS-over-TLS estricto del sistema. Conserva la política SSH, la zona horaria y UFW; desactiva el reinicio automático. Conserva DNS personalizados o del proveedor incompatibles, con una advertencia y estado fallido de la opción. Backup / Restore no transfiere estos ajustes específicos del servidor.
+
+### VLESS RAW TLS Vision opcional
+
+`INSTALL VLESS RAW TLS VISION? [y/N]:` requiere un dominio o subdominio adicional apuntando al VPS. Comparte TCP/443 mediante nginx SNI, usa un certificado independiente y ofrece un sitio de camuflaje HTTPS. No abre otro puerto público. Backup / Restore v3 admite el tercer certificado y los archivos sin Vision.
+
+### Creación automática de cliente y suscripción
+
+`CREATE CLIENT AND SUBSCRIPTION? [Y/n]:` crea un cliente mediante la API oficial de 3x-ui v3.9.0, lo vincula a los inbounds locales activos compatibles y verifica la suscripción oficial. Utiliza el dominio del panel, sin otro dominio. N conserva los ajustes actuales de clientes y suscripciones. El resultado muestra la URL solo tras verificarla. AWG `vpn://` requiere una aplicación Amnezia compatible.
+
 
 ### AdGuard Home + DoH
 
@@ -89,7 +103,7 @@ Utiliza direcciones DoH como `/dns-query/<ClientID>`. Se rechazarán las consult
 
 ### AmneziaWG 3.1
 
-Durante la instalación puedes configurar **AmneziaWG 3.1 en UDP/8443** (desactivado por defecto). Responde `y` a `Install AmneziaWG on UDP port 8443? [y/N]:`. Está integrado en 3x-ui y utiliza el dominio del panel. Después, añade un cliente desde 3x-ui para obtener su configuración o enlace `vpn://`; el instalador no crea clientes. UFW permite automáticamente UDP/8443; **Backup / Restore v3** conserva la configuración y restaura la regla.
+Durante la instalación puedes configurar **AmneziaWG 3.1 en UDP/8443** (desactivado por defecto). Responde `y` a `Install AmneziaWG on UDP port 8443? [y/N]:`. Está integrado en 3x-ui y utiliza el dominio del panel. Después, añade un cliente desde 3x-ui para obtener su configuración o enlace `vpn://`; la creación inicial incluye AWG si está seleccionado. UFW permite automáticamente UDP/8443; **Backup / Restore v3** conserva la configuración y restaura la regla.
 
 ## 💾 Copias de seguridad y restauración
 

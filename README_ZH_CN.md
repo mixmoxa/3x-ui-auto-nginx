@@ -41,7 +41,7 @@
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-安装程序会询问两个域名，并提供 AmneziaWG 和 AdGuard Home 的可选安装。也可以直接通过参数指定域名：
+重新安装前，程序会询问两个域名以及 VPS Security + DoT、RAW TLS Vision、AmneziaWG、AdGuard Home 和客户端创建选项。只有 Vision 需要第三个域名。也可直接指定主要域名：
 
 ```bash
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
@@ -49,7 +49,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 > **⚠️ 仅用于全新安装或完全重装。** `x-ui-latest.sh` 会删除原有的 3x-ui 数据库和 nginx 配置。**不要用它来更新正在运行的 VPS。** 重装前请将备份保存到服务器之外。检测到现有安装时，重装或卸载必须输入大写的 `YES` 确认。
 
-完成后会显示**面板地址、随机生成的登录凭据和诊断地址**（通过 3x-ui 认证的 MTR/LibreSpeed）。如安装 AdGuard Home，还会显示管理地址、密码和 DoH 地址。
+完成后会显示**面板地址、随机生成的登录凭据和诊断地址**（通过 3x-ui 认证的 MTR/LibreSpeed）。如安装 AdGuard Home，还会显示管理地址、密码和 DoH 地址。 选择自动创建客户端时，还会显示经过验证的订阅地址。
 
 ## 🚀 连接配置
 
@@ -61,8 +61,9 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 | VLESS + WebSocket | ✅ 可直接使用 |
 | Trojan + gRPC | ✅ 可直接使用 |
 | AmneziaWG 3.1 | ✅ 可选 |
+| VLESS + RAW TLS Vision | ✅ 可选 |
 
-五种主要连接方式均已预配置，可按需在 3x-ui 中启用，无须修改 nginx。只有在安装时选择了 AmneziaWG，才会添加该连接。**客户端需要在面板中创建**；实际兼容性取决于客户端应用及其版本。
+五种主要连接方式均已预配置，可按需在 3x-ui 中启用，无须修改 nginx。只有在安装时选择了 AmneziaWG，才会添加该连接。客户端可自动创建，也可在面板中手动创建；兼容性取决于应用和版本。
 
 ### 订阅
 
@@ -70,7 +71,20 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ## 🧩 可选功能
 
-这两项功能均可在安装时选择，默认关闭。
+所有选项均在重新安装前收集。Security 和客户端创建默认开启；Vision、AWG 和 AGH 默认关闭。
+
+### 可选 VPS Security + DNS-over-TLS
+
+`CONFIGURE VPS SECURITY + DoT? [Y/n]:` 配置 SSH Fail2ban、约本地时间 02:30/03:30 执行的 APT 安全更新定时器以及严格的系统 DNS-over-TLS。保留 SSH 策略、时区和 UFW，禁止自动重启。冲突的自定义或服务商 DNS 设置会被保留，并显示警告及选项失败状态。Backup / Restore 不迁移这些与主机相关的安全和 DNS 设置。
+
+### 可选 VLESS RAW TLS Vision
+
+`INSTALL VLESS RAW TLS VISION? [y/N]:` 需要一个指向 VPS 的额外域名或子域名。通过 nginx SNI 共用 TCP/443，使用独立证书并提供 HTTPS 伪装网站，不开放额外公网端口。Backup / Restore v3 支持第三张证书，同时兼容不含 Vision 的备份。
+
+### 自动创建客户端和订阅
+
+`CREATE CLIENT AND SUBSCRIPTION? [Y/n]:` 通过官方 3x-ui v3.9.0 API 创建一个客户端，将其关联至支持的已启用本地 inbound，并验证官方订阅。使用面板域名，无须额外订阅域名。选择 N 保留现有客户端和订阅设置。最终报告仅在验证成功后显示订阅地址。AWG `vpn://` 导出需要兼容的 Amnezia 应用。
+
 
 ### AdGuard Home + DoH
 
@@ -89,7 +103,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ### AmneziaWG 3.1
 
-安装时可选择配置 **AmneziaWG 3.1（UDP/8443）**（默认关闭）。出现 `Install AmneziaWG on UDP port 8443? [y/N]:` 提示时输入 `y`。它内置于 3x-ui，使用面板域名。安装完成后，请在 3x-ui 面板中添加客户端并获取配置文件或 `vpn://` 链接；安装程序不会自动创建客户端。UFW 会自动放行 UDP/8443；**Backup / Restore v3** 会保留配置并恢复相应的防火墙规则。
+安装时可选择配置 **AmneziaWG 3.1（UDP/8443）**（默认关闭）。出现 `Install AmneziaWG on UDP port 8443? [y/N]:` 提示时输入 `y`。它内置于 3x-ui，使用面板域名。安装完成后，请在 3x-ui 面板中添加客户端并获取配置文件或 `vpn://` 链接；选择自动创建客户端时也会包含已启用的 AWG。UFW 会自动放行 UDP/8443；**Backup / Restore v3** 会保留配置并恢复相应的防火墙规则。
 
 ## 💾 备份与恢复
 
