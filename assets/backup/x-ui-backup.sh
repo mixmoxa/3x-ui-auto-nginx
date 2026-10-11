@@ -483,14 +483,56 @@ preflight_target_certbot_ownership() {
     done
 }
 
+project_certbot_accounts() {
+    # Certbot AccountFileStorage uses <server netloc+path>/<account id> and
+    # exactly these three JSON files. Import only accounts referenced by renewal.
+    python3 - "$1" /etc/letsencrypt "${@:2}" <<'PYACCOUNTS'
+import json, pathlib, re, sys
+from urllib.parse import urlsplit
+from configobj import ConfigObj
+source, target = map(pathlib.Path, sys.argv[1:3])
+selected = set()
+for name in sys.argv[3:]:
+    params = ConfigObj(str(source/'renewal'/(name+'.conf')), file_error=True)['renewalparams']
+    account = params.get('account')
+    if not account:
+        continue  # Historical archives may omit an explicit account reference.
+    server = urlsplit(params.get('server', 'https://acme-v02.api.letsencrypt.org/directory'))
+    if (not re.fullmatch(r'[a-f0-9]{32}', account) or server.scheme != 'https' or not server.hostname
+            or server.username or server.password or server.query or server.fragment
+            or not re.fullmatch(r'[A-Za-z0-9.:[\]-]+', server.netloc)
+            or not re.fullmatch(r'/[A-Za-z0-9_./-]*', server.path)
+            or any(p in ('.','..') for p in server.path.split('/'))):
+        raise ValueError('Invalid managed Certbot account reference')
+    base = pathlib.Path('accounts') / (server.netloc+server.path) / account
+    for filename in ('meta.json','private_key.json','regr.json'):
+        relative = base / filename
+        for tree in (source,target):
+            current = tree
+            for part in relative.parts:
+                current /= part
+                if current.is_symlink():
+                    raise ValueError('Symlinked Certbot account path refused')
+        saved, existing = source/relative, target/relative
+        if not saved.is_file() or not isinstance(json.loads(saved.read_text()), dict):
+            raise ValueError('Missing/invalid managed Certbot account JSON')
+        if existing.exists() and (not existing.is_file() or existing.read_bytes()!=saved.read_bytes()):
+            raise ValueError('Conflicting target Certbot account metadata preserved')
+        selected.add(str(relative))
+for relative in sorted(selected):
+    print(relative)
+PYACCOUNTS
+}
+
 restore_project_certificates() {
-    local source=$1 domains vision name kind
+    local source=$1 domains vision name kind file accounts
     local -a names
     [[ ! -L /etc/letsencrypt ]] || die 'Refusing symlinked target Certbot tree.'
     domains=$(restored_certificate_domains "$source/renewal-hooks/deploy/3x-ui-auto-nginx") || die 'Invalid project domains.'
     mapfile -t names <<< "$domains"
     vision=$(restored_vision_domain "$source/renewal-hooks/deploy/3x-ui-auto-nginx-vision") || die 'Invalid Vision declaration.'
     [[ -z "$vision" ]] || names+=("$vision")
+    accounts=$(project_certbot_accounts "$source" "${names[@]}") || die 'Invalid/conflicting managed Certbot account metadata.'
     # Replace only declared project lineages. Foreign target lineages/options/hooks win.
     mkdir -p /etc/letsencrypt
     for name in "${names[@]}"; do
@@ -506,7 +548,32 @@ restore_project_certificates() {
     [[ ! -L /etc/letsencrypt/renewal-hooks && ! -L /etc/letsencrypt/renewal-hooks/deploy ]] || die 'Refusing symlinked target deploy directory.'
     rm -f /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx
     rm -f /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision
-    cp -an -- "$source/." /etc/letsencrypt/ || die 'Cannot merge saved Certbot tree.'
+    for name in "${names[@]}"; do
+        mkdir -p "/etc/letsencrypt/live/$name" "/etc/letsencrypt/archive/$name" /etc/letsencrypt/renewal
+        cp -a -- "$source/renewal/$name.conf" "/etc/letsencrypt/renewal/$name.conf" || die 'Cannot restore project renewal configuration.'
+        for file in cert.pem chain.pem fullchain.pem privkey.pem; do
+            if [[ -e "$source/live/$name/$file" || -L "$source/live/$name/$file" ]]; then
+                cp -a -- "$source/live/$name/$file" "/etc/letsencrypt/live/$name/$file" || die 'Cannot restore project certificate link.'
+            fi
+        done
+        for file in "$source/archive/$name/"*.pem; do
+            [[ -e "$file" ]] || continue
+            [[ ! -L "$file" && -f "$file" && "${file##*/}" =~ ^(cert|chain|fullchain|privkey)[0-9]+\.pem$ ]] || continue
+            cp -a -- "$file" "/etc/letsencrypt/archive/$name/" || die 'Cannot restore project certificate version.'
+        done
+    done
+    mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+    for name in 3x-ui-auto-nginx 3x-ui-auto-nginx-vision; do
+        [[ -f "$source/renewal-hooks/deploy/$name" ]] || continue
+        cp -a -- "$source/renewal-hooks/deploy/$name" /etc/letsencrypt/renewal-hooks/deploy/ || die 'Cannot restore verified project hook.'
+    done
+    while IFS= read -r file; do
+        [[ -n "$file" ]] || continue
+        [[ -e "/etc/letsencrypt/$file" ]] && continue
+        mkdir -p -- "/etc/letsencrypt/${file%/*}" || die 'Cannot prepare account metadata directory.'
+        chmod 0700 -- "/etc/letsencrypt/${file%/*}"
+        cp -a -- "$source/$file" "/etc/letsencrypt/$file" && chmod 0600 -- "/etc/letsencrypt/$file" || die 'Cannot restore managed account metadata.'
+    done <<< "$accounts"
 }
 
 repair_panel_certificates() {
@@ -1504,6 +1571,13 @@ cmd_restore() {
     fi
     preflight_staged_core
     preflight_target_certbot_ownership
+    local certificate_domains vision_account_domain
+    certificate_domains=$(restored_certificate_domains "$STAGING/files/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx") || die 'Invalid certificate domains.'
+    vision_account_domain=$(restored_vision_domain "$STAGING/files/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision") || die 'Invalid Vision domain.'
+    local -a account_domains
+    mapfile -t account_domains <<< "$certificate_domains"
+    [[ -z "$vision_account_domain" ]] || account_domains+=("$vision_account_domain")
+    project_certbot_accounts "$STAGING/files/etc/letsencrypt" "${account_domains[@]}" > /dev/null || die 'Invalid/conflicting managed Certbot account metadata.'
     save_restore_services
     pause_certbot_timer
     # Quiesce only after incoming staged state passes all static/native checks.

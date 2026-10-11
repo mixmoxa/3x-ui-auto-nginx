@@ -403,6 +403,56 @@ class PersonalBackup(unittest.TestCase):
                 dst.addfile(extra, io.BytesIO(b'bad') if extra.isfile() else None)
         return target
 
+    def test_restore_ignores_foreign_archived_certbot_objects(self):
+        for vision in (False,True):
+            with self.subTest(vision=vision):
+                if vision: self.seed_vision()
+                imported=('/etc/letsencrypt/renewal-hooks/deploy/foreign-import',
+                          '/etc/letsencrypt/renewal-hooks/pre/foreign-import',
+                          '/etc/letsencrypt/renewal-hooks/post/foreign-import',
+                          '/etc/letsencrypt/live/foreign-import.example/fullchain.pem',
+                          '/etc/letsencrypt/renewal/foreign-import.example.conf',
+                          '/etc/letsencrypt/accounts/foreign.example/dir/unused/private_key.json',
+                          '/etc/letsencrypt/cli.ini')
+                for name in imported: self.write(name,'foreign archived artifact\n',0o755)
+                archive=self.backup()
+                for name in imported: self.path(name).unlink()
+                preserved=('/etc/letsencrypt/renewal-hooks/deploy/target-admin',
+                           '/etc/letsencrypt/live/target-admin.example/fullchain.pem',
+                           '/etc/letsencrypt/renewal/target-admin.example.conf',
+                           '/etc/letsencrypt/cli.ini')
+                for name in preserved: self.write(name,'target administrator data\n',0o600)
+                before={name:self.path(name).read_bytes() for name in preserved}
+                result=self.run_tool('restore',archive)
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                for name in imported:
+                    if name not in preserved: self.assertFalse(self.path(name).exists(),'Foreign archived object imported: '+name)
+                self.assertEqual({name:self.path(name).read_bytes() for name in preserved},before)
+                for name in ('example.com','reality.example.com')+ (('vision.example.com',) if vision else ()):
+                    self.assertTrue(self.path('/etc/letsencrypt/live/'+name+'/fullchain.pem').is_file())
+                self.assertTrue(self.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx').is_file())
+                self.assertEqual(self.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision').is_file(),vision)
+                archive.unlink()
+
+    def test_restore_account_conflict_refuses_before_service_stop(self):
+        account='a'*32
+        account_root='/etc/letsencrypt/accounts/acme.example.test/dir/'+account
+        for name in ('meta.json','private_key.json','regr.json'):
+            self.write(account_root+'/'+name,'{}\n',0o600)
+        for name in ('example.com','reality.example.com'):
+            cfg=ConfigObj(str(self.path('/etc/letsencrypt/renewal/'+name+'.conf')))
+            cfg['renewalparams']['server']='https://acme.example.test/dir'
+            cfg['renewalparams']['account']=account; cfg.write()
+        archive=self.backup()
+        self.write(account_root+'/private_key.json','{"target":true}\n',0o600)
+        self.write('/etc/x-ui/marker','keep target')
+        (self.root/'commands').write_text('')
+        result=self.run_tool('restore',archive)
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(self.path(account_root+'/private_key.json').read_text(),'{"target":true}\n')
+        self.assertEqual(self.path('/etc/x-ui/marker').read_text(),'keep target')
+        self.assertFalse(any(c[:2]==['systemctl','stop'] for c in self.commands()))
+
     def test_restore_preserves_foreign_certificate_lineages(self):
         archive = self.backup()
         foreign = self.path('/etc/letsencrypt/live/administrator.example/fullchain.pem')

@@ -341,11 +341,32 @@ class RealServices(unittest.TestCase):
         subprocess.run([self.nginx, '-t', '-p', str(self.root)+'/', '-c', config], check=True, capture_output=True, timeout=15)
         subprocess.run([self.nginx, '-s', 'reload', '-p', str(self.root)+'/', '-c', config], check=True, capture_output=True, timeout=15)
         for domain in domains:self.issue(domain)
+        # Exercise the production allowlist merge on actual Certbot/Pebble
+        # lineages and account JSON, then renew from the restored state.
+        from certificate_fixtures import relocate
+        import shlex
+        certroot=self.root/'etc/letsencrypt'; hooks=certroot/'renewal-hooks/deploy'; hooks.mkdir(parents=True,exist_ok=True)
+        generator='\n'.join(relocate(function(name),self.root) for name in ('check_xray_runtime','render_certificate_hook','render_vision_hook'))
+        core_hook=subprocess.check_output(['bash','-c',generator+'\nrender_certificate_hook "$1" "$2"','fixture',self.domain,self.reality],text=True)
+        vision_hook=subprocess.check_output(['bash','-c',generator+'\nrender_vision_hook "$1"','fixture',domains[2]],text=True)
+        for name,body in (('3x-ui-auto-nginx',core_hook),('3x-ui-auto-nginx-vision',vision_hook),('foreign-import','#!/bin/sh\nexit 77\n')):
+            (hooks/name).write_text(body); (hooks/name).chmod(0o755)
+        accounts={str(p.relative_to(certroot)):p.read_bytes() for p in (certroot/'accounts').rglob('*.json')}
+        self.assertTrue(accounts,'Real Certbot did not create account metadata')
+        saved=self.root/'saved-certbot'; certroot.rename(saved)
+        certroot.mkdir(); (certroot/'renewal-hooks/deploy').mkdir(parents=True)
+        target_hook=certroot/'renewal-hooks/deploy/administrator'; target_hook.write_text('#!/bin/sh\nexit 0\n'); target_hook.chmod(0o755)
+        backup_source=(ROOT/'assets/backup/x-ui-backup.sh').read_text()
+        script='\n'.join(relocate(function(name,backup_source),self.root) for name in ('restored_certificate_domains','restored_vision_domain','render_vision_hook','project_certbot_accounts','restore_project_certificates'))
+        subprocess.run(['bash','-eu','-c','die() { echo "$*" >&2; exit 1; };\n'+script+'\nrestore_project_certificates '+shlex.quote(str(saved))],check=True,capture_output=True,text=True)
+        self.assertFalse((certroot/'renewal-hooks/deploy/foreign-import').exists())
+        self.assertEqual(target_hook.read_text(),'#!/bin/sh\nexit 0\n')
+        self.assertEqual({str(p.relative_to(certroot)):p.read_bytes() for p in (certroot/'accounts').rglob('*.json')},accounts)
         before={domain:self.lineage(domain) for domain in domains}
         access=(self.root/'access.log').read_text()
         self.assertGreaterEqual(len(re.findall(r'GET /\.well-known/acme-challenge/[^ ]+ HTTP/1.1" 200',access)),2)
         for domain in domains:
-            self.certbot('renew','--cert-name',domain,'--force-renewal','--no-random-sleep-on-renew')
+            self.certbot('renew','--cert-name',domain,'--force-renewal','--no-random-sleep-on-renew','--no-directory-hooks')
             self.assertNotEqual(self.lineage(domain),before[domain])
             self.assertIsNone(nginx.poll(),'Renewal must not stop nginx')
         empty=self.root/'wrong-webroot';empty.mkdir()
