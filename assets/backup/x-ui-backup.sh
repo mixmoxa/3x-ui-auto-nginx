@@ -355,7 +355,7 @@ cmd_backup() {
     local -a names
     domains=$(restored_certificate_domains) || die 'Cannot detect project certificate domains.'
     mapfile -t names <<< "$domains"
-    check_certificate_renewal "${names[0]}" "${names[1]}" || die 'Certificate renewal preflight failed; no archive was created.'
+    check_certificate_renewal "${names[0]}" "${names[1]}" && check_vision_renewal || die 'Certificate renewal preflight failed; no archive was created.'
     load_adguard_backup_state
     pause_certbot_timer
     prepare_store backup
@@ -434,6 +434,10 @@ replace_managed_state() {
     local path source
     for path in "${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" /var/www/diagnostics; do
         source="$STAGING/files$path"
+        if [[ "$path" == /etc/letsencrypt ]]; then
+            restore_project_certificates "$source"
+            continue
+        fi
         rm -rf -- "$path"
         mkdir -p "$(dirname "$path")"
         if [[ -e "$source" ]]; then cp -a -- "$source" "$path"; fi
@@ -448,6 +452,61 @@ replace_managed_state() {
         install -o root -g root -m 0644 "$STAGING/files$SYSCTL_FILE" "$SYSCTL_FILE"
         sysctl -p "$SYSCTL_FILE" || die 'Cannot apply managed sysctl file.'
     fi
+}
+
+preflight_target_certbot_ownership() {
+    local hook domains name vision
+    local -a owned=() incoming
+    hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx
+    if [[ -e "$hook" || -L "$hook" ]]; then
+        [[ -f "$hook" && ! -L "$hook" && "$(stat -c '%u:%g:%a' "$hook")" == '0:0:755' ]] || die 'Unowned target project deploy-hook.'
+        domains=$(restored_certificate_domains "$hook") || die 'Unowned target project deploy-hook.'
+        mapfile -t owned <<< "$domains"
+        { cmp -s "$hook" <(render_certificate_hook "${owned[0]}" "${owned[1]}") ||
+          cmp -s "$hook" <(render_certificate_hook "${owned[0]}" "${owned[1]}" legacy); } || die 'Unowned target project deploy-hook.'
+    fi
+    hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision
+    if [[ -e "$hook" || -L "$hook" ]]; then
+        [[ "$(stat -c '%u:%g:%a' "$hook")" == '0:0:755' ]] || die 'Unowned target Vision hook.'
+        vision=$(restored_vision_domain "$hook") || die 'Unowned target Vision hook.'
+        owned+=("$vision")
+    fi
+    domains=$(restored_certificate_domains "$STAGING/files/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx") || return 1
+    mapfile -t incoming <<< "$domains"
+    vision=$(restored_vision_domain "$STAGING/files/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision") || return 1
+    [[ -z "$vision" ]] || incoming+=("$vision")
+    for name in "${incoming[@]}"; do
+        if [[ -e "/etc/letsencrypt/live/$name" || -L "/etc/letsencrypt/live/$name" ||
+              -e "/etc/letsencrypt/archive/$name" || -e "/etc/letsencrypt/renewal/$name.conf" ]]; then
+            [[ " ${owned[*]} " == *" $name "* ]] || die "Target Certbot lineage has no project ownership: $name"
+        fi
+    done
+}
+
+restore_project_certificates() {
+    local source=$1 domains vision name kind
+    local -a names
+    [[ ! -L /etc/letsencrypt ]] || die 'Refusing symlinked target Certbot tree.'
+    domains=$(restored_certificate_domains "$source/renewal-hooks/deploy/3x-ui-auto-nginx") || die 'Invalid project domains.'
+    mapfile -t names <<< "$domains"
+    vision=$(restored_vision_domain "$source/renewal-hooks/deploy/3x-ui-auto-nginx-vision") || die 'Invalid Vision declaration.'
+    [[ -z "$vision" ]] || names+=("$vision")
+    # Replace only declared project lineages. Foreign target lineages/options/hooks win.
+    mkdir -p /etc/letsencrypt
+    for name in "${names[@]}"; do
+        for kind in live archive renewal; do
+            [[ ! -L "/etc/letsencrypt/$kind" ]] || die 'Refusing symlinked target Certbot directory.'
+            if [[ "$kind" == renewal ]]; then
+                rm -f -- "/etc/letsencrypt/$kind/$name.conf"
+            else
+                rm -rf -- "/etc/letsencrypt/$kind/$name"
+            fi
+        done
+    done
+    [[ ! -L /etc/letsencrypt/renewal-hooks && ! -L /etc/letsencrypt/renewal-hooks/deploy ]] || die 'Refusing symlinked target deploy directory.'
+    rm -f /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx
+    rm -f /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision
+    cp -an -- "$source/." /etc/letsencrypt/ || die 'Cannot merge saved Certbot tree.'
 }
 
 repair_panel_certificates() {
@@ -657,6 +716,54 @@ print('\n'.join(names))
 PYDOM
 }
 
+restored_vision_domain() {
+    local hook=${1:-/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision} value
+    [[ -e "$hook" || -L "$hook" ]] || return 0
+    [[ -f "$hook" && ! -L "$hook" ]] || return 1
+    value=$(python3 - "$hook" <<'PYVISION'
+import re, shlex, sys
+values=[]
+for line in open(sys.argv[1]):
+    if line.startswith('VISION_DOMAIN='):
+        parts=shlex.split(line.strip())
+        if len(parts)!=1: sys.exit('Invalid Vision hook domain')
+        values.append(parts[0].split('=',1)[1])
+if len(values)!=1 or len(values[0])>253 or '.' not in values[0] or not all(
+    re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label) for label in values[0].split('.')):
+    sys.exit('Missing/ambiguous Vision hook domain')
+print(values[0])
+PYVISION
+    ) || return 1
+    cmp -s "$hook" <(render_vision_hook "$value") || return 1
+    printf '%s\n' "$value"
+}
+
+check_vision_renewal() {
+    local vision
+    vision=$(restored_vision_domain) || return 1
+    [[ -n "$vision" ]] || return 0
+    check_webroot_lineage "$vision" || return 1
+    [[ "$(stat -c '%u:%g:%a' /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision)" == '0:0:755' ]] || return 1
+    curl -q -fsS --noproxy '*' --http1.1 --resolve "$vision:443:127.0.0.1" \
+        --connect-timeout 5 --max-time 20 "https://$vision/" >/dev/null
+}
+
+render_vision_hook() {
+    printf '#!/usr/bin/env bash\nset -Eeuo pipefail\nVISION_DOMAIN=%q\n' "$1"
+    cat <<'VISIONHOOK'
+[[ "${RENEWED_LINEAGE:-}" == "/etc/letsencrypt/live/$VISION_DOMAIN" ]] || exit 0
+openssl x509 -in "$RENEWED_LINEAGE/fullchain.pem" -noout -checkend 0 -checkhost "$VISION_DOMAIN"
+cert_key=$(openssl x509 -in "$RENEWED_LINEAGE/fullchain.pem" -pubkey -noout)
+private_key=$(openssl pkey -in "$RENEWED_LINEAGE/privkey.pem" -pubout)
+[[ "$cert_key" == "$private_key" ]] || exit 1
+# Xray 26.9.30 polls files hourly; ensure the deployed certificate is used now.
+systemctl restart x-ui
+systemctl is-active --quiet x-ui
+curl -q -fsS --noproxy '*' --http1.1 --resolve "$VISION_DOMAIN:443:127.0.0.1" \
+    --connect-timeout 5 --max-time 20 "https://$VISION_DOMAIN/" >/dev/null
+VISIONHOOK
+}
+
 # Same canonical runtime contract in installer/backup; embedded in the trusted deploy hook.
 check_xray_runtime() {
     local attempt proc_root=${1:-/proc}
@@ -754,7 +861,7 @@ check_health() {
     domains=$(restored_certificate_domains) || die 'Cannot detect saved certificate domains.'
     local -a names
     mapfile -t names <<< "$domains"
-    check_certificate_renewal "${names[0]}" "${names[1]}" || die 'Certificate renewal validation failed.'
+    check_certificate_renewal "${names[0]}" "${names[1]}" && check_vision_renewal || die 'Certificate renewal validation failed.'
     check_xray_runtime || die 'Restore failed Xray runtime health.'
     if [[ "$ADGUARD_HOME" == true ]]; then
         agh_health || die 'AdGuard Home failed mandatory health checks.'
@@ -919,7 +1026,7 @@ preflight_staged_adguard() (
 )
 
 preflight_staged_core() {
-    local domains panel reality hook="$STAGING/files/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx"
+    local domains panel reality vision hook="$STAGING/files/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx"
     domains=$(restored_certificate_domains "$hook") || die 'Invalid staged project domains.'
     panel=${domains%%$'\n'*} reality=${domains#*$'\n'}
     render_certificate_hook "$panel" "$reality" > "$STAGING/current-hook"
@@ -927,13 +1034,14 @@ preflight_staged_core() {
     [[ -f "$hook" && ! -L "$hook" ]] &&
         { cmp -s "$hook" "$STAGING/current-hook" || cmp -s "$hook" "$STAGING/legacy-hook"; } ||
         die 'Unexpected staged project deploy hook; archive code was not executed.'
+    vision=$(restored_vision_domain "$STAGING/files/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision") || die 'Invalid staged Vision hook.'
     python3 - "$STAGING/files" "$DB" /etc/nginx /etc/letsencrypt /root/cert /var/www \
-        "$panel" "$reality" "$STAGING/nginx-validation" <<'PY'
+        "$panel" "$reality" "$STAGING/nginx-validation" "$vision" <<'PY'
 import json, os, pathlib, re, shutil, sqlite3, sys
 from configobj import ConfigObj
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
-root, dbpath, nginx, letsencrypt, certroot, webroot, panel, reality, validation = sys.argv[1:]
+root, dbpath, nginx, letsencrypt, certroot, webroot, panel, reality, validation, vision = sys.argv[1:]
 root, validation = pathlib.Path(root), pathlib.Path(validation)
 def staged(path):
     # Resolve every archived symlink component without consulting live certificates.
@@ -953,7 +1061,7 @@ def staged(path):
             if not p.is_file(): raise ValueError('Missing staged file: ' + str(path))
             return p
     raise ValueError('Staged link cycle')
-for domain in (panel, reality):
+for domain in (panel, reality, *([vision] if vision else [])):
     if not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?', domain):
         raise ValueError('Invalid saved domain')
     live = letsencrypt + '/live/' + domain
@@ -975,6 +1083,65 @@ for domain in (panel, reality):
         raise ValueError('Invalid staged webroot renewal')
     if any(params.get(k) for k in ('pre_hook','post_hook','renew_hook','deploy_hook')):
         raise ValueError('Unexpected per-lineage hook')
+# Optional Vision contract: third lineage is mandatory only for a declared Vision installation.
+with sqlite3.connect(staged(dbpath)) as vision_db:
+    candidates=vision_db.execute("SELECT id,listen,port,protocol,settings,stream_settings FROM inbounds WHERE remark='vision'").fetchall()
+    site=root / (nginx+'/sites-available/vision.conf').lstrip('/')
+    acme=root / (nginx+'/sites-available/vision-acme.conf').lstrip('/')
+    if not vision:
+        # A user-defined remark or filename in an older archive is not ownership.
+        for path in (site,acme):
+            if path.exists() or path.is_symlink():
+                saved=staged('/'+str(path.relative_to(root)))
+                if saved.read_text().startswith('# Managed by 3x-ui Auto Nginx: Vision\n'):
+                    raise ValueError('Managed Vision artifacts without trusted declaration')
+    else:
+        site=staged(nginx+'/sites-available/vision.conf')
+        if staged(nginx+'/sites-enabled/vision.conf')!=site:
+            raise ValueError('Inactive or redirected Vision fallback')
+        if vision in (panel,reality) or len(candidates)!=1: raise ValueError('Conflicting/missing Vision inbound')
+        iid,listen,port,protocol,settings,stream=candidates[0]
+        settings,stream=json.loads(settings),json.loads(stream)
+        if (listen,protocol,stream.get('network'),stream.get('security'))!=('127.0.0.1','vless','tcp','tls'):
+            raise ValueError('Invalid Vision topology')
+        tls=stream['tlsSettings']
+        pair=tls['certificates']
+        if (tls.get('serverName')!=vision or tls.get('alpn')!=['http/1.1'] or len(pair)!=1
+            or pair[0].get('certificateFile')!=letsencrypt+'/live/'+vision+'/fullchain.pem'
+            or pair[0].get('keyFile')!=letsencrypt+'/live/'+vision+'/privkey.pem'
+            or stream.get('rawSettings')!={'acceptProxyProtocol':True,'header':{'type':'none'}}):
+            raise ValueError('Invalid Vision TLS/PROXY contract')
+        fallbacks=settings.get('fallbacks',[])
+        if len(fallbacks)!=1: raise ValueError('Ambiguous Vision fallback')
+        f=fallbacks[0]
+        match=re.fullmatch(r'127\.0\.0\.1:(\d+)',str(f.get('dest')))
+        if not match or f.get('name')!=vision or f.get('alpn')!='http/1.1' or f.get('xver')!=1:
+            raise ValueError('Invalid plaintext Vision fallback')
+        fallback=int(match[1])
+        if not 1024<=port<=65535 or not 1024<=fallback<=65535 or port==fallback:
+            raise ValueError('Invalid Vision internal ports')
+        expected_site=f"""# Managed by 3x-ui Auto Nginx: Vision
+server {{
+    listen 127.0.0.1:{fallback} proxy_protocol;
+    server_name {vision};
+    server_tokens off;
+    root {webroot}/html;
+    index index.html;
+    real_ip_header proxy_protocol;
+    set_real_ip_from 127.0.0.1;
+    if ($host != {vision}) {{ return 404; }}
+    location / {{ try_files $uri $uri/ =404; }}
+}}
+"""
+        if not site.is_file() or site.read_text()!=expected_site: raise ValueError('Unsafe Vision fallback site')
+        streamtext=staged(nginx+'/stream-enabled/stream.conf').read_text()
+        if (streamtext.count(f'    {vision} vision;')!=1 or
+            streamtext.count(f'upstream vision {{ server 127.0.0.1:{port}; }}')!=1):
+            raise ValueError('Vision SNI mapping mismatch')
+        hosts=vision_db.execute('SELECT address,port,security,sni,alpn,allow_insecure FROM hosts WHERE inbound_id=?',(iid,)).fetchall()
+        if len(hosts)!=1 or hosts[0][:4]!=(vision,443,'same',vision) or json.loads(hosts[0][4])!=['http/1.1'] or hosts[0][5]:
+            raise ValueError('Invalid Vision public Host')
+
 # Verify the existing runtime certificate references too, never a live-host fallback.
 with sqlite3.connect(staged(dbpath)) as db:
     rows = db.execute('SELECT key,value FROM settings').fetchall()
@@ -1300,7 +1467,7 @@ recover_restore_target() {
         local -a names
         domains=$(restored_certificate_domains) || failed=1
         mapfile -t names <<< "$domains"
-        check_certificate_renewal "${names[0]:-}" "${names[1]:-}" || failed=1
+        check_certificate_renewal "${names[0]:-}" "${names[1]:-}" && check_vision_renewal || failed=1
         if [[ "${OLD_ACTIVE[AdGuardHome]}" == active ]]; then
             if [[ -f /usr/local/lib/3x-ui-pro/managed-adguard.sh ]]; then
                 . /usr/local/lib/3x-ui-pro/managed-adguard.sh
@@ -1336,6 +1503,7 @@ cmd_restore() {
         preflight_staged_adguard
     fi
     preflight_staged_core
+    preflight_target_certbot_ownership
     save_restore_services
     pause_certbot_timer
     # Quiesce only after incoming staged state passes all static/native checks.
