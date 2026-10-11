@@ -188,7 +188,11 @@ def preflight(root=Path('/'), allow_minimal=False):
     for path in resolved_files:
         if path.exists() and str(path).endswith('90-3x-ui-auto-nginx.conf'):
             continue
-        if path.exists() and re.search(r'^\s*(DNS|FallbackDNS|Domains|DNSOverTLS|DNSStubListener(?:Extra)?)\s*=', path.read_text(), re.M):
+        content = path.read_text() if path.exists() else ''
+        if path == root / 'etc/systemd/resolved.conf':
+            # Keep the base file; our drop-in resets its inherited server list.
+            content = re.sub(r'^\s*DNS\s*=.*$', '', content, flags=re.M)
+        if re.search(r'^\s*(DNS|FallbackDNS|Domains|DNSOverTLS|DNSStubListener(?:Extra)?)\s*=', content, re.M):
             raise ValueError('Existing global/provider resolved policy; DNS preserved')
     # Never overwrite administrator jails, including a later *.local override.
     jails = list((root / 'etc/fail2ban/jail.d').glob('*.local')) + list((root / 'etc/fail2ban/jail.d').glob('*.conf')) + [root / 'etc/fail2ban/jail.local', root / 'etc/fail2ban/jail.conf']

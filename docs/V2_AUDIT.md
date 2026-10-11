@@ -73,7 +73,16 @@ as are generated/provider ownership notices,
 search/options, competing DNS/network manager, local DNS listener or explicit
 interface/cloud/VPN DNS policy. It is not proof of ownership of arbitrary provider
 files. Unknown configurations fail safely before cleanup; network interfaces are
-never rewritten. After taking a private snapshot, preparation installs the real
+never rewritten. An inherited `DNS=` server list in the base resolved.conf,
+including residual config-files after package removal, is preserved and reset
+by the project's own drop-in. Conflicting foreign drop-ins and other active
+global/interface DNS policies still cause refusal. This matches the package →
+managed drop-in → stub link → service → DNS checks → rollback sequence in
+`xPROMSx/ubuntu-vps-tools/vps-bootstrap-ubuntu24.sh`; the base file is not rewritten.
+The real minimal QEMU fixture starts with both reported Google IPv4/IPv6 DNS
+files and `deinstall ok config-files`, verifies full preparation and early/late
+failure rollback, and checks that the inherited base file remains unchanged.
+After taking a private snapshot, preparation installs the real
 resolved package, applies strict DoT, checks effective routes/TLS and libc DNS,
 then repeats the readiness preflight. Failure restores the original file/link
 and service active/enable state and verifies libc resolution. The original

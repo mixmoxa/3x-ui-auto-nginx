@@ -13,6 +13,8 @@ if [[ -d /work/root/opt/xui-ci/apt ]]; then
     rm -f /work/root/etc/resolv.conf
     printf 'nameserver 8.8.4.4\nnameserver 8.8.8.8\nnameserver 2001:4860:4860::8844\nnameserver 2001:4860:4860::8888\n' > /work/root/etc/resolv.conf
     chmod 0644 /work/root/etc/resolv.conf
+    printf '[Resolve]\nDNS=8.8.4.4 8.8.8.8 2001:4860:4860::8844 2001:4860:4860::8888\n' > /work/root/etc/systemd/resolved.conf
+    chmod 0644 /work/root/etc/systemd/resolved.conf
 fi
 mkdir -p /work/root/dev /work/root/proc /work/root/sys /work/root/run
 cat > /work/root/init <<'INIT'

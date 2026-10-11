@@ -48,6 +48,9 @@ class IntegratedFeatures(unittest.TestCase):
             root=Path(directory); (root/'etc').mkdir()
             (root/'etc/os-release').write_text('ID=ubuntu\nVERSION_ID="26.04"\n')
             resolv=root/'etc/resolv.conf'; original='nameserver 8.8.4.4\nnameserver 8.8.8.8\nnameserver 2001:4860:4860::8844\nnameserver 2001:4860:4860::8888\n'; resolv.write_text(original)
+            global_policy=root/'etc/systemd/resolved.conf'; global_policy.parent.mkdir(parents=True)
+            original_policy='[Resolve]\nDNS=8.8.4.4 8.8.8.8 2001:4860:4860::8844 2001:4860:4860::8888\n'
+            global_policy.write_text(original_policy)
             def command(*args,**kwargs):
                 if args[0]=='/usr/sbin/sshd': return 'port 22'
                 if args[0]=='journalctl': return 'SSH journal'
@@ -89,12 +92,13 @@ class IntegratedFeatures(unittest.TestCase):
                 global_policy.write_text('[Resolve]\nDNSStubListenerExtra=0.0.0.0\n')
                 with self.assertRaises(ValueError): security.preflight(root,allow_minimal=True)
                 self.assertEqual(resolv.read_text(),original)
-                global_policy.unlink()
+                global_policy.write_text(original_policy)
                 with patch.object(security,'verify_dns',side_effect=ValueError('TLS unavailable')):
                     result=security.prepare_dns(root)
                 self.assertEqual(result['status'],'failed_rolled_back',result)
                 self.assertFalse(resolv.is_symlink()); self.assertEqual(resolv.read_text(),original)
                 self.assertFalse((root/security.FILES[4].lstrip('/')).exists())
+                self.assertEqual(global_policy.read_text(),original_policy)
 
     def test_new_nightly_update_and_reboot_policy(self):
         security=helper('security')
@@ -111,7 +115,10 @@ class IntegratedFeatures(unittest.TestCase):
         security=helper('security')
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory); (root/'etc').mkdir(); (root/'etc/os-release').write_text('ID=ubuntu\nVERSION_ID="26.04"\n')
-            resolv=root/'etc/resolv.conf'; original='nameserver 8.8.8.8\n'; resolv.write_text(original)
+            resolv=root/'etc/resolv.conf'; original='nameserver 8.8.4.4\nnameserver 8.8.8.8\nnameserver 2001:4860:4860::8844\nnameserver 2001:4860:4860::8888\n'; resolv.write_text(original)
+            global_policy=root/'etc/systemd/resolved.conf'; global_policy.parent.mkdir(parents=True)
+            original_policy='[Resolve]\nDNS=8.8.4.4 8.8.8.8 2001:4860:4860::8844 2001:4860:4860::8888\n'
+            global_policy.write_text(original_policy)
             checkpoint=root/'checkpoint'; state={'active':False,'enabled':'not-found','installed':False}
             def command(*args,**kwargs):
                 if args[0]=='/usr/sbin/sshd': return 'port 22'
@@ -151,6 +158,7 @@ class IntegratedFeatures(unittest.TestCase):
                     self.assertEqual(security.rollback_dns_checkpoint(checkpoint,root)['status'],'failed_rolled_back')
                 self.assertFalse(resolv.is_symlink(),'Late failure retained the new strict DNS instead of the initial scheme')
                 self.assertEqual(resolv.read_text(),original)
+                self.assertEqual(global_policy.read_text(),original_policy)
                 self.assertFalse((root/security.FILES[-1].lstrip('/')).exists())
                 self.assertFalse(state['active']); self.assertTrue(state['installed'],'No claim of package rollback')
 
@@ -208,7 +216,7 @@ class IntegratedFeatures(unittest.TestCase):
                 resolv = root/'etc/resolv.conf'
                 resolv.symlink_to('/provider/resolv.conf' if case=='resolv' else '/run/systemd/resolve/stub-resolv.conf')
                 if case=='dns':
-                    policy=root/'etc/systemd/resolved.conf'; policy.parent.mkdir(parents=True)
+                    policy=root/'etc/systemd/resolved.conf.d/50-provider.conf'; policy.parent.mkdir(parents=True)
                     policy.write_text('[Resolve]\nDNS=10.0.0.1\n')
                 if case in ('jail','jail-conf'):
                     jail=root/('etc/fail2ban/jail.local' if case=='jail' else 'etc/fail2ban/jail.d/provider.conf'); jail.parent.mkdir(parents=True)

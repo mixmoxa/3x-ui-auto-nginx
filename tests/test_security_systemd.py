@@ -112,9 +112,11 @@ class SecuritySystemd(unittest.TestCase):
             self.assertFalse(Path('/etc/resolv.conf').is_symlink())
             original_dns=Path('/etc/resolv.conf').read_bytes()
             self.assertEqual(original_dns,b'nameserver 8.8.4.4\nnameserver 8.8.8.8\nnameserver 2001:4860:4860::8844\nnameserver 2001:4860:4860::8888\n')
+            original_policy=Path('/etc/systemd/resolved.conf').read_bytes()
+            self.assertEqual(original_policy,b'[Resolve]\nDNS=8.8.4.4 8.8.8.8 2001:4860:4860::8844 2001:4860:4860::8888\n')
             self.assertFalse(Path('/usr/bin/resolvectl').exists())
             self.assertFalse(Path('/usr/sbin/ufw').exists())
-            self.assertFalse(run('dpkg-query','-W','-f=${db:Status-Abbrev}','systemd-resolved').startswith('ii'))
+            self.assertEqual(run('dpkg-query','-W','-f=${Status}','systemd-resolved'),'deinstall ok config-files')
             run('systemctl','enable','--now','ssh.socket')
             with socket.create_connection(('127.0.0.1',22),timeout=5) as ssh:
                 self.assertTrue(ssh.recv(200).startswith(b'SSH-2.0-'))
@@ -204,6 +206,7 @@ class SecuritySystemd(unittest.TestCase):
             self.assertFalse(Path('/etc/resolv.conf').is_symlink())
             self.assertEqual(Path('/etc/resolv.conf').read_bytes(),original_dns)
             self.assertIn('203.0.113.7',run('getent','ahosts','debian.org'))
+            self.assertEqual(Path('/etc/systemd/resolved.conf').read_bytes(),original_policy)
             # Package remains installed by design; remove it only in this VM to
             # recreate the original missing-package state for the success path.
             run('dpkg','-r','systemd-resolved')
@@ -211,9 +214,10 @@ class SecuritySystemd(unittest.TestCase):
             success=security.prepare_dns(state=dns_checkpoint)
             self.assertEqual(success['status'],'configured',success)
             security.preflight()
+            self.assertEqual(Path('/etc/systemd/resolved.conf').read_bytes(),original_policy)
             self.assertTrue(seen,'No authenticated TLS query during preparation')
             self.assertEqual(len(plain_seen),plain_at_restart[-1],'Plaintext DNS after strict preparation')
-            print('REAL minimal OS / full no-remove upgrade / missing UFW / DNS preparation and rollback: PASS',flush=True)
+            print('REAL minimal OS / residual resolved.conf preserved / full no-remove upgrade / missing UFW / DNS preparation and rollback: PASS',flush=True)
             # Snapshot before applying the production security function, restore afterwards.
             snapshot = security.Transaction()
             self.addCleanup(snapshot.temp.cleanup)
@@ -326,6 +330,7 @@ class SecuritySystemd(unittest.TestCase):
                 self.assertEqual(restored['status'],'failed_rolled_back',restored)
                 self.assertFalse(Path('/etc/resolv.conf').is_symlink())
                 self.assertEqual(Path('/etc/resolv.conf').read_bytes(),original_dns)
+                self.assertEqual(Path('/etc/systemd/resolved.conf').read_bytes(),original_policy)
                 self.assertIn('203.0.113.7',run('getent','ahosts','debian.org'))
                 print('REAL late TLS failure: original pre-install DNS checkpoint restored and libc resolution works: PASS',flush=True)
             finally:
