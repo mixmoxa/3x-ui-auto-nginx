@@ -535,7 +535,7 @@ class PersonalBackup(unittest.TestCase):
         tool = function('install_backup_tool')
         self.assertIn('${GITHUB_RAW}/assets/backup/x-ui-backup.sh', tool)
         self.assertNotIn('mozaroc', tool)
-        self.assertIn('    install_backup_tool || exit 1\n', function('main'))
+        self.assertRegex(function('main'), r'    install_backup_tool \|\| \{ msg_err [^\n]*; exit 1; \}')
         download = Path(self.temp.name) / 'download.sh'
         download.write_text('#!/bin/bash\necho backup-tool\n')
         mock = ('curl() { [[ "$2" == "$GITHUB_RAW/assets/backup/x-ui-backup.sh" ]] || return 9; '

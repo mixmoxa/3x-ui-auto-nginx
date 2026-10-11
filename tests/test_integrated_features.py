@@ -276,7 +276,7 @@ class IntegratedFeatures(unittest.TestCase):
                'install_backup_tool','setup_certificate_renewal','check_installation','show_results','finish_initial_reboot')
         stubs='\n'.join(n+'() { echo '+n+'; };' for n in names)
         stubs+='\nmsg_err() { echo "$*" >&2; }; msg_warn() { :; }; systemctl() { :; }; x-ui() { :; };\n'
-        for failed in ('clean_previous_install','get_server_ip','configure_nginx','install_clash_sub','install_fake_site','install_diagnostics'):
+        for failed in ('clean_previous_install','get_server_ip','configure_nginx','install_clash_sub','install_fake_site','install_diagnostics','install_backup_tool'):
             with self.subTest(stage=failed):
                 script=stubs+function('main')+'\n'+failed+'() { echo FAILURE; return 73; }; main'
                 result=subprocess.run(['bash','-u','-c',script],env={**os.environ,'INSTALL_SECURITY':'n','INSTALL_VISION':'n','INSTALL_AWG':'n','INSTALL_AGH':'n','CREATE_CLIENT':'n'},capture_output=True,text=True)
