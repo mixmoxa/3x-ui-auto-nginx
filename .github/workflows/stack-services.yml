@@ -70,7 +70,7 @@ jobs:
         env:
           DISTRO: ${{ matrix.distro }}
         run: |
-          docker build --build-arg "DISTRO=$DISTRO" -t xui-systemd-root -f tests/systemd/Dockerfile .
+          docker build --build-arg "DISTRO=$DISTRO" --build-arg MINIMAL_DNS=1 -t xui-systemd-root -f tests/systemd/Dockerfile .
           docker build -t xui-systemd-tools -f tests/systemd/tools.Dockerfile .
       - name: Native sshd, timers, authenticated TLS DNS and rollback inside VM
         run: |

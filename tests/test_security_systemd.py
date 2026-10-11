@@ -20,6 +20,25 @@ import unittest
 from urllib.parse import parse_qs, urlsplit
 
 
+def nightly_after_cold_boot():
+    """Second real kernel/systemd boot; invoked by the existing QEMU harness."""
+    run=lambda *a: subprocess.check_output(a,text=True,stderr=subprocess.STDOUT,timeout=90)
+    run('modprobe','9pnet_virtio')
+    Path('/mnt/xui-ci').mkdir(exist_ok=True)
+    run('mount','-t','9p','-o','trans=virtio,version=9p2000.L','xui-ci','/mnt/xui-ci')
+    assert Path('/proc/sys/kernel/random/boot_id').read_text()!=Path('/mnt/xui-ci/pre-boot-id').read_text()
+    from test_integrated_features import helper
+    security=helper('security'); dump=run('apt-config','dump')
+    for value in ('Automatic-Reboot "true";', 'Automatic-Reboot-WithUsers "true";', 'Automatic-Reboot-Time "04:38";'):
+        assert 'Unattended-Upgrade::'+value in dump, value
+    expected={tuple(v) for v in json.loads(Path('/mnt/xui-ci/expected-origins.json').read_text())}
+    assert expected <= security.apt_origins(dump)
+    for service,when in (('apt-daily.timer','02:30:00'),('apt-daily-upgrade.timer','02:50:00')):
+        run('systemctl','is-active','--quiet',service); run('systemctl','is-enabled','--quiet',service)
+        assert when in run('systemctl','show',service,'-p','TimersCalendar')
+    print('REAL second boot: effective APT origins / reboot policy / enabled active local-time timers: PASS',flush=True)
+
+
 class SecuritySystemd(unittest.TestCase):
     def test_real_security_strict_tls_and_rollback(self):
         if Path('/proc/1/comm').read_text().strip() != 'systemd':
@@ -44,6 +63,7 @@ class SecuritySystemd(unittest.TestCase):
             run('ip','address','add','192.0.2.10/24','dev','xui-test')
             run('ip','link','set','xui-test','up')
             seen, errors, stop = [], [], threading.Event()
+            fail_tls=threading.Event()
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); context.load_cert_chain(cert, key)
             servers = []
             for ip in ('1.1.1.1', '1.0.0.1', '8.8.8.8', '8.8.4.4'):
@@ -58,6 +78,8 @@ class SecuritySystemd(unittest.TestCase):
                         except OSError: return
                         def answer(conn=conn):
                             try:
+                                if fail_tls.is_set():
+                                    conn.close(); return
                                 with context.wrap_socket(conn, server_side=True) as tls:
                                     tls.settimeout(5)
                                     while not stop.is_set():
@@ -86,15 +108,61 @@ class SecuritySystemd(unittest.TestCase):
             with socket.create_connection(('1.1.1.1',853),timeout=5) as plain:
                 with ssl.create_default_context().wrap_socket(plain,server_hostname='one.one.one.one') as tls:
                     self.assertIn(tls.version(),('TLSv1.2','TLSv1.3'))
-            # This test deliberately sets a standard baseline in its private VM.
-            Path('/etc/resolv.conf').unlink(); Path('/etc/resolv.conf').symlink_to('/run/systemd/resolve/stub-resolv.conf')
-            run('systemctl', 'enable', '--now', 'systemd-resolved', 'ssh')
+            # Start from the reported minimum VPS state, not a prepared resolver.
+            self.assertFalse(Path('/etc/resolv.conf').is_symlink())
+            original_dns=Path('/etc/resolv.conf').read_bytes()
+            self.assertEqual(original_dns,b'nameserver 8.8.8.8\nnameserver 8.8.4.4\n')
+            self.assertFalse(Path('/usr/bin/resolvectl').exists())
+            self.assertFalse(Path('/usr/sbin/ufw').exists())
+            self.assertFalse(run('dpkg-query','-W','-f=${db:Status-Abbrev}','systemd-resolved').startswith('ii'))
+            run('systemctl','enable','--now','ssh.socket')
+            with socket.create_connection(('127.0.0.1',22),timeout=5) as ssh:
+                self.assertTrue(ssh.recv(200).startswith(b'SSH-2.0-'))
+            self.assertEqual(run('systemctl','is-active','ssh.service','ssh.socket').splitlines(),['active','active'])
+            # Original plain external DNS works before takeover and after rollback.
+            from test_real_services import question
+            plain_servers=[]; plain_seen=[]
+            for ip in ('8.8.8.8','8.8.4.4'):
+                udp=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); udp.bind((ip,53)); udp.settimeout(.5)
+                plain_servers.append(udp); self.addCleanup(udp.close)
+                def answer_plain(udp=udp):
+                    while not stop.is_set():
+                        try: packet,peer=udp.recvfrom(4096)
+                        except socket.timeout: continue
+                        except OSError: return
+                        end=12
+                        while packet[end]: end+=packet[end]+1
+                        end+=5; kind=struct.unpack('!H',packet[end-4:end-2])[0]
+                        response=packet[:2]+struct.pack('!HHHHH',0x8180,1,int(kind==1),0,0)+packet[12:end]
+                        if kind==1: response+=b'\xc0\x0c'+struct.pack('!HHIH',1,1,1,4)+socket.inet_aton('203.0.113.7')
+                        plain_seen.append(packet); udp.sendto(response,peer)
+                threading.Thread(target=answer_plain,daemon=True).start()
+            # Public DNS lives on guest loopback only because the VM is offline.
+            # Exclude those two Internet stand-ins from the local-service probe;
+            # all other real ss diagnostics and commands remain unchanged.
+            production_command=security.command
+            plain_at_restart=[]
+            def command(*args,**kwargs):
+                if args==('systemctl','restart','systemd-resolved.service'):
+                    plain_at_restart.append(len(plain_seen))
+                result=production_command(*args,**kwargs)
+                if args==('ss','-lntu'):
+                    result='\n'.join(line for line in result.splitlines() if not any(ip+':53' in line for ip in ('8.8.8.8','8.8.4.4')))
+                return result
+            security.command=command
+            # An offline local APT repository contains real distro resolved/UFW
+            # packages and two tiny upgrade/retention packages. No host upgrade.
+            run('dpkg','-i','/opt/xui-ci/apt/xui-ci-upgrade-1.deb','/opt/xui-ci/apt/xui-ci-retained-1.deb')
+            sources=root/'sources.list'; sources.write_text('deb [trusted=yes] file:/opt/xui-ci/apt ./\n')
+            apt_boot=root/'apt.conf'; apt_boot.write_text(f'Dir::Etc::sourcelist "{sources}"; Dir::Etc::sourceparts "{root}/absent";')
+            os.environ['APT_CONFIG']=str(apt_boot)
+            self.addCleanup(os.environ.pop,'APT_CONFIG',None)
             # Docker disables periodic APT in its image, unlike native distro
             # defaults. First prove safe refusal, then select the VM baseline.
             disabled = Path('/etc/apt/apt.conf.d/docker-disable-periodic-update')
             if disabled.exists():
                 with self.assertRaisesRegex(ValueError, 'APT periodic'):
-                    security.preflight()
+                    security.preflight(allow_minimal=True)
                 disabled.unlink()
             stock_origins = security.apt_origins(run('apt-config', 'dump'))
             self.assertTrue(stock_origins, 'Native unattended-upgrades defaults missing')
@@ -104,10 +172,36 @@ class SecuritySystemd(unittest.TestCase):
             expected_origins = security.apt_origins(run('apt-config', 'dump'))
             self.assertTrue(stock_origins <= expected_origins)
             files_before = {str(p): p.read_bytes() for p in Path('/etc/apt/apt.conf.d').glob('*') if p.is_file()}
-            security.preflight()
+            security.preflight(allow_minimal=True)
             self.assertEqual({str(p): p.read_bytes() for p in Path('/etc/apt/apt.conf.d').glob('*') if p.is_file()}, files_before)
             effective = run('/usr/sbin/sshd', '-T')
             before = {p: p.read_bytes() for p in Path('/etc/ssh').rglob('*') if p.is_file()}
+            from test_personal_xhttp import function
+            shell='\n'.join(function(n) for n in ('apt_system','preflight_base_os','verify_base_os','prepare_base_os'))
+            run('bash','-eu','-c','msg_err() { echo "$*" >&2; }; msg_warn() { echo "$*"; };\n'+shell+'\npreflight_base_os; prepare_base_os')
+            self.assertEqual(run('dpkg-query','-W','-f=${Version}','xui-ci-upgrade'),'2')
+            self.assertTrue(run('dpkg-query','-W','-f=${db:Status-Abbrev}','xui-ci-retained').startswith('ii'))
+            self.assertTrue(Path('/usr/sbin/ufw').exists())
+            self.assertTrue(run('ufw','status').startswith('Status: inactive'))
+            self.assertFalse(Path('/usr/bin/resolvectl').exists())
+            # Install actual resolved, make strict TLS query fail, and require a
+            # verified return to the original regular file and working libc DNS.
+            fail_tls.set()
+            try: failed=security.prepare_dns()
+            finally: fail_tls.clear()
+            self.assertEqual(failed['status'],'failed_rolled_back',failed)
+            self.assertFalse(Path('/etc/resolv.conf').is_symlink())
+            self.assertEqual(Path('/etc/resolv.conf').read_bytes(),original_dns)
+            self.assertIn('203.0.113.7',run('getent','ahosts','debian.org'))
+            # Package remains installed by design; remove it only in this VM to
+            # recreate the original missing-package state for the success path.
+            run('dpkg','-r','systemd-resolved')
+            success=security.prepare_dns()
+            self.assertEqual(success['status'],'configured',success)
+            security.preflight()
+            self.assertTrue(seen,'No authenticated TLS query during preparation')
+            self.assertEqual(len(plain_seen),plain_at_restart[-1],'Plaintext DNS after strict preparation')
+            print('REAL minimal OS / full no-remove upgrade / missing UFW / DNS preparation and rollback: PASS',flush=True)
             # Snapshot before applying the production security function, restore afterwards.
             snapshot = security.Transaction()
             self.addCleanup(snapshot.temp.cleanup)
@@ -212,7 +306,8 @@ class SecuritySystemd(unittest.TestCase):
                 # rather than relying only on a manually restored snapshot.
                 failed = security.configure()
                 self.assertEqual(failed['status'],'failed_rolled_back',failed)
-                self.assertTrue(all(not Path(name).exists() for name in security.FILES))
+                self.assertTrue(all(not Path(name).exists() for name in security.FILES[:-1]))
+                self.assertEqual(Path(security.FILES[-1]).read_text(),security.DOT)
                 self.assertEqual(os.readlink('/etc/resolv.conf'),'/run/systemd/resolve/stub-resolv.conf')
                 self.assertEqual(run('/usr/sbin/sshd','-T'),effective)
             finally:
@@ -221,3 +316,25 @@ class SecuritySystemd(unittest.TestCase):
             plaintext = subprocess.check_output(['tcpdump','-nn','-r',str(root/'dns.pcap')],text=True,stderr=subprocess.DEVNULL,timeout=20)
             self.assertEqual(plaintext.strip(),'','Plaintext DNS reached an upstream')
             print('REAL systemd / sshd jail / timers / authenticated TLS DNS / no plaintext / rollback: PASS')
+            # Persist only the tested policy into the next disposable boot. This
+            # is not a full VPS recovery/reboot acceptance claim.
+            for filename,text in ((security.FILES[1],security.apt_config(security.preflight()[0])),
+                                  (security.FILES[2],security.timer('02:30')),(security.FILES[3],security.timer('02:50'))):
+                path=Path(filename); path.parent.mkdir(parents=True,exist_ok=True); path.write_text(text)
+            run('systemctl','daemon-reload')
+            run('systemctl','enable','--now','apt-daily.timer','apt-daily-upgrade.timer')
+            # Actual systemd shutdown scheduling in this guest, then cancel so
+            # the harness can shut down and cold-boot deterministically.
+            self.assertTrue(Path('/run/reboot-required').exists())
+            reboot_shell=function('finish_initial_reboot')
+            run('bash','-eu','-c','msg_warn() { echo "$*"; }; msg_err() { echo "$*" >&2; };\n'+reboot_shell+'\necho INSTALLATION_REPORT; finish_initial_reboot 0')
+            self.assertIn('reboot',run('shutdown','--show').lower())
+            run('shutdown','-c')
+            run('modprobe','9pnet_virtio'); Path('/mnt/xui-ci').mkdir(exist_ok=True)
+            run('mount','-t','9p','-o','trans=virtio,version=9p2000.L','xui-ci','/mnt/xui-ci')
+            Path('/mnt/xui-ci/pre-boot-id').write_text(Path('/proc/sys/kernel/random/boot_id').read_text())
+            Path('/mnt/xui-ci/expected-origins.json').write_text(json.dumps(sorted(expected_origins)))
+            run('tar','-C','/','-cf','/mnt/xui-ci/reboot-policy.tar',
+                *[f.lstrip('/') for f in security.FILES[1:4]], str(admin).lstrip('/'),
+                'etc/systemd/system/timers.target.wants/apt-daily.timer',
+                'etc/systemd/system/timers.target.wants/apt-daily-upgrade.timer')
