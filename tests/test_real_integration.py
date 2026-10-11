@@ -22,6 +22,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 import uuid
 from urllib.parse import parse_qs, quote, urlsplit
 
@@ -356,7 +357,12 @@ class RealIntegration(unittest.TestCase):
         stream = stream.replace('127.0.0.1:8443',f"127.0.0.1:{self.backends['reality']}").replace(
             '127.0.0.1:7443',f"127.0.0.1:{self.backends['tls']}")
         stream = stream.replace('listen     443;',f'listen 127.0.0.1:{self.public};').replace('listen     [::]:443;','')
-        if hasattr(self, 'vision_module'):
+        if hasattr(self, 'vision_artifacts'):
+            stream_file, _, enabled = self.vision_artifacts
+            stream_file.write_text(stream)
+            stream = f'include {stream_file};'
+            self.vision_site = f'include {enabled.parent}/*.conf;'
+        elif hasattr(self, 'vision_module'):
             stream = self.vision_module.stream_config(stream, 'vision.example', self.vision_port)
         temp = '\n'.join(f'{kind}_temp_path {self.root}/{kind};' for kind in ('client_body','proxy','fastcgi','uwsgi','scgi'))
         maps = render('cat > /etc/nginx/sites-available/00-maps.conf')
@@ -443,6 +449,14 @@ http {{ access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {mai
         self.vision_site = self.vision_module.fallback_config('vision.example', fallback, str(cover_root))
         self.vision_site = self.vision_site.replace('    server_tokens off;',
             f'    access_log {self.root}/vision-access.log;\n    server_tokens off;')
+        self.vision_artifacts = (self.root/'vision-stream.conf', self.root/'vision.conf', self.root/'enabled/vision.conf')
+        self.vision_artifacts[2].parent.mkdir()
+        # The real child starts asynchronously. Widen its startup window so
+        # readiness is tested reliably, rather than depending on runner speed.
+        core = self.root/'bin'/self.xray.name
+        core.rename(core.with_suffix('.real'))
+        core.write_text('#!/bin/sh\ncase "$1" in -c|run) sleep 1.2;; esac\nexec '+shlex.quote(str(core.with_suffix('.real')))+' "$@"\n')
+        core.chmod(0o755)
         with sqlite3.connect(self.root/'db/x-ui.db') as db:
             db.execute("UPDATE inbounds SET enable=0 WHERE protocol='trojan' OR json_extract(stream_settings,'$.network')='ws'")
             for key, value in {'subURI':f'https://deploy.example:{self.public}/subscription/',
@@ -467,10 +481,41 @@ http {{ access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {mai
             # Native 403 is checked directly: nginx deliberately masks it as 404.
             self.assertEqual(missing_csrf,b'403')
             self.assertEqual(api.request('panel/api/clients/list')['obj'],before_csrf)
-            row = api.request('panel/api/inbounds/add', self.vision_module.inbound('vision.example', self.vision_port, fallback, str(vision_cert), str(vision_key)))['obj']
-            iid = row['id']
-            api.request('panel/api/hosts/add', {'inboundIds':[iid], 'hosts':['vision.example'], 'remark':'vision',
-                        'port':443, 'security':'same', 'sni':'vision.example', 'alpn':['http/1.1'], 'allowInsecure':False})
+            wrong_trust = [True]
+            def production_run(*args):
+                # Private process/config paths and test CA replace host services;
+                # nginx validation/reload and HTTPS still execute real binaries.
+                if args == ('nginx','-t'):
+                    args=(self.nginx,'-t','-p',str(self.root)+'/', '-c',str(self.root/'nginx.conf'))
+                elif args == ('systemctl','reload','nginx'):
+                    args=(self.nginx,'-s','reload','-p',str(self.root)+'/', '-c',str(self.root/'nginx.conf'))
+                elif args == ('systemctl','is-active','--quiet','x-ui'):
+                    self.assertIsNone(server.poll()); return
+                elif args[0]=='curl':
+                    args=tuple(arg.replace('vision.example:443:',f'vision.example:{self.public}:')
+                               .replace('https://vision.example/',f'https://vision.example:{self.public}/') for arg in args)
+                    args+=('--cacert',str(self.cert if wrong_trust[0] else vision_cert))
+                subprocess.run(args,check=True,capture_output=True,timeout=40)
+            with patch.object(self.vision_module,'run',side_effect=production_run), \
+                 patch.object(self.vision_module,'fallback_config',return_value=self.vision_module.fallback_config('vision.example',fallback,str(cover_root)).replace(
+                     '    server_tokens off;',f'    access_log {self.root}/vision-access.log;\n    server_tokens off;')):
+                original_stream=self.vision_artifacts[0].read_bytes()
+                with self.assertRaises(self.vision_module.Failure) as failed:
+                    self.vision_module.configure(api,'vision.example',self.vision_port,fallback,
+                        *self.vision_artifacts,str(vision_cert),str(vision_key))
+                self.assertEqual(failed.exception.status,'failed_rolled_back')
+                self.assertIn('certificate verification failed',str(failed.exception))
+                self.assertEqual(self.vision_artifacts[0].read_bytes(),original_stream)
+                self.assertFalse(self.vision_artifacts[1].exists()); self.assertFalse(self.vision_artifacts[2].is_symlink())
+                self.assertEqual({r['id'] for r in api.request('panel/api/inbounds/list')['obj']},{r['id'] for r in active})
+                self.ready(server,('127.0.0.1',self.backends['reality']))
+                for name in ('reality','xhttp'): self.client(name,server_log='vision-panel.log')
+                print('REAL production Vision TLS failure / owned rollback / REALITY and XHTTP preserved: PASS',flush=True)
+                wrong_trust[0]=False
+                iid=self.vision_module.configure(api,'vision.example',self.vision_port,fallback,
+                    *self.vision_artifacts,str(vision_cert),str(vision_key))
+            self.assertTrue(self.vision_artifacts[2].is_symlink())
+            print('REAL production Vision configure / nginx reload / delayed Xray readiness / trusted HTTPS: PASS',flush=True)
             awg_row = api.create('deploy.example', port(self.allocated_ports, udp=True))
             api.request('panel/api/server/restartXrayService', {})
             self.ready(server, ('127.0.0.1', self.vision_port))

@@ -2438,7 +2438,7 @@ VISIONHOOK
 
 install_vision() {
     VISION_RESULT=failed_unverified
-    local new_lineage=0 result=0 vision_output='' hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision vision_port fallback_port
+    local new_lineage=0 result=0 vision_output='' hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision vision_port fallback_port vision_stage='rendering ACME configuration' vision_exit=1
     vision_port=$(make_port)
     fallback_port=$(make_port)
     while [[ "$fallback_port" == "$vision_port" ]]; do fallback_port=$(make_port); done
@@ -2448,23 +2448,29 @@ install_vision() {
         msg_warn 'Existing Vision lineage was not approved by project ownership preflight; preserved.'
         return 1
     fi
-    python3 "$PANEL_STAGE/managed-vision.py" --render-acme "$vision_domain" > /etc/nginx/sites-available/vision-acme.conf || return 1
-    chmod 0644 /etc/nginx/sites-available/vision-acme.conf || return 1
-    if ln -s /etc/nginx/sites-available/vision-acme.conf /etc/nginx/sites-enabled/vision-acme.conf &&
-       nginx -t && systemctl reload nginx &&
-       { if (( new_lineage )); then
+    if python3 "$PANEL_STAGE/managed-vision.py" --render-acme "$vision_domain" > /etc/nginx/sites-available/vision-acme.conf &&
+       { vision_stage='activating ACME configuration'; chmod 0644 /etc/nginx/sites-available/vision-acme.conf &&
+         ln -s /etc/nginx/sites-available/vision-acme.conf /etc/nginx/sites-enabled/vision-acme.conf; } &&
+       { vision_stage='validating ACME nginx configuration'; nginx -t; } &&
+       { vision_stage='reloading ACME nginx'; systemctl reload nginx; } &&
+       { vision_stage='issuing/checking Vision certificate'; if (( new_lineage )); then
              certbot certonly --webroot --webroot-path /var/www/acme --cert-name "$vision_domain" \
                  -d "$vision_domain" --non-interactive --agree-tos --register-unsafely-without-email;
          else check_webroot_lineage "$vision_domain";
          fi; } &&
-       render_vision_hook "$vision_domain" > "$hook" && chown root:root "$hook" && chmod 0755 "$hook" && bash -n "$hook" &&
-       vision_output=$(printf '%s' "$config_password" | python3 "$PANEL_STAGE/managed-vision.py" "$AWG_HELPER" \
-           "$domain" "$panel_path" "$config_username" "$vision_domain" "$vision_port" "$fallback_port"); then
+       { vision_stage='installing Vision renewal hook'; render_vision_hook "$vision_domain" > "$hook" && chown root:root "$hook" && chmod 0755 "$hook" && bash -n "$hook"; } &&
+       { vision_stage='configuring Vision inbound/nginx/HTTPS'; vision_output=$(printf '%s' "$config_password" | python3 "$PANEL_STAGE/managed-vision.py" "$AWG_HELPER" \
+           "$domain" "$panel_path" "$config_username" "$vision_domain" "$vision_port" "$fallback_port"); }; then
         VISION_RESULT=configured
         return 0
+    else
+        vision_exit=$?
     fi
     if [[ -n "$vision_output" ]]; then
         VISION_RESULT=$(printf '%s' "$vision_output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])') || VISION_RESULT=failed_unverified
+    elif [[ "$vision_stage" == 'configuring Vision inbound/nginx/HTTPS' ]]; then
+        # No result after entering the API helper cannot establish rollback.
+        VISION_RESULT=failed_unverified
     else
         # Failure before API changes; only newly owned webroot/hook artifacts exist.
         VISION_RESULT=failed_rolled_back
@@ -2480,7 +2486,7 @@ install_vision() {
     fi
     nginx -t && systemctl reload nginx && check_installation || result=1
     if (( result != 0 )); then VISION_RESULT=failed_unverified; fi
-    msg_warn "Vision failed: $VISION_RESULT"
+    msg_warn "Vision failed during $vision_stage (exit $vision_exit): rollback=$VISION_RESULT"
     return 1
 }
 

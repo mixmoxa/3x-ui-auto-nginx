@@ -170,7 +170,19 @@ the canonical deploy-hook, matching nginx domain/configuration and valid webroot
 renewal configuration; a matching certificate name alone is insufficient.
 
 Initial configuration restarts Xray through the native API, preserving the
-administrator session for rollback. If rollback is unverified, the new
+administrator session for rollback. API restart success does not establish
+listener readiness: preparation polls the loopback inbound for at most 10 seconds,
+then verifies trusted HTTPS through nginx SNI with three bounded curl retries
+(five-second retry window, three seconds per request). Certificate validity uses
+UTC properties where supported, retaining compatibility with Ubuntu 24.04's older
+cryptography. Failures identify the stage, safe command exit/validation reason and
+rollback result, including a failed rollback stage; argv, captured output and API
+bodies are never printed. The real integration test now calls production
+configure(), including a delayed child launch, wrong trust/owned rollback with
+REALITY/XHTTP checks, and successful nginx/HTTPS/client/subscription verification.
+Private fixture paths, CA trust and real-process control replace host services;
+these checks do not establish the cause of an earlier unlogged live VPS failure.
+If rollback is unverified, the new
 certificate and renewal artifacts remain for inspection rather than breaking
 an inbound that might still reference them. Subscription routes suppress nginx
 access/error logging, including internal redirects. Missing subscriptions retain

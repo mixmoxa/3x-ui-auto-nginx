@@ -5,9 +5,11 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 import sys
 import tempfile
+import time
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
@@ -16,9 +18,33 @@ MARKER = '# Managed by 3x-ui Auto Nginx: Vision\n'
 
 
 class Failure(ValueError):
-    def __init__(self, status):
-        super().__init__(status)
+    def __init__(self, status, stage='Vision setup', reason='operation failed', rollback=''):
+        super().__init__(f'Vision failed during {stage}: {reason}; rollback={status}' +
+                         (f'; rollback failure: {rollback}' if rollback else ''))
         self.status = status
+        self.stage, self.reason = stage, reason
+
+
+def safe_reason(error):
+    # Never include argv, stderr, API bodies or arbitrary exception messages.
+    if isinstance(error, subprocess.CalledProcessError):
+        tool = Path(error.cmd[0]).name if isinstance(error.cmd, (tuple, list)) else 'command'
+        tool = tool if tool in ('curl', 'nginx', 'systemctl') else 'command'
+        detail = {7:'connection refused/unavailable', 22:'HTTP error response', 28:'request timed out',
+                  35:'TLS handshake failed', 52:'empty response', 56:'connection receive failed',
+                  60:'certificate verification failed'}.get(error.returncode, '') if tool == 'curl' else ''
+        return f'{tool} exited with {error.returncode}' + (f' ({detail})' if detail else '')
+    if isinstance(error, subprocess.TimeoutExpired): return 'command timed out'
+    if isinstance(error, OSError): return f'OS error (errno {error.errno})'
+    known = ('Invalid Vision certificate identity, key or validity', 'Refusing existing/symlinked Vision artifacts',
+             'Conflicting/unrecognized nginx stream', 'Vision tag already owned by another inbound',
+             'Vision API topology mismatch', 'Ambiguous Vision ownership',
+             'Vision artifact ownership changed; retained', 'Stream rollback mismatch',
+             'Vision listener did not become ready within 10 seconds')
+    if isinstance(error, ValueError) and str(error) in known: return str(error)
+    if isinstance(error, ValueError) and str(error).startswith('AmneziaWG panel '):
+        return '3X-UI API rejected request' if 'rejected request:' in str(error) else '3X-UI API request failed'
+    return type(error).__name__
 
 
 def domain_name(name):
@@ -34,8 +60,13 @@ def certificate(domain, cert, key):
     public = lambda value: value.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
     names = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.DNSName)
     now = datetime.datetime.now(datetime.timezone.utc)
+    before = getattr(leaf, 'not_valid_before_utc', None)
+    after = getattr(leaf, 'not_valid_after_utc', None)
+    # Ubuntu 24.04's cryptography <42 has no UTC properties or deprecation.
+    if before is None: before = leaf.not_valid_before.replace(tzinfo=datetime.timezone.utc)
+    if after is None: after = leaf.not_valid_after.replace(tzinfo=datetime.timezone.utc)
     if (set(names) != {domain} or public(private.public_key()) != public(leaf.public_key())
-            or not leaf.not_valid_before.replace(tzinfo=datetime.timezone.utc) <= now < leaf.not_valid_after.replace(tzinfo=datetime.timezone.utc)):
+            or not before <= now < after):
         raise ValueError('Invalid Vision certificate identity, key or validity')
 
 
@@ -122,39 +153,70 @@ def run(*argv):
     subprocess.run(argv, check=True, capture_output=True, timeout=40)
 
 
+def wait_inbound(port):
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            with socket.create_connection(('127.0.0.1', port), timeout=0.25): return
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise ValueError('Vision listener did not become ready within 10 seconds') from None
+            time.sleep(0.25)
+
+
 def configure(panel, domain, port, fallback, stream, site, enabled, cert, key):
-    certificate(domain, cert, key)
-    stream, site, enabled = map(Path, (stream, site, enabled))
-    if stream.is_symlink() or site.exists() or site.is_symlink() or enabled.exists() or enabled.is_symlink():
-        raise ValueError('Refusing existing/symlinked Vision artifacts')
-    original = stream.read_bytes()
-    patched = stream_config(original.decode(), domain, port)
-    expected = inbound(domain, port, fallback, cert, key)
-    if any(row.get('tag') == expected['tag'] for row in panel.request('panel/api/inbounds/list')['obj']):
-        raise ValueError('Vision tag already owned by another inbound')
+    stage = 'validating Vision certificate'
     try:
+        certificate(domain, cert, key)
+        stage = 'checking Vision artifacts and stream'
+        stream, site, enabled = map(Path, (stream, site, enabled))
+        if stream.is_symlink() or site.exists() or site.is_symlink() or enabled.exists() or enabled.is_symlink():
+            raise ValueError('Refusing existing/symlinked Vision artifacts')
+        original = stream.read_bytes()
+        patched = stream_config(original.decode(), domain, port)
+        expected = inbound(domain, port, fallback, cert, key)
+        stage = 'listing existing 3X-UI inbounds'
+        if any(row.get('tag') == expected['tag'] for row in panel.request('panel/api/inbounds/list')['obj']):
+            raise ValueError('Vision tag already owned by another inbound')
+    except Exception as error:
+        raise Failure('failed_rolled_back', stage, safe_reason(error)) from None
+    try:
+        stage = 'creating Vision inbound via 3X-UI API'
         row = panel.request('panel/api/inbounds/add', expected)['obj']
         iid = row['id']
         if any(row.get(k) != expected[k] for k in ('enable', 'listen', 'port', 'protocol', 'tag')):
             raise ValueError('Vision API topology mismatch')
+        stage = 'creating Vision host via 3X-UI API'
         panel.request('panel/api/hosts/add', {'inboundIds': [iid], 'remark': 'vision', 'hosts': [domain],
                       'port': 443, 'security': 'same', 'sni': domain, 'alpn': ['http/1.1'], 'allowInsecure': False})
+        stage = 'writing Vision nginx fallback and SNI route'
         site.write_text(fallback_config(domain, fallback)); site.chmod(0o644)
         enabled.symlink_to(site)
         stream.write_text(patched)
-        run('nginx', '-t'); run('systemctl', 'reload', 'nginx')
+        stage = 'validating nginx configuration'
+        run('nginx', '-t')
+        stage = 'reloading nginx'
+        run('systemctl', 'reload', 'nginx')
+        stage = 'restarting Xray via 3X-UI API'
         panel.request('panel/api/server/restartXrayService', {})
+        stage = 'checking 3X-UI service'
         run('systemctl', 'is-active', '--quiet', 'x-ui')
+        stage = 'waiting for Vision inbound readiness'
+        wait_inbound(port)
         # Actual trusted HTTPS fallback through public nginx SNI and Xray TLS.
+        stage = 'checking trusted HTTPS fallback'
         run('curl', '-q', '-fsS', '--noproxy', '*', '--http1.1', '--resolve', f'{domain}:443:127.0.0.1',
-            '--connect-timeout', '5', '--max-time', '15', f'https://{domain}/')
+            '--connect-timeout', '2', '--max-time', '3', '--retry', '3', '--retry-delay', '1',
+            '--retry-max-time', '5', '--retry-all-errors', f'https://{domain}/')
         return iid
-    except Exception:
+    except Exception as error:
         status = 'failed_unverified'
+        rollback_stage = 'restoring nginx files'; rollback_error = ''
         try:
             stream.write_bytes(original)
             enabled.unlink(missing_ok=True); site.unlink(missing_ok=True)
             # Reconcile an uncertain POST response; never delete by an unverified response ID.
+            rollback_stage = 'reconciling owned Vision inbound'
             candidates = [r for r in panel.request('panel/api/inbounds/list')['obj'] if r.get('tag') == expected['tag']]
             if len(candidates) > 1:
                 raise ValueError('Ambiguous Vision ownership')
@@ -166,15 +228,17 @@ def configure(panel, domain, port, fallback, stream, site, enabled, cert, key):
                         or settings.get('clients') != [] or stream_settings.get('tlsSettings', {}).get('serverName') != domain):
                     raise ValueError('Vision artifact ownership changed; retained')
                 panel.request('panel/api/inbounds/del/' + str(row['id']), {})
+            rollback_stage = 'validating and reloading original nginx'
             run('nginx', '-t'); run('systemctl', 'reload', 'nginx')
+            rollback_stage = 'restarting original Xray'
             panel.request('panel/api/server/restartXrayService', {})
             run('systemctl', 'is-active', '--quiet', 'x-ui')
             if stream.read_bytes() != original:
                 raise ValueError('Stream rollback mismatch')
             status = 'failed_rolled_back'
-        except Exception:
-            pass
-        raise Failure(status)
+        except Exception as failure:
+            rollback_error = rollback_stage + ': ' + safe_reason(failure)
+        raise Failure(status, stage, safe_reason(error), rollback_error) from None
 
 
 def main():
@@ -202,5 +266,6 @@ if __name__ == '__main__':
         main()
     except Exception as error:
         print(json.dumps({'status': getattr(error, 'status', 'failed_unverified')}))
-        print('Vision failed. Verify rollback and core health; no Vision success was reported.', file=sys.stderr)
+        print(str(error) if isinstance(error, Failure) else
+              'Vision failed during local API initialization: '+safe_reason(error)+'; rollback=failed_unverified', file=sys.stderr)
         sys.exit(1)

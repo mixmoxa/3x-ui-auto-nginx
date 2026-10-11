@@ -492,6 +492,49 @@ class IntegratedFeatures(unittest.TestCase):
             with self.assertRaises(ValueError): vision.certificate('wrong.example', cert, key)
             with self.assertRaises(OSError): vision.certificate('vision.example', cert, Path(directory) / 'absent')
 
+    def test_vision_certificate_uses_utc_validity(self):
+        import datetime
+        vision=helper('vision')
+        with tempfile.TemporaryDirectory() as directory:
+            cert,key=[Path(directory)/name for name in ('cert','key')]
+            subprocess.run(['openssl','req','-x509','-newkey','ec','-pkeyopt','ec_paramgen_curve:prime256v1',
+                '-nodes','-days','1','-subj','/CN=vision.example','-addext','subjectAltName=DNS:vision.example',
+                '-out',cert,'-keyout',key],check=True,capture_output=True)
+            leaf=vision.x509.load_pem_x509_certificate(cert.read_bytes())
+            now=datetime.datetime.now(datetime.timezone.utc)
+            class UTCLeaf:
+                extensions=leaf.extensions
+                not_valid_before_utc=now-datetime.timedelta(minutes=1)
+                not_valid_after_utc=now+datetime.timedelta(minutes=1)
+                def public_key(self): return leaf.public_key()
+                @property
+                def not_valid_before(self): raise AssertionError('Deprecated naive certificate property used')
+                @property
+                def not_valid_after(self): raise AssertionError('Deprecated naive certificate property used')
+            value=UTCLeaf()
+            with patch.object(vision.x509,'load_pem_x509_certificate',return_value=value):
+                vision.certificate('vision.example',cert,key)
+                value.not_valid_after_utc=now-datetime.timedelta(seconds=1)
+                with self.assertRaisesRegex(ValueError,'validity'): vision.certificate('vision.example',cert,key)
+                value.not_valid_after_utc=now+datetime.timedelta(minutes=2)
+                value.not_valid_before_utc=now+datetime.timedelta(minutes=1)
+                with self.assertRaisesRegex(ValueError,'validity'): vision.certificate('vision.example',cert,key)
+
+    def test_vision_readiness_is_bounded_and_errors_are_private(self):
+        vision=helper('vision')
+        with patch.object(vision.socket,'create_connection',side_effect=ConnectionRefusedError), \
+             patch.object(vision.time,'monotonic',side_effect=[0,0,10]),patch.object(vision.time,'sleep') as sleep:
+            with self.assertRaisesRegex(ValueError,'within 10 seconds'): vision.wait_inbound(12000)
+            self.assertEqual(sleep.call_count,1)
+        private='private-session-cookie https://panel.example/sub/secret'
+        for error in (ValueError(private),subprocess.CalledProcessError(35,['curl',private],private,private),
+                      subprocess.TimeoutExpired(['curl',private],40,output=private,stderr=private)):
+            with self.subTest(error=type(error).__name__):
+                message=str(vision.Failure('failed_unverified','restarting Xray',vision.safe_reason(error),
+                                          'restoring nginx: '+vision.safe_reason(error)))
+                self.assertNotIn(private,message)
+                self.assertIn('restarting Xray',message); self.assertIn('rollback failure:',message)
+
     def test_vision_early_acme_failure_removes_only_new_artifacts(self):
         from test_personal_backup import relocated
         with tempfile.TemporaryDirectory() as directory:
@@ -520,6 +563,15 @@ class IntegratedFeatures(unittest.TestCase):
             self.assertTrue((root/'etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision').exists())
             self.assertTrue((root/'etc/nginx/sites-available/vision-acme.conf').exists())
             self.assertNotIn('CERTIFICATE_DELETED',result.stdout)
+            # An interrupted helper may have changed the API but emitted no JSON.
+            for name in ('etc/nginx/sites-enabled/vision-acme.conf','etc/nginx/sites-available/vision-acme.conf',
+                         'etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision'):
+                (root/name).unlink()
+            empty=stubs.replace('echo \'{"status":"failed_unverified"}\';',':;')
+            result=subprocess.run(['bash','-eu','-c',empty+script+'\nVISION_OWNED_LINEAGE=vision.example; vision_domain=vision.example; domain=panel.example; panel_path=test; config_username=test; config_password=test; PANEL_STAGE=/stage; AWG_HELPER=/helper; install_vision || :; echo "$VISION_RESULT"'],capture_output=True,text=True)
+            self.assertEqual(result.stdout.strip(),'failed_unverified',result.stderr)
+            self.assertTrue((root/'etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision').exists())
+            self.assertNotIn('CERTIFICATE_DELETED',result.stdout)
 
     def test_vision_fallback_failure_keeps_authenticated_session_for_rollback(self):
         vision=helper('vision'); rows=[]; authenticated=[True]
@@ -536,10 +588,13 @@ class IntegratedFeatures(unittest.TestCase):
                     return {'obj':None}
             def run(*args):
                 if args==('systemctl','restart','x-ui'): authenticated[0]=False
-                if args[0]=='curl': raise ValueError('Fallback unavailable')
-            with patch.object(vision,'certificate'),patch.object(vision,'run',side_effect=run),self.assertRaises(vision.Failure) as failed:
+                if args[0]=='curl': raise subprocess.CalledProcessError(60,args,output=b'private-response',stderr=b'private-cookie')
+            with patch.object(vision,'certificate'),patch.object(vision,'wait_inbound'),patch.object(vision,'run',side_effect=run),self.assertRaises(vision.Failure) as failed:
                 vision.configure(Panel(),'vision.example',12000,12001,stream,site,enabled,'/cert','/key')
             self.assertEqual(failed.exception.status,'failed_rolled_back')
+            self.assertIn('HTTPS fallback',str(failed.exception))
+            self.assertIn('certificate verification',str(failed.exception))
+            self.assertNotIn('private-response',str(failed.exception)); self.assertNotIn('private-cookie',str(failed.exception))
             self.assertEqual(rows,[]); self.assertEqual(stream.read_text(),original)
 
     def test_vision_api_uncertainty_and_failure_respect_artifact_ownership(self):
