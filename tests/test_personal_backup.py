@@ -967,7 +967,7 @@ class PersonalBackup(unittest.TestCase):
         calls=self.commands()
         pause=calls.index(['systemctl','stop','certbot.timer'])
         idle=calls.index(['systemctl','is-active','certbot.service'])
-        replacement=next(i for i,c in enumerate(calls) if c[0]=='cp' and c[-1].rstrip('/')==str(self.path('/etc/letsencrypt')))
+        replacement=next(i for i,c in enumerate(calls) if c[0]=='cp' and c[-1]==str(self.path('/etc/letsencrypt/renewal/example.com.conf')))
         activation=calls.index(['systemctl','enable','--now','certbot.timer'])
         health=calls.index(['systemctl','is-enabled','--quiet','certbot.timer'],activation)
         self.assertLess(pause,idle);self.assertLess(idle,replacement)
