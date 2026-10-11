@@ -51,7 +51,9 @@ Match contexts still require administrator review. No recidive jail is added.
 APT adds the required distro security origin: Ubuntu's codename-security archive,
 or Debian's Debian-Security/codename-security origin. Existing effective distro,
 ESM and administrator origins remain permitted; they are neither cleared nor
-replaced. Explicitly disabled periodic APT causes early refusal. An administrator
+replaced. Choosing Security enables periodic APT even when previously disabled;
+the effective Enable/Update-Package-Lists/Unattended-Upgrade flags are checked
+after applying the managed drop-in. An administrator
 modified project APT drop-in also causes early refusal; both previous and current
 canonical project drop-ins remain supported. The managed drop-in enables automatic
 reboot, including logged-in users, at 04:38. Native timers run at 02:30 (lists)
@@ -103,7 +105,7 @@ dpkg/UCF preserve existing configuration, and needrestart reports pending restar
 While APT emits output, a fixed activity message is flushed at most once per
 15 seconds; raw package/URL output stays in the private file until completion.
 APT failures retain their exit code when capture succeeds; capture errors fail closed.
-APT origins are not changed by the initial upgrade. Existing-deployment confirmation
+APT origins are not changed by the initial upgrade. Mandatory setup calls stop installation on failure; required downloads and writes propagate errors. DNS/Security failures report the specific stage, cause and verified/unverified rollback outcome without printing credentials. Existing-deployment confirmation
 explicitly covers possible service restarts and the non-rollbackable OS upgrade.
 Package maintainer scripts can still restart services; package installation and
 dist-upgrade are not transactional and are not claimed to be rolled back.

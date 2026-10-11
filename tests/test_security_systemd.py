@@ -31,6 +31,8 @@ def nightly_after_cold_boot():
     security=helper('security'); dump=run('apt-config','dump')
     for value in ('Automatic-Reboot "true";', 'Automatic-Reboot-WithUsers "true";', 'Automatic-Reboot-Time "04:38";'):
         assert 'Unattended-Upgrade::'+value in dump, value
+    for key in ('Enable','Update-Package-Lists','Unattended-Upgrade'):
+        assert 'APT::Periodic::'+key+' "1";' in dump, key
     expected={tuple(v) for v in json.loads(Path('/mnt/xui-ci/expected-origins.json').read_text())}
     assert expected <= security.apt_origins(dump)
     for service,when in (('apt-daily.timer','02:30:00'),('apt-daily-upgrade.timer','02:50:00')):
@@ -165,12 +167,16 @@ class SecuritySystemd(unittest.TestCase):
             os.environ['APT_CONFIG']=str(apt_boot)
             self.addCleanup(os.environ.pop,'APT_CONFIG',None)
             # Docker disables periodic APT in its image, unlike native distro
-            # defaults. First prove safe refusal, then select the VM baseline.
+            # defaults. Prove preflight accepts it, then use a native numeric
+            # provider drop-in so the production managed file takes precedence.
             disabled = Path('/etc/apt/apt.conf.d/docker-disable-periodic-update')
             if disabled.exists():
-                with self.assertRaisesRegex(ValueError, 'APT periodic'):
-                    security.preflight()
+                security.preflight()
                 disabled.unlink()
+            disabled=Path('/etc/apt/apt.conf.d/20ci-disabled-periodic')
+            disabled_policy=b'APT::Periodic::Enable "0";\nAPT::Periodic::Update-Package-Lists "0";\nAPT::Periodic::Unattended-Upgrade "0";\n'
+            disabled.write_bytes(disabled_policy)
+            self.addCleanup(disabled.unlink,missing_ok=True)
             stock_origins = security.apt_origins(run('apt-config', 'dump'))
             self.assertTrue(stock_origins, 'Native unattended-upgrades defaults missing')
             admin = Path('/etc/apt/apt.conf.d/51ci-additional-security')
@@ -236,6 +242,7 @@ class SecuritySystemd(unittest.TestCase):
                         stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             try:
                 result = security.configure()
+                self.assertEqual(disabled.read_bytes(),disabled_policy)
                 if result['status'] != 'configured': print('TLS queries observed:',len(seen),'server errors:',errors,flush=True)
                 self.assertEqual(result['status'], 'configured', result)
                 self.assertEqual(result['dot'], 'configured')

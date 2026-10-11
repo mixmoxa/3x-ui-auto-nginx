@@ -77,7 +77,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 删除原部署前，安装器先检查兼容性，执行必要的 `apt-get --no-remove -y dist-upgrade`，安装系统依赖并再次检查 SSH/DNS。重装需要确认：系统升级可能重启服务，且无法回滚。若需要重启，只在安装、检查和最终报告均成功后安排；重启后的验收由所有者完成。
 
-`Enhance VPS security? [Y/n]:` 配置 SSH Fail2ban、02:30 APT update、02:50 unattended upgrade，以及 04:38 自动重启，即使仍有用户登录。显示并保留 VPS 本地时区，不修改 SSH 策略或密钥。 选择 Security 会应用项目的 DNS 策略，不取决于原来的提供商或已有 DNS 指令。安装程序备份原解析器文件/链接、项目 drop-in 和服务状态，确保安装 systemd-resolved，然后应用并验证严格 DoT。主 resolved.conf 和网络/VPN 文件保持不变。实际 DNS 路由冲突或 TLS/DNS 检查失败会触发经验证的回滚；仅存在旧配置不会阻止 preflight。软件包变更不回滚。Security=N 不修改 DNS。 Backup / Restore 不迁移主机特定安全/DNS 设置。
+`Enhance VPS security? [Y/n]:` 配置 SSH Fail2ban、02:30 APT update、02:50 unattended upgrade，以及 04:38 自动重启，即使仍有用户登录。显示并保留 VPS 本地时区，不修改 SSH 策略或密钥。 选择 Security 会应用项目的 DNS 策略，不取决于原来的提供商或已有 DNS 指令。安装程序备份原解析器文件/链接、项目 drop-in 和服务状态，确保安装 systemd-resolved，然后应用并验证严格 DoT。主 resolved.conf 和网络/VPN 文件保持不变。实际 DNS 路由冲突或 TLS/DNS 检查失败会触发经验证的回滚；仅存在旧配置不会阻止 preflight。软件包变更不回滚。Security=N 不修改 DNS。 Backup / Restore 不迁移主机特定安全/DNS 设置。 Security 还会启用原先禁用的 APT 定期更新并验证实际生效的参数；保留现有 APT 来源。
 
 ### 可选 VLESS RAW TLS Vision
 

@@ -77,6 +77,7 @@ class IntegratedFeatures(unittest.TestCase):
                 with patch.object(security,'verify_dns',side_effect=ValueError('TLS unavailable')):
                     result=security.prepare_dns(root)
                 self.assertEqual(result['status'],'failed_rolled_back',result)
+                self.assertTrue(any('strict DoT verification' in w and 'rollback=failed_rolled_back' in w for w in result['warnings']),result)
                 self.assertFalse(resolv.is_symlink()); self.assertEqual(resolv.read_text(),original)
                 self.assertFalse((root/security.FILES[4].lstrip('/')).exists())
                 self.assertEqual(global_policy.read_text(),original_policy)
@@ -189,7 +190,7 @@ class IntegratedFeatures(unittest.TestCase):
 
     def test_security_readonly_preflight_blocks_cleanup_for_known_conflicts(self):
         from test_personal_backup import relocated
-        cases = ('jail', 'jail-conf', 'apt', 'compatible', 'declined')
+        cases = ('jail', 'jail-conf', 'disabled-apt', 'compatible', 'declined')
         for case in cases:
             with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory); (root/'etc').mkdir()
@@ -204,7 +205,7 @@ class IntegratedFeatures(unittest.TestCase):
                 # Execute the real helper CLI against private files and read-only
                 # command fixtures. No installer/global paths are executed.
                 override = "shutil.which = lambda tool: tool\ndef command(*args, **kwargs):\n    if args[0]=='/usr/sbin/sshd': return 'port 22'\n    if args[0]=='journalctl': return 'SSH journal'\n    if args[:2]==('systemctl','is-active'): return %r if args[-1]=='systemd-resolved.service' else 'inactive'\n    if args[:2]==('systemctl','is-enabled'): return 'enabled'\n    return ''\n" % 'active'
-                if case=='apt': override=override.replace("    return ''\n","    if args[0]=='apt-config': return 'APT::Periodic::Enable \"0\";'\n    return ''\n")
+                if case=='disabled-apt': override=override.replace("    return ''\n","    if args[0]=='apt-config': return 'APT::Periodic::Enable \"0\";'\n    return ''\n")
                 prefix, cli=source.split("if __name__ == '__main__':",1)
                 (root/'helper.py').write_text(prefix.replace("root=Path('/')", 'root=Path('+repr(str(root))+')')+override+"if __name__ == '__main__':"+cli)
                 names=('confirm_destructive_reinstall','validate_domains','select_vision','select_amneziawg','select_adguard','select_client',
@@ -218,7 +219,7 @@ class IntegratedFeatures(unittest.TestCase):
                 result=subprocess.run(['bash','-eu','-c',script],env=env,capture_output=True,text=True)
                 after={str(p.relative_to(root)):os.readlink(p) if p.is_symlink() else p.read_bytes() for p in (root/'etc').rglob('*') if p.is_file() or p.is_symlink()}
                 self.assertEqual(before,after)
-                if case in ('compatible','declined'):
+                if case in ('compatible','declined','disabled-apt'):
                     self.assertEqual(result.returncode,19,result.stderr)
                     self.assertIn('CLEANUP',result.stdout)
                 else:
@@ -227,11 +228,12 @@ class IntegratedFeatures(unittest.TestCase):
                     self.assertNotIn('DESTRUCTION',result.stdout)
                     self.assertIn('preflight',result.stderr.lower())
 
-    def test_security_apt_conflict_refuses_before_configuration(self):
+    def test_selected_security_overrides_disabled_periodic_apt(self):
         security=helper('security')
+        self.assertIn('APT::Periodic::Enable "1";',security.apt_config('ubuntu'))
         for key in ('Enable','Update-Package-Lists','Unattended-Upgrade'):
-            with self.subTest(key=key), self.assertRaisesRegex(ValueError,'administrator policy'):
-                security.apt_preflight('APT::Periodic::'+key+' "0";')
+            with self.subTest(key=key):
+                self.assertEqual(security.apt_origins('APT::Periodic::'+key+' "0";'),set())
         # A project marker cannot authorize removal of administrator origins
         # appended to the managed file itself.
         with tempfile.TemporaryDirectory() as directory:
@@ -249,6 +251,7 @@ class IntegratedFeatures(unittest.TestCase):
             def command(*args,**kwargs):
                 if args[0]=='/usr/sbin/sshd': return 'port 22'
                 if args[0]=='journalctl': return 'SSH journal'
+                if args[0]=='apt-config': return 'APT::Periodic::Enable "0";'
                 if args[:2]==('systemctl','is-active'): return 'active' if args[-1]=='systemd-resolved.service' else 'inactive'
                 if args[:2]==('systemctl','is-enabled'): return 'enabled'
                 return ''
@@ -259,10 +262,39 @@ class IntegratedFeatures(unittest.TestCase):
                 previous=current.replace('Automatic-Reboot "true";\nUnattended-Upgrade::Automatic-Reboot-WithUsers "true";\nUnattended-Upgrade::Automatic-Reboot-Time "04:38";', 'Automatic-Reboot "false";')
                 legacy=previous.replace('// Add the required distro security origin; retain administrator/distro origins.',
                     '// Reset effective origins in this final managed drop-in; preserve administrator files.\n#clear Unattended-Upgrade::Allowed-Origins;\n#clear Unattended-Upgrade::Origins-Pattern;')
-                for canonical in (current,previous,legacy):
+                for canonical in (current,previous,legacy,current.replace('APT::Periodic::Enable "1";\n','')):
                     owned.write_text(canonical); security.preflight(root)
-        self.assertEqual(security.apt_preflight(''),set())
-        self.assertEqual(security.apt_preflight('Unattended-Upgrade::Origins-Pattern:: "origin=Provider,label=Provider-Security";'),{('Origins-Pattern','origin=Provider,label=Provider-Security')})
+        self.assertEqual(security.apt_origins(''),set())
+        self.assertEqual(security.apt_origins('Unattended-Upgrade::Origins-Pattern:: "origin=Provider,label=Provider-Security";'),{('Origins-Pattern','origin=Provider,label=Provider-Security')})
+
+    def test_main_stops_after_mandatory_setup_failure(self):
+        names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
+               'select_adguard','select_client','preflight_base_os','preflight_panel_release','preflight_amneziawg',
+               'preflight_integrated_features','prepare_base_os','prepare_system_dns','cleanup_adguard','clean_previous_install',
+               'install_packages','setup_firewall','get_server_ip','setup_acme_http','get_ssl_certs','install_panel',
+               'configure_nginx','configure_xui_db','install_clash_sub','install_fake_site','install_diagnostics','tune_system',
+               'install_backup_tool','setup_certificate_renewal','check_installation','show_results','finish_initial_reboot')
+        stubs='\n'.join(n+'() { echo '+n+'; };' for n in names)
+        stubs+='\nmsg_err() { echo "$*" >&2; }; msg_warn() { :; }; systemctl() { :; }; x-ui() { :; };\n'
+        for failed in ('clean_previous_install','get_server_ip','configure_nginx','install_clash_sub','install_fake_site','install_diagnostics'):
+            with self.subTest(stage=failed):
+                script=stubs+function('main')+'\n'+failed+'() { echo FAILURE; return 73; }; main'
+                result=subprocess.run(['bash','-u','-c',script],env={**os.environ,'INSTALL_SECURITY':'n','INSTALL_VISION':'n','INSTALL_AWG':'n','INSTALL_AGH':'n','CREATE_CLIENT':'n'},capture_output=True,text=True)
+                self.assertNotEqual(result.returncode,0,result.stdout)
+                self.assertNotIn('show_results',result.stdout)
+                self.assertIn('exit 73',result.stderr)
+
+    def test_required_download_failure_does_not_report_success(self):
+        for name in ('install_clash_sub','install_fake_site','install_diagnostics'):
+            with self.subTest(stage=name), tempfile.TemporaryDirectory() as directory:
+                script=function(name)
+                for path in ('/var/www','/usr/local/lib','/etc/systemd/system'):
+                    script=script.replace(path,directory+path)
+                (Path(directory)/'etc/systemd/system').mkdir(parents=True)
+                mocks='curl() { echo download-failed >&2; return 73; }; msg_ok() { echo SUCCESS; }; msg_err() { echo "$*" >&2; }; sed() { :; }; dd() { :; }; chown() { :; }; chmod() { :; }; id() { return 0; }; setcap() { :; }; systemctl() { :; };\n'
+                result=subprocess.run(['bash','-u','-c',mocks+script+'\n'+name],env={**os.environ,'GITHUB_RAW':'https://fixture.invalid','FAKE_SITE_COUNT':'1','diag_path':'/diagnostics/','domain':'panel.example','IP4':'203.0.113.7','mtr_backend_port':'10005','panel_path':'panel'},capture_output=True,text=True)
+                self.assertNotEqual(result.returncode,0,result.stdout)
+                self.assertNotIn('SUCCESS',result.stdout)
 
     def test_runtime_security_repeats_preflight_before_any_mutation(self):
         security=helper('security')
@@ -281,7 +313,7 @@ class IntegratedFeatures(unittest.TestCase):
             with self.subTest(distro=label), tempfile.TemporaryDirectory() as directory:
                 root=Path(directory); parts=root/'parts'; parts.mkdir()
                 bootstrap=root/'apt.conf'; bootstrap.write_text(f'Dir::Etc::parts "{parts}"; Dir::Etc::main "{root}/absent";')
-                admin=parts/'50unattended-upgrades'; admin.write_text(stock+'\nUnattended-Upgrade::Origins-Pattern { "origin=Provider,label=Provider-Security"; };\n')
+                admin=parts/'50unattended-upgrades'; admin.write_text(stock+'\nAPT::Periodic::Enable "0";\nAPT::Periodic::Update-Package-Lists "0";\nAPT::Periodic::Unattended-Upgrade "0";\nUnattended-Upgrade::Origins-Pattern { "origin=Provider,label=Provider-Security"; };\n')
                 dump=lambda: subprocess.check_output(['apt-config','dump'],env={**os.environ,'APT_CONFIG':str(bootstrap)},text=True)
                 before=dump(); self.assertIn('origin=Provider,label=Provider-Security',before); owned=parts/'99zz-3x-ui-auto-nginx'; owned.write_text(security.apt_config(os_id)); after=dump()
                 for line in before.splitlines():
@@ -289,6 +321,8 @@ class IntegratedFeatures(unittest.TestCase):
                         self.assertIn(line,after,'Existing effective origin removed')
                 self.assertIn('origin=Provider,label=Provider-Security',after)
                 self.assertIn('Unattended-Upgrade::Automatic-Reboot "true";',after)
+                for key in ('Enable','Update-Package-Lists','Unattended-Upgrade'):
+                    self.assertIn('APT::Periodic::'+key+' "1";',after)
                 owned.write_text(security.apt_config(os_id)); self.assertEqual(dump(),after)
                 owned.unlink(); self.assertEqual(dump(),before)
 
@@ -416,7 +450,7 @@ class IntegratedFeatures(unittest.TestCase):
                 if len(attempts)<3: raise ValueError('Socket not ready')
             if args[:2]==('fail2ban-client','get'): return {'maxretry':'5','findtime':'1800','bantime':'3600'}[args[-1]]
             if args[:2]==('fail2ban-client','-d'): return 'port 22'
-            if args[0]=='apt-config': return 'Unattended-Upgrade::Automatic-Reboot "true";\nUnattended-Upgrade::Automatic-Reboot-WithUsers "true";\nUnattended-Upgrade::Automatic-Reboot-Time "04:38";\nUnattended-Upgrade::Origins-Pattern:: "origin=Ubuntu,archive=${distro_codename}-security";'
+            if args[0]=='apt-config': return 'APT::Periodic::Enable "1";\nAPT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\nUnattended-Upgrade::Automatic-Reboot "true";\nUnattended-Upgrade::Automatic-Reboot-WithUsers "true";\nUnattended-Upgrade::Automatic-Reboot-Time "04:38";\nUnattended-Upgrade::Origins-Pattern:: "origin=Ubuntu,archive=${distro_codename}-security";'
             if args[:2]==('systemctl','show'): return ('02:50' if args[2]=='apt-daily-upgrade.timer' else '02:30')+':00\nRandomizedDelayUSec=0'
             if args[0]=='busctl': return 's "yes"'
             if args[:2]==('resolvectl','dns'): return dns

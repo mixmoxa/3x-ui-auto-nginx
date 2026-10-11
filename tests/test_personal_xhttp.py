@@ -922,8 +922,8 @@ curl() {
         main = function("main")
         self.assertEqual(len(re.findall(r"(?m)^\s*x-ui restart\b", main)), 1)
         self.assertGreater(main.index("x-ui restart"), main.index("configure_xui_db"))
-        self.assertRegex(main, r"install_panel\s*\|\|\s*exit 1")
-        self.assertRegex(main, r"configure_xui_db\s*\|\|\s*exit 1")
+        self.assertRegex(main, r"install_panel\s*\|\|\s*\{[^\n]*exit 1;")
+        self.assertRegex(main, r"configure_xui_db\s*\|\|\s*\{[^\n]*exit 1;")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             log = root / "calls"

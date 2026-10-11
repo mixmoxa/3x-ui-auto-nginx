@@ -104,12 +104,12 @@ clean_previous_install() {
     if [[ "${VISION_PREVIOUS_HOOK:-}" == owned ]]; then
         rm -f /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision
     fi
-    rm -rf /etc/systemd/system/x-ui.service
-    rm -rf /usr/local/x-ui
-    rm -rf /etc/x-ui
-    rm -rf /etc/nginx/sites-enabled/*
-    rm -rf /etc/nginx/sites-available/*
-    rm -rf /etc/nginx/stream-enabled/*
+    rm -rf /etc/systemd/system/x-ui.service || return 1
+    rm -rf /usr/local/x-ui || return 1
+    rm -rf /etc/x-ui || return 1
+    rm -rf /etc/nginx/sites-enabled/* || return 1
+    rm -rf /etc/nginx/sites-available/* || return 1
+    rm -rf /etc/nginx/stream-enabled/* || return 1
 }
 
 # ─── Port / path generators ──────────────────────────────────────────────────
@@ -426,12 +426,12 @@ verify_base_os() {
 
 prepare_base_os() {
     msg_warn 'Preparing OS: full dist-upgrade; package changes cannot be rolled back.'
-    apt_system -o APT::Update::Error-Mode=any update || return 1
+    apt_system -o APT::Update::Error-Mode=any update || { msg_err "APT list refresh failed (exit $?). Package changes are not rolled back."; return 1; }
     # Simulation and execution both reject any package removal.
-    apt_system -s -y dist-upgrade || return 1
-    apt_system -y dist-upgrade || return 1
+    apt_system -s -y dist-upgrade || { msg_err "Full upgrade simulation failed (exit $?). No deployment cleanup was performed."; return 1; }
+    apt_system -y dist-upgrade || { msg_err "Full OS upgrade failed (exit $?). Package changes are not rolled back."; return 1; }
     apt_system -y --no-install-recommends install curl wget jq python3 openssl \
-        ca-certificates procps iproute2 ufw tar gzip || return 1
+        ca-certificates procps iproute2 ufw tar gzip || { msg_err "System dependency installation failed (exit $?). Package changes are not rolled back."; return 1; }
     verify_base_os || return 1
     BASE_OS_RESULT=configured
 }
@@ -446,7 +446,10 @@ prepare_system_dns() {
         printf '%s' "$output" | python3 -c 'import json,sys; [print("[!] DNS preparation: "+w,file=sys.stderr) for w in json.load(sys.stdin)["warnings"]]'
         return 1
     fi
-    python3 "$PANEL_STAGE/managed-security.py" --preflight >/dev/null || return 1
+    if ! output=$(python3 "$PANEL_STAGE/managed-security.py" --preflight); then
+        printf '%s' "$output" | python3 -c 'import json,sys; [print("[!] Security readiness: "+w,file=sys.stderr) for w in json.load(sys.stdin)["warnings"]]'
+        return 1
+    fi
     verify_base_os
 }
 
@@ -477,7 +480,7 @@ install_packages() {
         version=$(grep -oP '(?<=VERSION_ID=")[0-9]+' /etc/os-release)
         [[ "$version" == "20" || "$version" == "22" ]] && echo "System: Ubuntu $version"
 
-        apt_system -o APT::Update::Error-Mode=any update || return 1
+        apt_system -o APT::Update::Error-Mode=any update || { msg_err "APT list refresh failed (exit $?). Package changes are not rolled back."; return 1; }
         apt_system -y install curl wget jq bash sudo nginx-full certbot sqlite3 ufw netcat-openbsd mtr python3 python3-configobj python3-cryptography libcap2-bin openssl procps iproute2 tar gzip tzdata ca-certificates || return 1
         systemctl daemon-reload && systemctl enable --now nginx || return 1
     fi
@@ -563,7 +566,7 @@ get_ssl_certs() {
 # ─────────────────────────────────────────────────────────────────────────────
 configure_nginx() {
     install -d -o root -g root -m 0755 /etc/nginx/snippets/x-ui-auto-optional || return 1
-    mkdir -p /etc/nginx/stream-enabled /etc/nginx/snippets
+    mkdir -p /etc/nginx/stream-enabled /etc/nginx/snippets || return 1
 
     # nginx >= 1.25.1 deprecates "listen ... http2" in favor of "http2 on;";
     # older versions (Ubuntu 24.04) don't know the new directive
@@ -596,6 +599,7 @@ server {
     ssl_preread on;
 }
 EOF
+    [[ $? -eq 0 ]] || return 1
 
     grep -xqFR "stream { include /etc/nginx/stream-enabled/*.conf; }" /etc/nginx/* \
         || echo "stream { include /etc/nginx/stream-enabled/*.conf; }" >> /etc/nginx/nginx.conf
@@ -722,6 +726,7 @@ EOF
 
     location / { try_files \$uri \$uri/ =404; }
 EOF
+    [[ $? -eq 0 ]] || return 1
 
     # HTTP-level maps. The clash maps are consumed by the shared includes.conf
     # snippet, which is included by BOTH vhosts, so they live in their own
@@ -740,6 +745,7 @@ map "\$is_clash_ua:\$arg_provider" \$serve_clash_yaml {
     default 0;
 }
 EOF
+    [[ $? -eq 0 ]] || return 1
 
     # Main domain vhost (TLS termination at 7443, proxy_protocol)
     cat > "/etc/nginx/sites-available/${domain}" <<EOF
@@ -942,6 +948,7 @@ server {
     include /etc/nginx/snippets/includes.conf;
 }
 EOF
+    [[ $? -eq 0 ]] || return 1
 
     # Reality domain vhost (plain TLS at 9443, no proxy_protocol)
     cat > "/etc/nginx/sites-available/${reality_domain}" <<EOF
@@ -967,23 +974,22 @@ server {
     include /etc/nginx/snippets/includes.conf;
 }
 EOF
+    [[ $? -eq 0 ]] || return 1
 
     # Activate configs
     if [[ -f "/etc/nginx/sites-available/${domain}" ]]; then
-        rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default
-        ln -sf "/etc/nginx/sites-available/00-maps.conf"       /etc/nginx/sites-enabled/
-        ln -sf "/etc/nginx/sites-available/${domain}"          /etc/nginx/sites-enabled/
-        ln -sf "/etc/nginx/sites-available/${reality_domain}"  /etc/nginx/sites-enabled/
-        ln -sf "/etc/nginx/sites-available/80.conf"            /etc/nginx/sites-enabled/
+        rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default || return 1
+        ln -sf "/etc/nginx/sites-available/00-maps.conf"       /etc/nginx/sites-enabled/ || return 1
+        ln -sf "/etc/nginx/sites-available/${domain}"          /etc/nginx/sites-enabled/ || return 1
+        ln -sf "/etc/nginx/sites-available/${reality_domain}"  /etc/nginx/sites-enabled/ || return 1
+        ln -sf "/etc/nginx/sites-available/80.conf"            /etc/nginx/sites-enabled/ || return 1
     else
         msg_err "${domain} nginx config not found!" && exit 1
     fi
 
-    if [[ $(nginx -t 2>&1 | grep -o 'successful') != "successful" ]]; then
-        msg_err "nginx config check failed!" && exit 1
-    fi
+    nginx -t || { msg_err "nginx configuration test failed; see nginx error above."; return 1; }
 
-    systemctl reload nginx || exit 1
+    systemctl reload nginx || return 1
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1052,7 +1058,7 @@ bootstrap_panel_dependencies() {
     done
     [[ -s /etc/ssl/certs/ca-certificates.crt ]] || missing=1
     if (( missing )); then
-        apt_system -o APT::Update::Error-Mode=any update || return 1
+        apt_system -o APT::Update::Error-Mode=any update || { msg_err "APT list refresh failed (exit $?). Package changes are not rolled back."; return 1; }
         apt_system -y --no-install-recommends install \
             curl ca-certificates python3 tar gzip iproute2 || return 1
     fi
@@ -1483,16 +1489,17 @@ EOF
 # ─────────────────────────────────────────────────────────────────────────────
 install_clash_sub() {
     local clash_dir="/var/www/subpage"
-    mkdir -p "${clash_dir}"
+    mkdir -p "${clash_dir}" || return 1
     if curl -fsSL "${GITHUB_RAW}/assets/clash/clash.yaml" -o "${clash_dir}/clash.yaml.tpl"; then
         # Substitute domain and sub_path; leave ${EMAIL} for mtr-backend to fill per-request
-        sed -i "s|\${DOMAIN}|${domain}|g"     "${clash_dir}/clash.yaml.tpl"
-        sed -i "s|\${SUB_PATH}|${sub_path}|g" "${clash_dir}/clash.yaml.tpl"
-        chown -R www-data:www-data "${clash_dir}" 2>/dev/null || true
-        chmod 644 "${clash_dir}/clash.yaml.tpl"
+        sed -i "s|\${DOMAIN}|${domain}|g"     "${clash_dir}/clash.yaml.tpl" || return 1
+        sed -i "s|\${SUB_PATH}|${sub_path}|g" "${clash_dir}/clash.yaml.tpl" || return 1
+        chown -R www-data:www-data "${clash_dir}" 2>/dev/null || return 1
+        chmod 644 "${clash_dir}/clash.yaml.tpl" || return 1
         msg_ok "Clash subscription template installed."
     else
         msg_err "Failed to download clash.yaml from GitHub."
+        return 1
     fi
 }
 
@@ -1502,13 +1509,14 @@ install_fake_site() {
     site_id=$(printf "site-%02d" "$idx")
     local url="${GITHUB_RAW}/assets/fake-sites/${site_id}/index.html"
 
-    mkdir -p /var/www/html
+    mkdir -p /var/www/html || return 1
     if curl -fsSL "$url" -o /var/www/html/index.html; then
-        chown -R www-data:www-data /var/www/html 2>/dev/null || true
-        chmod 644 /var/www/html/index.html
+        chown -R www-data:www-data /var/www/html 2>/dev/null || return 1
+        chmod 644 /var/www/html/index.html || return 1
         msg_ok "Fake cover site '${site_id}' installed."
     else
         msg_err "Failed to download fake site ${site_id} from GitHub."
+        return 1
     fi
 }
 
@@ -1520,34 +1528,34 @@ install_diagnostics() {
     local backend_script="/usr/local/lib/3x-ui-pro/mtr-backend.py"
 
     # Diagnostics HTML page
-    mkdir -p "${diag_webroot}"
-    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/index.html" -o "${diag_webroot}/index.html"
+    mkdir -p "${diag_webroot}" || return 1
+    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/index.html" -o "${diag_webroot}/index.html" || return 1
     sed -i \
         -e "s|__DIAG_PATH__|${diag_path}|g" \
         -e "s|__SERVER_DOMAIN__|${domain}|g" \
         -e "s|__SERVER_IP__|${IP4}|g" \
-        "${diag_webroot}/index.html"
+        "${diag_webroot}/index.html" || return 1
 
     # LibreSpeed engine (speed test frontend, LGPL — github.com/librespeed/speedtest)
     curl -fsSL "${GITHUB_RAW}/assets/diagnostics/librespeed/speedtest.js" \
-        -o "${diag_webroot}/speedtest.js"
+        -o "${diag_webroot}/speedtest.js" || return 1
     curl -fsSL "${GITHUB_RAW}/assets/diagnostics/librespeed/speedtest_worker.js" \
-        -o "${diag_webroot}/speedtest_worker.js"
+        -o "${diag_webroot}/speedtest_worker.js" || return 1
 
     # Test download files
     local testfiles="${diag_webroot}/testfiles"
-    mkdir -p "${testfiles}"
-    [[ -f "${testfiles}/test-15k.bin"  ]] || dd if=/dev/zero bs=1024    count=15   of="${testfiles}/test-15k.bin"  status=none
-    [[ -f "${testfiles}/test-17k.bin"  ]] || dd if=/dev/zero bs=1024    count=17   of="${testfiles}/test-17k.bin"  status=none
-    [[ -f "${testfiles}/test-100m.bin" ]] || dd if=/dev/zero bs=1048576 count=100  of="${testfiles}/test-100m.bin" status=none
-    [[ -f "${testfiles}/test-1g.bin"   ]] || dd if=/dev/zero bs=1048576 count=1024 of="${testfiles}/test-1g.bin"   status=none
-    rm -f "${testfiles}/test-512m.bin"   # only used by the old single-stream speed test
-    chown -R www-data:www-data "${diag_webroot}" 2>/dev/null || true
+    mkdir -p "${testfiles}" || return 1
+    [[ -f "${testfiles}/test-15k.bin"  ]] || dd if=/dev/zero bs=1024    count=15   of="${testfiles}/test-15k.bin"  status=none || return 1
+    [[ -f "${testfiles}/test-17k.bin"  ]] || dd if=/dev/zero bs=1024    count=17   of="${testfiles}/test-17k.bin"  status=none || return 1
+    [[ -f "${testfiles}/test-100m.bin" ]] || dd if=/dev/zero bs=1048576 count=100  of="${testfiles}/test-100m.bin" status=none || return 1
+    [[ -f "${testfiles}/test-1g.bin"   ]] || dd if=/dev/zero bs=1048576 count=1024 of="${testfiles}/test-1g.bin"   status=none || return 1
+    rm -f "${testfiles}/test-512m.bin" || return 1   # only used by the old single-stream speed test
+    chown -R www-data:www-data "${diag_webroot}" 2>/dev/null || return 1
 
     # MTR backend Python script
-    mkdir -p "$(dirname "${backend_script}")"
-    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/mtr-backend.py" -o "${backend_script}"
-    chmod 755 "${backend_script}"
+    mkdir -p "$(dirname "${backend_script}")" || return 1
+    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/mtr-backend.py" -o "${backend_script}" || return 1
+    chmod 755 "${backend_script}" || return 1
 
     # Grant mtr raw socket capability (runs as restricted user, no root needed)
     # mtr-packet is the helper that actually opens the raw socket
@@ -1556,7 +1564,7 @@ install_diagnostics() {
 
     # Dedicated system user for mtr-backend
     id mtr-backend &>/dev/null || \
-        useradd --system --no-create-home --shell /usr/sbin/nologin mtr-backend
+        useradd --system --no-create-home --shell /usr/sbin/nologin mtr-backend || return 1
 
     # Systemd service for mtr-backend
     cat > /etc/systemd/system/mtr-backend.service <<EOF
@@ -1598,10 +1606,11 @@ SyslogIdentifier=mtr-backend
 [Install]
 WantedBy=multi-user.target
 EOF
+    [[ $? -eq 0 ]] || return 1
 
-    systemctl daemon-reload
-    systemctl enable mtr-backend
-    systemctl restart mtr-backend
+    systemctl daemon-reload || return 1
+    systemctl enable mtr-backend || return 1
+    systemctl restart mtr-backend || return 1
 
     msg_ok "Network diagnostics installed at https://${domain}/${panel_path}/diag (panel login required)"
 }
@@ -2517,28 +2526,28 @@ main() {
     prepare_base_os || { msg_err 'OS preparation failed; deployment was not removed, package changes may remain.'; exit 1; }
     prepare_system_dns || { msg_err 'DNS preparation failed; existing deployment was not removed.'; exit 1; }
     cleanup_adguard || { msg_err "Cannot clean AdGuard Home; core deployment was not removed."; exit 1; }
-    clean_previous_install
+    clean_previous_install || { msg_err "Previous deployment cleanup failed (exit $?). See the cause above; installation stopped."; exit 1; }
     install_packages || { msg_err "Dependency setup failed."; exit 1; }
     setup_firewall || { msg_err "Firewall setup failed."; exit 1; }
-    get_server_ip
+    get_server_ip || { msg_err "VPS IP detection failed (exit $?). See the cause above; installation stopped."; exit 1; }
     setup_acme_http || { msg_err "ACME HTTP setup failed."; exit 1; }
     get_ssl_certs || { msg_err "Webroot certificate setup failed."; exit 1; }
 
-    install_panel || exit 1
+    install_panel || { msg_err "3X-UI installation failed (exit $?). See the cause above; installation stopped."; exit 1; }
 
-    configure_nginx
-    configure_xui_db || exit 1
-    install_clash_sub
-    install_fake_site
-    install_diagnostics
-    tune_system || exit 1
-    install_backup_tool || exit 1
+    configure_nginx || { msg_err "nginx configuration failed (exit $?). See the cause above; installation stopped."; exit 1; }
+    configure_xui_db || { msg_err "3X-UI database configuration failed (exit $?). See the cause above; installation stopped."; exit 1; }
+    install_clash_sub || { msg_err "Clash template download/setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
+    install_fake_site || { msg_err "Cover site download/setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
+    install_diagnostics || { msg_err "Diagnostics download/setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
+    tune_system || { msg_err "System tuning failed (exit $?). See the cause above; installation stopped."; exit 1; }
+    install_backup_tool || { msg_err "Backup tool setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
     setup_certificate_renewal || { msg_err "Certificate renewal setup failed."; exit 1; }
 
     if ! systemctl is-enabled --quiet x-ui; then
-        systemctl daemon-reload && systemctl enable x-ui.service || exit 1
+        systemctl daemon-reload && systemctl enable x-ui.service || { msg_err "3X-UI service enablement failed (exit $?). Installation stopped."; exit 1; }
     fi
-    x-ui restart || exit 1
+    x-ui restart || { msg_err "3X-UI restart failed (exit $?). Installation stopped."; exit 1; }
     check_installation || { msg_err "Installation failed mandatory health checks."; exit 1; }
 
     local install_result=0

@@ -42,7 +42,7 @@ def command(*args, check=True):
                                  'NEEDRESTART_MODE': 'l', 'UCF_FORCE_CONFFOLD': '1'})
     if check and result.returncode:
         detail = ': ' + result.stderr.strip()[:400] if args[0] == 'resolvectl' else ''
-        raise ValueError('Command failed: ' + ' '.join(args) + detail)
+        raise ValueError('Command failed (exit '+str(result.returncode)+'): ' + ' '.join(args) + detail)
     return result.stdout.strip()
 
 
@@ -85,7 +85,8 @@ def apt_config(os_id):
         origins = 'origin=Debian,label=Debian-Security,codename=${distro_codename}-security'
     else:
         raise ValueError('Unsupported security update origin')
-    return MARKER + '''APT::Periodic::Update-Package-Lists "1";
+    return MARKER + '''APT::Periodic::Enable "1";
+APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 Unattended-Upgrade::Automatic-Reboot "true";
 Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
@@ -97,14 +98,6 @@ Unattended-Upgrade::Origins-Pattern { "''' + origins + '''"; };
 
 def apt_origins(dump):
     return set(re.findall(r'Unattended-Upgrade::(Allowed-Origins|Origins-Pattern):: "([^"\n]+)";', dump))
-
-
-def apt_preflight(dump):
-    # Explicitly disabled periodic APT is an administrator/provider policy.
-    for key in ('Enable', 'Update-Package-Lists', 'Unattended-Upgrade'):
-        if re.search(r'APT::Periodic::' + key + r' "(?:0|false|no)";', dump, re.I):
-            raise ValueError('APT periodic updates explicitly disabled; administrator policy preserved')
-    return apt_origins(dump)
 
 
 def dns_routes(dns, domains):
@@ -161,7 +154,9 @@ def preflight(root=Path('/')):
     legacy = previous.replace('// Add the required distro security origin; retain administrator/distro origins.',
                              '// Reset effective origins in this final managed drop-in; preserve administrator files.\n'
                              '#clear Unattended-Upgrade::Allowed-Origins;\n#clear Unattended-Upgrade::Origins-Pattern;')
-    if apt_file.exists() and apt_file.read_text() not in (current, previous, legacy):
+    canonical=(current, previous, legacy)
+    canonical += tuple(text.replace('APT::Periodic::Enable "1";\n','') for text in canonical)
+    if apt_file.exists() and apt_file.read_text() not in canonical:
         raise ValueError('Administrator changes in managed APT drop-in preserved; refusing replacement')
     for tool in ('systemctl', 'apt-config', 'journalctl', '/usr/sbin/sshd'):
         if not shutil.which(tool):
@@ -173,7 +168,7 @@ def preflight(root=Path('/')):
     ports = ssh_ports(effective, listen)
     if not command('journalctl', '-n', '1', '--no-pager', check=False) and not (root / 'var/log/auth.log').is_file():
         raise ValueError('No SSH journaling/log backend')
-    origins = apt_preflight(command('apt-config', 'dump'))
+    origins = apt_origins(command('apt-config', 'dump'))
     return os_id, effective, ports, origins
 
 
@@ -310,7 +305,9 @@ def verify(ports, effective, os_id, previous_origins=frozenset()):
     required = ('Origins-Pattern', re.search(r'Origins-Pattern \{ "([^"]+)"', apt_config(os_id))[1])
     if required not in origins or not previous_origins <= origins:
         raise ValueError('Required security origin missing or existing APT origins changed')
-    apt_preflight(apt)
+    for key in ('Enable','Update-Package-Lists','Unattended-Upgrade'):
+        if 'APT::Periodic::'+key+' "1";' not in apt:
+            raise ValueError('Effective APT::Periodic::'+key+' is not enabled')
     for service, hour in (('apt-daily.timer', '02:30'), ('apt-daily-upgrade.timer', '02:50')):
         command('systemctl', 'is-active', '--quiet', service)
         command('systemctl', 'is-enabled', '--quiet', service)
@@ -344,25 +341,31 @@ def prepare_dns(root=Path('/'), state=None):
     command('getent', 'ahosts', 'debian.org')
     txn = Transaction(root, services=('systemd-resolved.service',), files=FILES[-1:])
     try:
+        stage='saving DNS checkpoint'
         if state is not None: txn.save_dns(state)
+        stage='installing systemd-resolved'
         command('apt-get', '-o', 'DPkg::Lock::Timeout=300', '-o', 'Dpkg::Options::=--force-confdef',
                 '-o', 'Dpkg::Options::=--force-confold', '--no-remove', '--no-install-recommends', '-y', 'install', 'systemd-resolved')
+        stage='writing DNS drop-in and stub link'
         txn.write(FILES[4], DOT)
         resolv=root/'etc/resolv.conf'; resolv.unlink(); resolv.symlink_to('/run/systemd/resolve/stub-resolv.conf')
+        stage='starting systemd-resolved'
         command('systemctl','daemon-reload')
         command('systemctl','enable','systemd-resolved.service')
         command('systemctl','restart','systemd-resolved.service')
+        stage='strict DoT verification'
         verify_dns()
+        stage='post-configuration readiness'
         preflight(root)
         return {'status':'configured', 'dot':'configured', 'warnings':[]}
     except Exception as error:
-        status='failed_rolled_back'
+        status='failed_rolled_back'; rollback_error=''
         try:
             txn.rollback()
             command('getent','ahosts','debian.org')
-        except Exception:
-            status='failed_unverified'
-        return {'status':status, 'dot':status, 'warnings':[str(error), 'Package installation is not rolled back; original DNS/service state was restored only if verified.']}
+        except Exception as failure:
+            status='failed_unverified'; rollback_error='; rollback error: '+str(failure)
+        return {'status':status, 'dot':status, 'warnings':['DNS preparation failed during '+stage+': '+str(error)+'; rollback='+status+rollback_error, 'Package installation is not rolled back; original DNS/service state was restored only if verified.']}
     finally:
         txn.temp.cleanup()
 
@@ -395,8 +398,10 @@ def configure(root=Path('/')):
     warnings.append('sshd -T covers the default context; administrator Match rules may permit other password authentication.')
     txn = Transaction(root)
     try:
+        stage='installing Security dependencies'
         command('apt-get', '-o', 'DPkg::Lock::Timeout=300', '-o', 'Dpkg::Options::=--force-confdef',
                 '-o', 'Dpkg::Options::=--force-confold', '--no-remove', 'install', '-y', '--no-install-recommends', 'fail2ban', 'python3-systemd', 'unattended-upgrades', 'nftables')
+        stage='configuring SSH Fail2ban jail'
         backend = 'systemd' if command('journalctl', '-n', '1', '--no-pager', check=False) else 'auto'
         if backend == 'auto' and not (root / 'var/log/auth.log').is_file():
             raise ValueError('No SSH journaling/log backend')
@@ -408,26 +413,30 @@ maxretry = 5
 findtime = 1800
 bantime = 3600
 ''')
+        stage='configuring APT policy and timers'
         txn.write(FILES[1], apt_config(os_id))
         txn.write(FILES[2], timer('02:30')); txn.write(FILES[3], timer('02:50'))
+        stage='applying strict system DNS'
         txn.write(FILES[4], DOT)
         resolv = root / 'etc/resolv.conf'
         resolv.unlink(); resolv.symlink_to('/run/systemd/resolve/stub-resolv.conf')
+        stage='starting managed Security services'
         command('systemctl', 'daemon-reload')
         for service in SERVICES:
             command('systemctl', 'enable', service)
             command('systemctl', 'restart', service)
+        stage='verifying effective Security and DNS'
         verify(ports, effective, os_id, previous_origins)
         return {'status': 'configured', 'dot': 'configured', 'warnings': warnings}
     except Exception as error:
-        status = 'failed_rolled_back'
+        status = 'failed_rolled_back'; rollback_error=''
         try:
             txn.rollback()
             if command('/usr/sbin/sshd', '-T') != effective:
                 raise ValueError('SSH policy rollback differs')
-        except Exception:
-            status = 'failed_unverified'
-        return {'status': status, 'dot': status, 'warnings': warnings + ['VPS Security failed: ' + str(error)]}
+        except Exception as failure:
+            status = 'failed_unverified'; rollback_error='; rollback error: '+str(failure)
+        return {'status': status, 'dot': status, 'warnings': warnings + ['VPS Security failed during '+stage+': '+str(error)+'; rollback='+status+rollback_error]}
     finally:
         txn.temp.cleanup()
 
