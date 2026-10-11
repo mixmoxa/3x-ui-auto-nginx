@@ -503,6 +503,7 @@ EOF
     location /${sub_path}/ {
         access_log off;
         error_log /dev/null crit;
+        error_page 400 401 402 403 500 501 502 503 504 =404 @subscription_error;
         if (\$hack = 1) { return 404; }
         proxy_redirect off;
         proxy_set_header Host \$host;
@@ -513,6 +514,7 @@ EOF
     location = /${sub_path} {
         access_log off;
         error_log /dev/null crit;
+        error_page 400 401 402 403 500 501 502 503 504 =404 @subscription_error;
         if (\$hack = 1) { return 404; }
         proxy_redirect off;
         proxy_set_header Host \$host;
@@ -525,6 +527,7 @@ EOF
     location ~ ^/${sub_path}/(?<clash_sub_id>[^/]+)$ {
         access_log off;
         error_log /dev/null crit;
+        error_page 400 401 402 403 500 501 502 503 504 =404 @subscription_error;
         if (\$hack = 1) { return 404; }
         if (\$serve_clash_yaml = 1) { rewrite ^ /__clash_api?sub_id=\$clash_sub_id last; }
         proxy_redirect off;
@@ -540,6 +543,7 @@ EOF
     location /${json_path} {
         access_log off;
         error_log /dev/null crit;
+        error_page 400 401 402 403 500 501 502 503 504 =404 @subscription_error;
         if (\$hack = 1) { return 404; }
         proxy_redirect off;
         proxy_set_header Host \$host;
@@ -550,12 +554,19 @@ EOF
     location /${json_path}/ {
         access_log off;
         error_log /dev/null crit;
+        error_page 400 401 402 403 500 501 502 503 504 =404 @subscription_error;
         if (\$hack = 1) { return 404; }
         proxy_redirect off;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_pass https://127.0.0.1:${sub_port};
+    }
+
+    location @subscription_error {
+        access_log off;
+        error_log /dev/null crit;
+        return 404;
     }
 
     #XHTTP
@@ -812,6 +823,7 @@ server {
         internal;
         access_log off;
         error_log /dev/null crit;
+        error_page 400 401 402 403 500 501 502 503 504 =404 @subscription_error;
         proxy_pass          http://127.0.0.1:${mtr_backend_port}/api/clash\$is_args\$args;
         proxy_http_version  1.1;
         proxy_set_header    X-Real-IP \$remote_addr;

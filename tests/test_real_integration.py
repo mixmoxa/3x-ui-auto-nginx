@@ -586,6 +586,20 @@ rules:
             stop(mihomo)
             self.assertFalse(result['subId'] in (self.root/'http-access.log').read_text(), 'Subscription identifier leaked into nginx access log')
             self.assertFalse(result['subId'] in (self.root/'nginx-error.log').read_text(), 'Subscription identifier leaked into nginx error log')
+            # A failed subscription upstream must not leak the original secret
+            # URI when nginx internally redirects to its generic error page.
+            shared=self.root/'shared.conf'; original=shared.read_text()
+            failed_port=port(self.allocated_ports)
+            shared.write_text(original.replace(f'https://127.0.0.1:{self.backends["sub"]}',f'https://127.0.0.1:{failed_port}'))
+            reload=[self.nginx,'-p',str(self.root)+'/', '-c',self.root/'nginx.conf','-s','reload']
+            subprocess.run(reload,check=True,capture_output=True,timeout=15)
+            time.sleep(.2)
+            try:
+                with self.assertRaises(ValueError): client.fetch(api,result['url'])
+                self.assertFalse(result['subId'] in (self.root/'http-access.log').read_text(),'Failed subscription leaked into access log')
+                self.assertFalse(result['subId'] in (self.root/'nginx-error.log').read_text(),'Failed subscription leaked into error log')
+            finally:
+                shared.write_text(original); subprocess.run(reload,check=True,capture_output=True,timeout=15)
             # Official JSON changes neither XHTTP flow nor TLS verification.
             client.validate_credentials(client.active_inbounds(api),result['email'])
         browser=['curl','-q','-fsS','--noproxy','*','--http1.1','--cacert',str(vision_cert),
