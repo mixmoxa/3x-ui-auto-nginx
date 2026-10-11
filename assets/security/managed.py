@@ -1,0 +1,314 @@
+"""Opt-in host security. Project-owned drop-ins only, transactional file/service rollback.
+
+Host DNS and security state are deliberately excluded from portable Backup v3.
+"""
+import configparser
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+MARKER = '# Managed by 3x-ui Auto Nginx: VPS Security\n'
+DOT = MARKER + '''[Resolve]
+DNS=
+DNS=1.1.1.1#one.one.one.one 1.0.0.1#one.one.one.one 8.8.8.8#dns.google 8.8.4.4#dns.google
+FallbackDNS=
+Domains=
+Domains=~.
+DNSOverTLS=yes
+DNSSEC=no
+LLMNR=no
+MulticastDNS=no
+Cache=yes
+DNSStubListener=yes
+'''
+FILES = ('/etc/fail2ban/jail.d/90-3x-ui-auto-nginx.local',
+         '/etc/apt/apt.conf.d/99zz-3x-ui-auto-nginx',
+         '/etc/systemd/system/apt-daily.timer.d/90-3x-ui-auto-nginx.conf',
+         '/etc/systemd/system/apt-daily-upgrade.timer.d/90-3x-ui-auto-nginx.conf',
+         '/etc/systemd/resolved.conf.d/90-3x-ui-auto-nginx.conf')
+SERVICES = ('fail2ban.service', 'apt-daily.timer', 'apt-daily-upgrade.timer', 'systemd-resolved.service')
+
+
+def command(*args, check=True):
+    result = subprocess.run(args, capture_output=True, text=True, timeout=90,
+                            env={**os.environ, 'LC_ALL': 'C'})
+    if check and result.returncode:
+        detail = ': ' + result.stderr.strip()[:400] if args[0] == 'resolvectl' else ''
+        raise ValueError('Command failed: ' + ' '.join(args) + detail)
+    return result.stdout.strip()
+
+
+def ssh_ports(effective, socket_listen=''):
+    ports = {int(x) for x in re.findall(r'^port (\d+)$', effective, re.M)}
+    if socket_listen:
+        # systemctl show Listen: "[::]:2222 (Stream) 0.0.0.0:2200 (Stream)".
+        matches = re.findall(r'(\S+) \(Stream\)', socket_listen)
+        if not matches:
+            raise ValueError('Unrecognized ssh.socket Listen property')
+        ports = {int(value.rsplit(':', 1)[-1]) for value in matches}
+    if not ports or any(not 1 <= port <= 65535 for port in ports):
+        raise ValueError('Cannot determine effective SSH ports')
+    return sorted(ports)
+
+
+def password_warning(effective):
+    policy = dict(line.split(' ', 1) for line in effective.splitlines() if ' ' in line)
+    methods = policy.get('authenticationmethods', 'any')
+    candidates = methods == 'any' or any(m in methods for m in ('password', 'keyboard-interactive'))
+    return candidates and (policy.get('passwordauthentication') == 'yes' or
+                           policy.get('kbdinteractiveauthentication') == 'yes')
+
+
+def timer(hour):
+    return MARKER + f'''[Timer]
+OnCalendar=
+OnCalendar=*-*-* {hour}:30:00
+RandomizedDelaySec=0
+AccuracySec=1min
+Persistent=true
+'''
+
+
+def apt_config(os_id):
+    if os_id == 'ubuntu':
+        origins = 'origin=Ubuntu,archive=${distro_codename}-security'
+    elif os_id == 'debian':
+        origins = 'origin=Debian,label=Debian-Security,codename=${distro_codename}-security'
+    else:
+        raise ValueError('Unsupported security update origin')
+    return MARKER + '''APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+Unattended-Upgrade::Automatic-Reboot "false";
+// Reset effective origins in this final managed drop-in; preserve administrator files.
+#clear Unattended-Upgrade::Allowed-Origins;
+#clear Unattended-Upgrade::Origins-Pattern;
+Unattended-Upgrade::Origins-Pattern { "''' + origins + '''"; };
+'''
+
+
+def dns_routes(dns, domains):
+    for line in domains.splitlines():
+        if line.startswith('Link ') and line.partition(':')[2].strip():
+            raise ValueError('Interface/VPN DNS route overrides global DoT; preserved')
+    for line in dns.splitlines():
+        if line.startswith('Link '):
+            addresses = line.partition(':')[2].split()
+            if any(address.split('#')[0] in ('127.0.0.1', '::1', '127.0.0.53') for address in addresses):
+                raise ValueError('Local interface DNS may create a resolver loop; preserved')
+
+
+def global_servers(dns):
+    # resolvectl wraps its global server list on narrow/noninteractive consoles.
+    global_block = re.search(r'^Global:\s*(.*?)(?=^Link |\Z)', dns, re.M | re.S)
+    return global_block[1].split() if global_block else []
+
+
+def preflight(root=Path('/')):
+    for filename in FILES:
+        path = root / filename.lstrip('/')
+        if path.is_symlink() or (path.exists() and (not path.is_file() or not path.read_text().startswith(MARKER))):
+            raise ValueError('Unowned project configuration path: ' + filename)
+        if path.exists() and (path.stat().st_uid != 0 or path.stat().st_mode & 0o022):
+            raise ValueError('Unsafe owner/permissions of project configuration: ' + filename)
+    resolved_files = [root / 'etc/systemd/resolved.conf']
+    for base in ('etc', 'run', 'usr/lib'):
+        resolved_files += list((root / base / 'systemd/resolved.conf.d').glob('*.conf'))
+    for path in resolved_files:
+        if path.exists() and str(path).endswith('90-3x-ui-auto-nginx.conf'):
+            continue
+        if path.exists() and re.search(r'^\s*(DNS|FallbackDNS|Domains|DNSOverTLS|DNSStubListener)\s*=', path.read_text(), re.M):
+            raise ValueError('Existing global/provider resolved policy; DNS preserved')
+    # Never overwrite administrator jails, including a later *.local override.
+    jails = list((root / 'etc/fail2ban/jail.d').glob('*.local')) + [root / 'etc/fail2ban/jail.local']
+    for path in jails:
+        if path.exists() and str(path).endswith('90-3x-ui-auto-nginx.local'):
+            continue
+        if path.exists():
+            text = path.read_text()
+            if re.search(r'^\s*\[\s*(sshd|DEFAULT)\s*\]', text, re.M):
+                raise ValueError('Administrator SSH/DEFAULT Fail2ban jail present; preserved')
+    resolv = root / 'etc/resolv.conf'
+    if not resolv.is_symlink() or os.readlink(resolv) not in (
+        '/run/systemd/resolve/stub-resolv.conf', '/run/systemd/resolve/resolv.conf',
+        '../run/systemd/resolve/stub-resolv.conf', '../run/systemd/resolve/resolv.conf'):
+        raise ValueError('Nonstandard/provider resolv.conf ownership; DNS preserved')
+    if command('systemctl', 'is-active', 'systemd-resolved.service', check=False) != 'active':
+        raise ValueError('Existing active systemd-resolved required; DNS preserved')
+    dns_routes(command('resolvectl', 'dns'), command('resolvectl', 'domain'))
+    for service in SERVICES:
+        if command('systemctl', 'is-enabled', service, check=False) not in ('enabled', 'disabled', 'static', 'not-found', ''):
+            raise ValueError('Custom/masked service enable state preserved: ' + service)
+
+
+class Transaction:
+    def __init__(self, root=Path('/')):
+        self.root = root
+        self.temp = tempfile.TemporaryDirectory(prefix='xui-security-')
+        os.chmod(self.temp.name, 0o700)
+        self.saved = {}
+        for index, filename in enumerate((*FILES, '/etc/resolv.conf')):
+            path = root / filename.lstrip('/')
+            backup = Path(self.temp.name) / str(index)
+            if path.exists() or path.is_symlink():
+                shutil.copy2(path, backup, follow_symlinks=False)
+                self.saved[filename] = backup
+            else:
+                self.saved[filename] = None
+        self.states = {s: (command('systemctl', 'is-active', s, check=False),
+                           command('systemctl', 'is-enabled', s, check=False)) for s in SERVICES}
+
+    def write(self, filename, text):
+        path = self.root / filename.lstrip('/')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # All managed paths were ownership-checked; no global file is rewritten.
+        path.write_text(text)
+        path.chmod(0o644)
+
+    def rollback(self):
+        for filename, backup in self.saved.items():
+            path = self.root / filename.lstrip('/')
+            path.unlink(missing_ok=True)
+            if backup is not None:
+                shutil.copy2(backup, path, follow_symlinks=False)
+        command('systemctl', 'daemon-reload')
+        for service, (active, enabled) in self.states.items():
+            if enabled == 'enabled':
+                command('systemctl', 'enable', service)
+            elif enabled in ('disabled', 'not-found', ''):
+                command('systemctl', 'disable', service, check=False)
+            if active == 'active':
+                command('systemctl', 'restart', service)
+            else:
+                command('systemctl', 'stop', service, check=False)
+            state = command('systemctl', 'is-active', service, check=False)
+            if (state == 'active') != (active == 'active'):
+                raise ValueError('Service rollback not verified')
+            restored = command('systemctl', 'is-enabled', service, check=False)
+            if restored != enabled and not (enabled in ('not-found', '') and restored in ('disabled', 'not-found', '')):
+                raise ValueError('Service enable-state rollback not verified')
+        for filename, backup in self.saved.items():
+            path = self.root / filename.lstrip('/')
+            if backup is None:
+                if path.exists() or path.is_symlink():
+                    raise ValueError('New configuration remains after rollback')
+            elif backup.is_symlink():
+                if not path.is_symlink() or os.readlink(path) != os.readlink(backup):
+                    raise ValueError('DNS link rollback not verified')
+            elif path.read_bytes() != backup.read_bytes():
+                raise ValueError('Configuration rollback not verified')
+
+
+def verify(ports, effective, os_id):
+    if command('/usr/sbin/sshd', '-T') != effective:
+        raise ValueError('Effective SSH policy changed')
+    # The distro unit uses Type=simple: restart can return before its socket/jail.
+    for attempt in range(10):
+        try:
+            command('fail2ban-client', 'status', 'sshd')
+            break
+        except ValueError:
+            if attempt == 9:
+                raise
+            time.sleep(1)
+    for key, value in (('maxretry', '5'), ('findtime', '1800'), ('bantime', '3600')):
+        if command('fail2ban-client', 'get', 'sshd', key) != value:
+            raise ValueError('Ineffective SSH jail setting')
+    # The dumped effective action must name actual listeners, never only "ssh".
+    dump = command('fail2ban-client', '-d')
+    if not all(str(p) in dump for p in ports):
+        raise ValueError('SSH jail ports not effective')
+    apt = command('apt-config', 'dump')
+    if 'Unattended-Upgrade::Automatic-Reboot "false";' not in apt:
+        raise ValueError('Automatic reboot is not disabled')
+    if re.search(r'Unattended-Upgrade::Allowed-Origins:: ', apt):
+        raise ValueError('Additional APT origins active')
+    origins = re.findall(r'Unattended-Upgrade::Origins-Pattern:: "([^"]+)";', apt)
+    if origins != re.findall(r'Origins-Pattern \{ "([^"]+)"', apt_config(os_id)):
+        raise ValueError('Security-only APT origin not effective')
+    for service, hour in (('apt-daily.timer', '02'), ('apt-daily-upgrade.timer', '03')):
+        command('systemctl', 'is-active', '--quiet', service)
+        command('systemctl', 'is-enabled', '--quiet', service)
+        timers = command('systemctl', 'show', service, '-p', 'TimersCalendar', '-p', 'RandomizedDelayUSec')
+        if f'{hour}:30:00' not in timers or 'RandomizedDelayUSec=0' not in timers:
+            raise ValueError('APT timer not effective')
+    dns_routes(command('resolvectl', 'dns'), command('resolvectl', 'domain'))
+    mode = command('busctl', 'get-property', 'org.freedesktop.resolve1',
+                   '/org/freedesktop/resolve1', 'org.freedesktop.resolve1.Manager', 'DNSOverTLS')
+    if mode != 's "yes"':
+        raise ValueError('Effective global DNSOverTLS is not strict')
+    dns = command('resolvectl', 'dns')
+    global_dns = global_servers(dns)
+    if global_dns != ['1.1.1.1#one.one.one.one', '1.0.0.1#one.one.one.one', '8.8.8.8#dns.google', '8.8.4.4#dns.google']:
+        raise ValueError('Effective TLS names/DNS servers differ')
+    command('resolvectl', 'flush-caches')
+    # Strict mode + authenticated global servers + no competing link routes:
+    # resolved cannot answer these uncached queries by falling back to plaintext.
+    command('resolvectl', 'query', '--cache=no', 'cloudflare.com')
+    command('resolvectl', 'query', '--cache=no', 'debian.org')
+    command('getent', 'ahosts', 'debian.org')
+
+
+def configure(root=Path('/')):
+    preflight(root)
+    os_info = dict(line.strip().split('=', 1) for line in (root / 'etc/os-release').read_text().splitlines() if '=' in line)
+    os_id = os_info['ID'].strip('"')
+    effective = command('/usr/sbin/sshd', '-T')
+    listen = ''
+    if command('systemctl', 'is-active', 'ssh.socket', check=False) == 'active':
+        listen = command('systemctl', 'show', 'ssh.socket', '-p', 'Listen', '--value')
+    ports = ssh_ports(effective, listen)
+    warnings = []
+    if password_warning(effective):
+        warnings.append('SSH PASSWORD AUTHENTICATION IS ENABLED. SSH policy was preserved; review it separately.')
+    warnings.append('sshd -T covers the default context; administrator Match rules may permit other password authentication.')
+    txn = Transaction(root)
+    try:
+        command('apt-get', 'install', '-y', '--no-install-recommends', 'fail2ban', 'python3-systemd', 'unattended-upgrades', 'nftables')
+        backend = 'systemd' if command('journalctl', '-n', '1', '--no-pager', check=False) else 'auto'
+        if backend == 'auto' and not (root / 'var/log/auth.log').is_file():
+            raise ValueError('No SSH journaling/log backend')
+        txn.write(FILES[0], MARKER + f'''[sshd]
+enabled = true
+port = {','.join(map(str, ports))}
+backend = {backend}
+maxretry = 5
+findtime = 1800
+bantime = 3600
+''')
+        txn.write(FILES[1], apt_config(os_id))
+        txn.write(FILES[2], timer('02')); txn.write(FILES[3], timer('03'))
+        txn.write(FILES[4], DOT)
+        resolv = root / 'etc/resolv.conf'
+        resolv.unlink(); resolv.symlink_to('/run/systemd/resolve/stub-resolv.conf')
+        command('systemctl', 'daemon-reload')
+        for service in SERVICES:
+            command('systemctl', 'enable', service)
+            command('systemctl', 'restart', service)
+        verify(ports, effective, os_id)
+        return {'status': 'configured', 'dot': 'configured', 'warnings': warnings}
+    except Exception as error:
+        status = 'failed_rolled_back'
+        try:
+            txn.rollback()
+            if command('/usr/sbin/sshd', '-T') != effective:
+                raise ValueError('SSH policy rollback differs')
+        except Exception:
+            status = 'failed_unverified'
+        return {'status': status, 'dot': status, 'warnings': warnings + ['VPS Security failed: ' + str(error)]}
+    finally:
+        txn.temp.cleanup()
+
+
+if __name__ == '__main__':
+    try:
+        result = configure()
+    except Exception as error:
+        result = {'status': 'failed_rolled_back', 'dot': 'not_configured', 'warnings': [str(error)]}
+    print(json.dumps(result))
+    sys.exit(0 if result['status'] == 'configured' else 1)
