@@ -4,6 +4,8 @@ No Internet DoT dependency. Production resolver addresses exist only on containe
 loopback; their TLS servers use a generated test CA in this VM's trust store.
 """
 import importlib.util
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
 import socket
@@ -26,7 +28,7 @@ class SecuritySystemd(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); cert, key = root/'cert.pem', root/'key.pem'
             run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
-                '-subj', '/CN=Test DNS CA', '-addext', 'subjectAltName=DNS:one.one.one.one,DNS:dns.google',
+                '-subj', '/CN=Test DNS CA', '-addext', 'subjectAltName=DNS:one.one.one.one,DNS:dns.google,IP:127.0.0.1',
                 '-addext', 'basicConstraints=critical,CA:TRUE', '-out', str(cert), '-keyout', str(key))
             ca = Path('/usr/local/share/ca-certificates/xui-ci-dot.crt'); ca.write_bytes(cert.read_bytes())
             # Offline fixture trusts its generated CA only. Avoid hashing every
@@ -106,6 +108,56 @@ class SecuritySystemd(unittest.TestCase):
                 for name,value in (('maxretry','5'),('findtime','1800'),('bantime','3600')):
                     self.assertEqual(run('fail2ban-client','get','sshd',name).strip(),value)
                 run('fail2ban-client','status','sshd')
+                # Run real AGH alongside strict resolved, with a trusted offline
+                # HTTPS DNS upstream. Neither system DNS nor AGH uses the other.
+                from test_real_services import question
+                doh_queries=[]
+                class DoH(BaseHTTPRequestHandler):
+                    def do_POST(handler):
+                        packet=handler.rfile.read(int(handler.headers['Content-Length']))
+                        doh_queries.append(packet)
+                        end=12
+                        while packet[end]: end+=packet[end]+1
+                        end+=5; kind=struct.unpack('!H',packet[end-4:end-2])[0]
+                        response=packet[:2]+struct.pack('!HHHHH',0x8180,1,int(kind==1),0,0)+packet[12:end]
+                        if kind==1: response+=b'\xc0\x0c'+struct.pack('!HHIH',1,1,60,4)+socket.inet_aton('203.0.113.7')
+                        handler.send_response(200); handler.send_header('Content-Type','application/dns-message')
+                        handler.send_header('Content-Length',str(len(response))); handler.end_headers(); handler.wfile.write(response)
+                    def log_message(handler,*args): pass
+                doh=ThreadingHTTPServer(('127.0.0.1',0),DoH)
+                doh.socket=context.wrap_socket(doh.socket,server_side=True)
+                threading.Thread(target=doh.serve_forever,daemon=True).start()
+                self.addCleanup(doh.server_close); self.addCleanup(doh.shutdown)
+                agh_config=root/'AdGuardHome.yaml'
+                agh_config.write_text(json.dumps({'schema_version':34,'http':{'address':'127.0.0.1:8383'},
+                    'dns':{'bind_hosts':['127.0.0.1'],'port':53,'upstream_dns':[f'https://127.0.0.1:{doh.server_port}/dns-query'],
+                           'bootstrap_dns':[],'cache_size':0},'filters':[],'tls':{'enabled':False}}))
+                agh=subprocess.Popen(['/opt/xui-ci/AdGuardHome','-c',str(agh_config),'-w',str(root), '--no-check-update'],
+                                     stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                def stop_agh():
+                    if agh.poll() is None: agh.terminate(); agh.wait(timeout=20)
+                self.addCleanup(stop_agh)
+                with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as dns:
+                    dns.settimeout(2)
+                    for attempt in range(15):
+                        self.assertIsNone(agh.poll(),'Real AGH exited before DNS readiness')
+                        dns.sendto(question('adguard.example'),('127.0.0.1',53))
+                        try: reply=dns.recv(4096); break
+                        except socket.timeout:
+                            if attempt==14: raise
+                    self.assertEqual(reply[-4:],socket.inet_aton('203.0.113.7'))
+                self.assertTrue(doh_queries,'AGH did not use its actual trusted HTTPS upstream')
+                before_dot,before_doh=len(seen),len(doh_queries)
+                run('resolvectl','query','--cache=no','system-with-adguard.example')
+                self.assertGreater(len(seen),before_dot)
+                self.assertEqual(len(doh_queries),before_doh,'System resolved unexpectedly routed into AGH')
+                managed_before={name:Path(name).read_bytes() for name in security.FILES}
+                run('resolvectl','dns','xui-test','127.0.0.1'); run('resolvectl','domain','xui-test','~.')
+                with self.assertRaises(ValueError): security.configure()
+                self.assertEqual({name:Path(name).read_bytes() for name in security.FILES},managed_before)
+                self.assertIsNone(agh.poll())
+                run('resolvectl','revert','xui-test')
+                print('REAL AdGuard Home HTTPS upstream + system DoT coexistence / loop refusal: PASS',flush=True)
                 # Real socket activation overrides sshd's configured port. This
                 # fixture changes only its socket; production must merely detect it.
                 socket_drop = Path('/etc/systemd/system/ssh.socket.d/99-xui-ci.conf')

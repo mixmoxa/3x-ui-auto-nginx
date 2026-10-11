@@ -187,6 +187,9 @@ cached results. No new test framework or paid infrastructure is introduced.
 The required six option combinations are lifecycle/failure fixtures, not six
 complete external VPS deployments. Network transport/API/Mihomo, Certbot/Pebble,
 AGH and systemd/DoT checks execute real components in their respective suites.
+The systemd guest also runs checksum-verified AGH against a trusted local HTTPS
+DNS upstream while system queries use strict DoT. It checks that the two query
+paths remain separate and refuses an actual per-interface route into local AGH.
 Private Restore exercises real files/certificates and AGH, while core service
 management remains fixtures. These boundaries must accompany reported PASS.
 
