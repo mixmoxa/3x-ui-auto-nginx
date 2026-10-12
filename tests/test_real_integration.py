@@ -124,6 +124,37 @@ class RealIntegration(unittest.TestCase):
               '\nArchive SHA-256:',digest, '\n'+xray_version.splitlines()[0])
         print(subprocess.check_output([cls.mihomo,'-v'],text=True,timeout=20).strip())
         print(subprocess.run([cls.nginx,'-v'],capture_output=True,text=True,check=True,timeout=20).stderr.strip(),flush=True)
+        # All required downloads finish before the Canary preparation marker.
+        cls.qemu_arm=shutil.which('qemu-arm')
+        if not cls.qemu_arm: raise RuntimeError('Explicit integration dependency qemu-user is missing')
+        cls.expected_xray=xray_version.split()[1]
+        cls.arm_tools={}
+        from release_contract import baseline
+        manifest=baseline()
+        if cls.release['candidate']:
+            metadata=cls.tools/'arm-release.json'
+            download(f'https://api.github.com/repos/MHSanaei/3x-ui/releases/tags/{version}',metadata)
+            release=json.loads(metadata.read_text())
+            if release['tag_name']!=version or release['draft'] or release['prerelease']:
+                raise ValueError('Not the selected official stable ARM release')
+        for arch in ('armv5','armv6','armv7'):
+            name=f'x-ui-linux-{arch}.tar.gz'; archive=cls.tools/name; sidecar=cls.tools/(name+'.sha256')
+            if cls.release['candidate']:
+                assets=[a for a in release['assets'] if a['name']==name]
+                if len(assets)!=1: raise ValueError('Missing/ambiguous ARM asset: '+name)
+                digest=assets[0]['digest'].removeprefix('sha256:')
+            else: digest=manifest['archives'][arch]
+            download(f'https://github.com/MHSanaei/3x-ui/releases/download/{version}/{name}',archive)
+            download(f'https://github.com/MHSanaei/3x-ui/releases/download/{version}/{name}.sha256',sidecar)
+            if hashlib.sha256(archive.read_bytes()).hexdigest()!=digest or sidecar.read_text().split()!=[digest,name]:
+                raise ValueError('Official ARM archive/sidecar mismatch: '+arch)
+            validate_layout(archive,arch)
+            folder=cls.tools/arch; folder.mkdir()
+            with tarfile.open(archive) as bundle:
+                panel,binary=folder/'x-ui',folder/'xray-linux-arm32'
+                panel.write_bytes(bundle.extractfile('x-ui/x-ui').read()); panel.chmod(0o755)
+                binary.write_bytes(bundle.extractfile('x-ui/bin/xray-linux-'+arch).read()); binary.chmod(0o755)
+            cls.arm_tools[arch]=(panel,binary)
         cls.passed = []
         # Publish readiness only after every required artifact/tool is prepared.
         if os.environ.get('UPSTREAM_REPORT'):
@@ -134,44 +165,17 @@ class RealIntegration(unittest.TestCase):
         print('\nREAL XRAY INTEGRATION\n'+'\n'.join(f'{name:24} PASS' for name in cls.passed),flush=True)
 
     def test_official_arm32_runtime_binary_contract(self):
-        from release_contract import baseline, validate_layout
-        qemu=shutil.which('qemu-arm')
-        self.assertIsNotNone(qemu,'qemu-user is an explicit integration dependency')
-        # Canary authenticates its own ARM assets, independently of the baseline.
-        version=self.release['version']
-        manifest=baseline()
-        if self.release['candidate']:
-            metadata=self.tools/'arm-release.json'
-            download(f'https://api.github.com/repos/MHSanaei/3x-ui/releases/tags/{version}',metadata)
-            release=json.loads(metadata.read_text())
-            self.assertEqual(release['tag_name'],version)
-            self.assertFalse(release['draft']); self.assertFalse(release['prerelease'])
-        with tempfile.TemporaryDirectory(prefix='real-arm32-') as directory:
-            root=Path(directory)
-            for arch in ('armv5','armv6','armv7'):
-                name=f'x-ui-linux-{arch}.tar.gz'; archive=root/name; sidecar=root/(name+'.sha256')
-                if self.release['candidate']:
-                    assets=[a for a in release['assets'] if a['name']==name]
-                    self.assertEqual(len(assets),1); digest=assets[0]['digest'].removeprefix('sha256:')
-                else: digest=manifest['archives'][arch]
-                download(f'https://github.com/MHSanaei/3x-ui/releases/download/{version}/{name}',archive)
-                download(f'https://github.com/MHSanaei/3x-ui/releases/download/{version}/{name}.sha256',sidecar)
-                self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
-                self.assertEqual(sidecar.read_text().split(),[digest,name])
-                validate_layout(archive,arch)
-                with tarfile.open(archive) as bundle:
-                    binary=root/'xray-linux-arm32'
-                    binary.write_bytes(bundle.extractfile('x-ui/bin/xray-linux-'+arch).read()); binary.chmod(0o755)
-                    panel=root/'x-ui'; panel.write_bytes(bundle.extractfile('x-ui/x-ui').read()); panel.chmod(0o755)
-                panel_version=subprocess.check_output([qemu,str(panel),'-v'],text=True,timeout=45).strip()
-                self.assertEqual(panel_version,version.removeprefix('v'))
-                output=subprocess.check_output([qemu,str(binary),'version'],text=True,timeout=45)
-                if self.release['xray']: self.assertTrue(output.startswith('Xray '+self.release['xray']+' '))
-                keys=subprocess.check_output([qemu,str(binary),'x25519'],text=True,timeout=45)
-                self.assertTrue('PrivateKey:' in keys and 'Password' in keys,'X25519 output contract mismatch')
-                config=root/'config.json'; config.write_text(json.dumps({'inbounds':[],'outbounds':[{'protocol':'freedom'}]}))
-                subprocess.run([qemu,str(binary),'run','-test','-config',str(config)],check=True,capture_output=True,timeout=45)
-                print(arch+': authenticated ARM32 version / X25519 / real config validation PASS',flush=True)
+        config=self.root/'arm-config.json'
+        config.write_text(json.dumps({'inbounds':[],'outbounds':[{'protocol':'freedom'}]}))
+        for arch,(panel,binary) in self.arm_tools.items():
+            panel_version=subprocess.check_output([self.qemu_arm,str(panel),'-v'],text=True,timeout=45).strip()
+            self.assertEqual(panel_version,self.release['version'].removeprefix('v'))
+            output=subprocess.check_output([self.qemu_arm,str(binary),'version'],text=True,timeout=45)
+            self.assertTrue(output.startswith('Xray '+self.expected_xray+' '))
+            keys=subprocess.check_output([self.qemu_arm,str(binary),'x25519'],text=True,timeout=45)
+            self.assertTrue('PrivateKey:' in keys and 'Password' in keys,'X25519 output contract mismatch')
+            subprocess.run([self.qemu_arm,str(binary),'run','-test','-config',str(config)],check=True,capture_output=True,timeout=45)
+            print(arch+': authenticated ARM32 version / X25519 / real config validation PASS',flush=True)
         self.passed.append('ARM32 runtime contract')
 
     def setUp(self):

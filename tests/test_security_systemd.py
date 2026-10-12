@@ -81,9 +81,27 @@ class SecuritySystemd(unittest.TestCase):
         run('systemctl','is-active','--quiet','x-ui')
         props=dict(line.split('=',1) for line in run('systemctl','show','x-ui','-p','ProtectSystem','-p','ProtectHome','-p','NoNewPrivileges','-p','SystemCallFilter','-p','ReadWritePaths','-p','CapabilityBoundingSet').splitlines())
         self.assertEqual(props['ProtectSystem'],'full'); self.assertEqual(props['ProtectHome'],'read-only')
-        self.assertEqual(props['NoNewPrivileges'],'yes'); self.assertIn('@system-service',props['SystemCallFilter'])
-        self.assertTrue(all(p in props['ReadWritePaths'].split() for p in ('/etc/x-ui','/usr/local/x-ui','/var/log/x-ui')))
-        self.assertTrue(set(props['ReadWritePaths'].split()).isdisjoint({'/usr','/etc','/root'}))
+        self.assertEqual(props['NoNewPrivileges'],'yes')
+        groups={}
+        def expand(group):
+            if group not in groups:
+                values=set()
+                for line in run('systemd-analyze','syscall-filter',group).splitlines():
+                    name=line.strip()
+                    if not name or name.startswith('#') or name==group: continue
+                    if name.startswith('@'): values.update(expand(name))
+                    else: values.add(name)
+                groups[group]=values
+            return groups[group]
+        self.assertFalse(props['SystemCallFilter'].startswith('~'),'Expected an allowlist')
+        self.assertEqual(set(props['SystemCallFilter'].split()),expand('@system-service'))
+        pid=run('systemctl','show','x-ui','-p','MainPID','--value').strip()
+        status=Path('/proc/'+pid+'/status').read_text()
+        self.assertRegex(status,r'(?m)^Seccomp:\s+2$')
+        self.assertRegex(status,r'(?m)^NoNewPrivs:\s+1$')
+        writable={p.removeprefix('-') for p in props['ReadWritePaths'].split()}
+        self.assertTrue({'/etc/x-ui','/usr/local/x-ui','/var/log/x-ui'} <= writable)
+        self.assertTrue(writable.isdisjoint({'/usr','/etc','/root'}))
         self.assertEqual(set(props['CapabilityBoundingSet'].lower().split()),{'cap_dac_override','cap_net_admin','cap_net_bind_service','cap_net_raw'})
         with tempfile.TemporaryDirectory() as directory:
             panel=helper('amneziawg').Panel(f'https://127.0.0.1:{FIXTURE["panel_port"]}/{FIXTURE["panel_path"]}/','integration','temporary-fixture-password',directory,('--cacert',str(cert)))
