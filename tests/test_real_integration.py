@@ -576,7 +576,11 @@ curl() { command curl --cacert "$TRUST" "$@"; }
                 print('REAL production Vision TLS failure / owned rollback / REALITY and XHTTP preserved: PASS',flush=True)
                 wrong_trust[0]=False
                 iid=self.vision_module.configure(api,'vision.example',self.vision_port,fallback,
-                    *self.vision_artifacts,str(vision_cert),str(vision_key))
+                    *self.vision_artifacts,str(vision_cert),str(vision_key),flag='🇫🇮')
+            created = next(r for r in api.request('panel/api/inbounds/list')['obj'] if r['id']==iid)
+            self.assertEqual(created['remark'],'🇫🇮 XTLS')
+            with sqlite3.connect(self.root/'db/x-ui.db') as db:
+                self.assertEqual(db.execute('SELECT remark FROM hosts WHERE inbound_id=?',(iid,)).fetchone()[0],'vision')
             self.assertTrue(self.vision_artifacts[2].is_symlink())
             print('REAL production Vision configure / nginx reload / delayed Xray readiness / trusted HTTPS: PASS',flush=True)
             awg_row = api.create('deploy.example', port(self.allocated_ports, udp=True))

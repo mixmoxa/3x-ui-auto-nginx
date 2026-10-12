@@ -70,12 +70,12 @@ def certificate(domain, cert, key):
         raise ValueError('Invalid Vision certificate identity, key or validity')
 
 
-def inbound(domain, port, fallback, cert, key):
+def inbound(domain, port, fallback, cert, key, flag="🌐"):
     domain_name(domain)
     if port == fallback or any(not 1024 <= p <= 65535 for p in (port, fallback)):
         raise ValueError('Invalid/distinct internal ports required')
     return {'enable': True, 'listen': '127.0.0.1', 'port': port, 'protocol': 'vless',
-            'remark': 'vision', 'tag': f'inbound-{port}',
+            'remark': flag + ' XTLS', 'tag': f'inbound-{port}',
             'settings': {'clients': [], 'decryption': 'none', 'encryption': 'none',
                          'fallbacks': [{'name': domain, 'alpn': 'http/1.1', 'dest': f'127.0.0.1:{fallback}', 'xver': 1}]},
             # Official panel v3.9.0 gates flow on "tcp". Xray maps tcp/raw to RAW.
@@ -164,7 +164,7 @@ def wait_inbound(port):
             time.sleep(0.25)
 
 
-def configure(panel, domain, port, fallback, stream, site, enabled, cert, key):
+def configure(panel, domain, port, fallback, stream, site, enabled, cert, key, flag="🌐"):
     stage = 'validating Vision certificate'
     try:
         certificate(domain, cert, key)
@@ -174,7 +174,7 @@ def configure(panel, domain, port, fallback, stream, site, enabled, cert, key):
             raise ValueError('Refusing existing/symlinked Vision artifacts')
         original = stream.read_bytes()
         patched = stream_config(original.decode(), domain, port)
-        expected = inbound(domain, port, fallback, cert, key)
+        expected = inbound(domain, port, fallback, cert, key, flag)
         stage = 'listing existing 3X-UI inbounds'
         if any(row.get('tag') == expected['tag'] for row in panel.request('panel/api/inbounds/list')['obj']):
             raise ValueError('Vision tag already owned by another inbound')
@@ -248,7 +248,7 @@ def main():
     if sys.argv[1:2] == ['--preflight-nginx'] and len(sys.argv)==4:
         print(nginx_artifact_domain(*sys.argv[2:]))
         return
-    helper, domain, path, username, vision, port, fallback = sys.argv[1:]
+    helper, domain, path, username, vision, port, fallback, flag = sys.argv[1:]
     spec = importlib.util.spec_from_file_location('awg_session', helper)
     module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
     with tempfile.TemporaryDirectory(prefix='xui-vision-') as directory:
@@ -257,7 +257,7 @@ def main():
                              ['--resolve', f'{domain}:443:127.0.0.1'])
         iid = configure(panel, vision, int(port), int(fallback), '/etc/nginx/stream-enabled/stream.conf',
                         '/etc/nginx/sites-available/vision.conf', '/etc/nginx/sites-enabled/vision.conf',
-                        f'/etc/letsencrypt/live/{vision}/fullchain.pem', f'/etc/letsencrypt/live/{vision}/privkey.pem')
+                        f'/etc/letsencrypt/live/{vision}/fullchain.pem', f'/etc/letsencrypt/live/{vision}/privkey.pem', flag)
         print(json.dumps({'status': 'configured', 'inboundId': iid}))
 
 

@@ -395,7 +395,7 @@ apt_system() {
 
 preflight_base_os() {
     local audit binary
-    for binary in apt-get apt-config dpkg systemctl timedatectl shutdown getent /usr/sbin/sshd; do
+    for binary in apt-get apt-config dpkg systemctl timedatectl getent /usr/sbin/sshd; do
         command -v "$binary" >/dev/null || { msg_err "Base OS tool unavailable: $binary"; return 1; }
     done
     audit=$(dpkg --audit) || return 1
@@ -467,11 +467,10 @@ rollback_system_dns() {
 finish_initial_reboot() {
     [[ -e /var/run/reboot-required ]] || return 0
     if (( $1 != 0 )); then
-        msg_warn 'Reboot required, but installation failed: no reboot scheduled. Inspect and reboot manually.'
-        return 0
+        msg_warn 'Reboot required, but installation failed. Inspect the failure before rebooting manually: sudo reboot'
+    else
+        msg_warn 'Initial upgrade requires a manual reboot: sudo reboot. Post-reboot acceptance is pending.'
     fi
-    msg_warn 'Initial upgrade requires reboot. Scheduling in one minute; post-reboot acceptance is pending.'
-    shutdown -r +1 || { msg_err 'Reboot scheduling failed; reboot manually after inspection.'; return 1; }
 }
 
 install_packages() {
@@ -1241,7 +1240,7 @@ configure_xui_db() {
 
     x-ui stop 2>/dev/null || true
 
-    local output private_key public_key trojan_pass emoji_flag xray_bin
+    local output private_key public_key trojan_pass xray_bin
     # install_panel renames armv5/6/7 binaries to xray-linux-arm
     xray_bin="/usr/local/x-ui/bin/xray-linux-$(_arch)"
     [[ -f "$xray_bin" ]] || xray_bin="/usr/local/x-ui/bin/xray-linux-arm"
@@ -2222,17 +2221,15 @@ show_results() {
         failed_unverified) msg_warn ' [!] VPS Security + DoT     Failed — rollback not verified' ;;
     esac
     case "${VISION_RESULT:-not_requested}" in
-        configured) msg_ok " [✓] RAW TLS Vision         Ready ($vision_domain:443)" ;;
-        failed_rolled_back) msg_warn ' [!] RAW TLS Vision         Failed — rolled back' ;;
-        failed_unverified) msg_warn ' [!] RAW TLS Vision         Failed — rollback not verified' ;;
+        configured) msg_ok " [✓] VLESS TLS Vision       Ready ($vision_domain:443)" ;;
+        failed_rolled_back) msg_warn ' [!] VLESS TLS Vision       Failed — rolled back' ;;
+        failed_unverified) msg_warn ' [!] VLESS TLS Vision       Failed — rollback not verified' ;;
     esac
     case "${CLIENT_RESULT:-not_requested}" in
         configured)
             msg_ok ' [✓] Client                  Created'
             msg_ok ' [✓] Subscription            Ready'
-            printf '%s' "$CLIENT_OUTPUT" | python3 -c 'import json,sys; c=json.load(sys.stdin); print("     " + " / ".join(c["protocols"])); print("\n Subscription:\n " + c["url"])'
-            [[ "${INSTALL_AWG:-n}" != y ]] || msg_inf ' AWG vpn:// export requires an Amnezia-compatible application.'
-            CLIENT_OUTPUT='' ;;
+            ;;
         failed_unverified) msg_warn ' [!] Client / Subscription   Failed verification — inspect panel before retrying' ;;
     esac
     case "${AGH_RESULT:-not_requested}" in
@@ -2264,10 +2261,23 @@ show_results() {
     msg_inf "\n Diagnostics (panel login required):"
     msg_inf " https://${domain}/${panel_path}/diag"
     printf '\n Username: %s\n Password: %s\n' "$config_username" "$config_password"
+    if [[ "${CLIENT_RESULT:-not_requested}" == configured ]]; then
+        local subscription_url
+        subscription_url=$(printf '%s' "$CLIENT_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["url"])')
+        msg_inf "\n Subscription:"
+        msg_inf " $subscription_url"
+        printf '%s' "$CLIENT_OUTPUT" | python3 -c 'import json,sys; print(" " + " / ".join(json.load(sys.stdin)["protocols"]))'
+        CLIENT_OUTPUT=''
+    fi
+    if [[ "${AWG_RESULT:-not_requested}" == configured ]]; then
+        msg_inf "\n AmneziaWG:"
+        msg_inf ' AWG vpn:// export requires an Amnezia-compatible application.'
+    fi
     msg_inf "\n Backup:"
     printf ' x-ui-backup backup\n\n'
     if [[ "${AGH_RESULT:-not_requested}" == installed ]]; then
-        msg_inf " AdGuard Home: https://${domain}/${AGH_PATH}/"
+        msg_inf " AdGuard Home:"
+        msg_inf " https://${domain}/${AGH_PATH}/"
         printf ' Login: admin\n Password: %s\n DoH: https://%s/dns-query\n\n' "$AGH_PASSWORD" "$domain"
         AGH_PASSWORD=''
     elif [[ "${AGH_RESULT:-not_requested}" == failed_rolled_back ]]; then
@@ -2301,7 +2311,7 @@ select_vision() {
     local answer
     INSTALL_VISION=n
     while true; do
-        printf 'Set up an additional VLESS Vision connection? (requires a separate domain) [y/N]: '
+        printf 'Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]: '
         IFS= read -r answer || return 0
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -2309,7 +2319,7 @@ select_vision() {
             *) printf 'Please enter y or n.\n' ;;
         esac
     done
-    printf 'Enter the domain for VLESS Vision (must differ from the panel and REALITY domains): '
+    printf 'Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains): '
     IFS= read -r vision_domain || return 1
     vision_domain=${vision_domain,,}
     [[ -n "$vision_domain" ]] || return 1
@@ -2464,7 +2474,7 @@ install_vision() {
          fi; } &&
        { vision_stage='installing Vision renewal hook'; render_vision_hook "$vision_domain" > "$hook" && chown root:root "$hook" && chmod 0755 "$hook" && bash -n "$hook"; } &&
        { vision_stage='configuring Vision inbound/nginx/HTTPS'; vision_output=$(printf '%s' "$config_password" | python3 "$PANEL_STAGE/managed-vision.py" "$AWG_HELPER" \
-           "$domain" "$panel_path" "$config_username" "$vision_domain" "$vision_port" "$fallback_port"); }; then
+           "$domain" "$panel_path" "$config_username" "$vision_domain" "$vision_port" "$fallback_port" "${emoji_flag:-🌐}"); }; then
         VISION_RESULT=configured
         return 0
     else
@@ -2528,7 +2538,7 @@ main() {
     select_adguard || exit 1
     select_client || exit 1
     printf '\nPreparing system...\n'
-    msg_warn 'Initial full OS upgrade is mandatory; services may restart. A required reboot follows only a successful installation report.'
+    msg_warn 'Initial full OS upgrade is mandatory; services may restart. A required initial reboot is manual (sudo reboot).'
     preflight_base_os || { msg_err 'Base OS preflight failed; existing deployment was not removed.'; exit 1; }
     preflight_panel_release || { msg_err "Release preflight failed; existing deployment was not removed."; exit 1; }
     preflight_amneziawg || { msg_err "AmneziaWG preflight failed; existing deployment was not removed."; exit 1; }

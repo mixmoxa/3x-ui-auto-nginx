@@ -19,6 +19,56 @@ def helper(name):
 
 
 class IntegratedFeatures(unittest.TestCase):
+    def test_xtls_uses_existing_country_flag_without_new_geolocation(self):
+        from test_personal_backup import relocated
+        vision = helper('vision')
+        self.assertEqual(function('configure_xui_db').count('country_flag'),1)
+        self.assertNotRegex(function('configure_xui_db'),r'local[^\n]*\bemoji_flag\b')
+        for flag in ('🇷🇺','🇫🇮','🌐'):
+            row = vision.inbound('vision.example',12000,12001,'/cert.pem','/key.pem',flag)
+            self.assertEqual(row['remark'],flag+' XTLS')
+            self.assertEqual(row['tag'],'inbound-12000')
+            with tempfile.TemporaryDirectory() as directory:
+                root=Path(directory)
+                for path in ('etc/nginx/sites-available','etc/nginx/sites-enabled','etc/letsencrypt/renewal-hooks/deploy','etc/letsencrypt/live/vision.example'):
+                    (root/path).mkdir(parents=True)
+                stubs='''nginx() { :; }; systemctl() { :; }; chown() { :; }; check_webroot_lineage() { :; };
+country_flag() { echo SECOND_GEOLOCATION >&2; return 1; }; make_port() { echo $((RANDOM+10000)); };
+render_vision_hook() { echo '#!/bin/bash'; }; msg_warn() { echo "$*" >&2; };
+python3() { if [[ "$*" == *--render-acme* ]]; then echo '# ACME fixture'; else printf '%s' "${!#}" > "$FLAG_FILE"; echo '{"status":"configured"}'; fi; };
+'''
+                result=subprocess.run(['bash','-eu','-c',stubs+relocated(function('install_vision'),root)+
+                    '\nVISION_OWNED_LINEAGE=vision.example; vision_domain=vision.example; domain=panel.example; panel_path=panel; config_username=fixture; config_password=fixture; PANEL_STAGE=/stage; AWG_HELPER=/helper; install_vision'],
+                    env={**os.environ,'emoji_flag':flag,'FLAG_FILE':str(root/'flag')},capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual((root/'flag').read_text(),flag)
+                self.assertNotIn('SECOND_GEOLOCATION',result.stderr)
+
+    def test_result_subscription_credentials_order_and_optional_states(self):
+        stubs='msg_inf() { printf "I:%b\\n" "$*"; }; msg_ok() { echo "$*"; }; msg_warn() { echo "$*"; }; timedatectl() { echo Europe/Helsinki; }; ufw() { echo "Status: active"; };\n'
+        output={'url':'https://panel.example/subscription/fixture-id','protocols':['REALITY','XHTTP','Hysteria2','🇫🇮 XTLS']}
+        for client_state, enabled in (('configured',True),('not_requested',False),('failed_unverified',False)):
+            result=subprocess.run(['bash','-eu','-c',stubs+function('show_results')+
+                '\ndomain=panel.example; reality_domain=cover.example; panel_path=panel; config_username=fixture-user; config_password=fixture-pass; vision_domain=vision.example; VISION_RESULT=configured; AGH_PATH=adg-fixture; AGH_PASSWORD=fixture-agh; show_results; echo REMAINING="$CLIENT_OUTPUT"'],
+                env={**os.environ,'CLIENT_RESULT':client_state,'CLIENT_OUTPUT':json.dumps(output),'AWG_RESULT':'configured' if enabled else 'not_requested','AGH_RESULT':'installed' if enabled else 'not_requested'},
+                capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            text=result.stdout
+            self.assertIn('VLESS TLS Vision       Ready (vision.example:443)',text)
+            if enabled:
+                positions=[text.index(value) for value in ('Panel:','Diagnostics (panel login required):','Username:','Password:','Subscription:','AmneziaWG:','Backup:','AdGuard Home:')]
+                self.assertEqual(positions,sorted(positions))
+                self.assertIn('I: https://panel.example/subscription/fixture-id',text)
+                self.assertEqual(text.count(output['url']),1)
+                self.assertLess(text.index('[✓] Subscription'),text.index('Panel:'))
+                self.assertIn(' / '.join(output['protocols']),text)
+                self.assertTrue(text.rstrip().endswith('REMAINING='))
+            else:
+                self.assertNotIn('Subscription:',text)
+                self.assertNotIn('AmneziaWG:',text); self.assertNotIn('AdGuard Home:',text)
+                # Ignore the fixture's final variable dump when checking displayed credentials.
+                self.assertNotIn(output['url'],text.split('REMAINING=')[0])
+
     def test_apt_progress_is_live_and_preserves_failure_status(self):
         with tempfile.TemporaryDirectory() as directory:
             release=Path(directory)/'release'
@@ -144,7 +194,7 @@ class IntegratedFeatures(unittest.TestCase):
                 self.assertFalse((root/security.FILES[-1].lstrip('/')).exists())
                 self.assertFalse(state['active']); self.assertTrue(state['installed'],'No claim of package rollback')
 
-    def test_base_preparation_precedes_cleanup_and_reboot_follows_report(self):
+    def test_base_preparation_precedes_cleanup_and_reboot_notice_follows_report(self):
         main=function('main')
         self.assertLess(main.index('preflight_base_os'),main.index('prepare_base_os'))
         self.assertLess(main.index('prepare_base_os'),main.index('cleanup_adguard'))
@@ -156,7 +206,7 @@ class IntegratedFeatures(unittest.TestCase):
         self.assertIn('--force-confold',function('apt_system'))
         self.assertIn('DPkg::Lock::Timeout',function('apt_system'))
 
-    def test_preparation_errors_preserve_deployment_and_reboot_is_success_only(self):
+    def test_preparation_errors_preserve_deployment_and_initial_reboot_is_manual(self):
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
                'select_adguard','select_client','preflight_base_os','preflight_panel_release','preflight_amneziawg',
                'preflight_integrated_features','prepare_base_os','prepare_system_dns')
@@ -182,11 +232,11 @@ class IntegratedFeatures(unittest.TestCase):
                 if required: flag.touch()
                 result=subprocess.run(['bash','-eu','-c',mocks+fn+f'\necho REPORT; finish_initial_reboot {code}'],env={**os.environ,'CALLS':str(log)},capture_output=True,text=True)
                 self.assertEqual(result.returncode,0,result.stderr)
-                self.assertEqual(log.exists(),required and code==0)
-                if log.exists():
-                    self.assertEqual(log.read_text(),'-r +1\n')
-                    self.assertLess(result.stdout.index('REPORT'),result.stdout.index('Scheduling'))
-                    self.assertIn('post-reboot acceptance is pending',result.stdout)
+                self.assertFalse(log.exists(), 'Initial installation must never schedule reboot')
+                self.assertEqual('sudo reboot' in result.stdout, required)
+                if required:
+                    self.assertLess(result.stdout.index('REPORT'),result.stdout.index('sudo reboot'))
+                    self.assertEqual('Post-reboot acceptance is pending' in result.stdout, code==0)
 
     def test_security_readonly_preflight_blocks_cleanup_for_known_conflicts(self):
         from test_personal_backup import relocated
@@ -355,7 +405,7 @@ class IntegratedFeatures(unittest.TestCase):
         script+='\n'.join(function(name) for name in names)+'\n'+'; '.join(names)
         result=subprocess.run(['bash','-eu','-c',script],input='panel.example.com\nreality.example.com\ny\ny\nvision.example.com\nn\nn\ny\n',text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual(result.stdout,'Enter the domain for your 3X-UI panel: Enter the domain for VLESS REALITY: Enhance VPS security? [Y/n]: Set up an additional VLESS Vision connection? (requires a separate domain) [y/N]: Enter the domain for VLESS Vision (must differ from the panel and REALITY domains): Set up an additional AmneziaWG connection? [y/N]: Install and configure AdGuard Home? [y/N]: Create a client in 3X-UI and display a subscription link after installation? [Y/n]: ')
+        self.assertEqual(result.stdout,'Enter the domain for your 3X-UI panel: Enter the domain for VLESS REALITY: Enhance VPS security? [Y/n]: Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]: Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains): Set up an additional AmneziaWG connection? [y/N]: Install and configure AdGuard Home? [y/N]: Create a client in 3X-UI and display a subscription link after installation? [Y/n]: ')
 
     def test_prompt_defaults_decline_and_eof(self):
         for name, variable, default in (('select_security', 'INSTALL_SECURITY', 'y'),

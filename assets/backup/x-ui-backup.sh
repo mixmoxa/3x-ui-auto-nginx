@@ -1161,7 +1161,7 @@ for domain in (panel, reality, *([vision] if vision else [])):
         raise ValueError('Unexpected per-lineage hook')
 # Optional Vision contract: third lineage is mandatory only for a declared Vision installation.
 with sqlite3.connect(staged(dbpath)) as vision_db:
-    candidates=vision_db.execute("SELECT id,listen,port,protocol,settings,stream_settings FROM inbounds WHERE remark='vision'").fetchall()
+    candidates=vision_db.execute("SELECT id,listen,port,protocol,settings,stream_settings FROM inbounds WHERE id IN (SELECT inbound_id FROM hosts WHERE address=?)", (vision,)).fetchall()
     site=root / (nginx+'/sites-available/vision.conf').lstrip('/')
     acme=root / (nginx+'/sites-available/vision-acme.conf').lstrip('/')
     if not vision:
@@ -1440,6 +1440,8 @@ for p in (validation / nginx.lstrip('/')).rglob('*'):
     resources = r'''\b(include|error_log|access_log|ssl_certificate(?:_key)?|ssl_client_certificate|ssl_trusted_certificate|ssl_dhparam)\s+("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^;\s]+)'''
     def private_resource(match):
         directive, resource = match[1], match[2].strip('\"\'')
+        if directive == 'error_log' and resource == '/dev/null':
+            return match[0][:match.start(2)-match.start()] + 'stderr'
         if resource in ('off', 'stderr'): return match[0]
         if ('$' in resource or '\\' in resource or '..' in pathlib.PurePosixPath(resource).parts or
                 (resource.startswith('/') and not resource.startswith(str(validation) + '/'))):

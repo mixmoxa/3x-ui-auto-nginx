@@ -709,7 +709,7 @@ class AuditRecovery(unittest.TestCase):
         for path in (cert,key,config):
             self.assertGreaterEqual(libc.inotify_add_watch(descriptor,os.fsencode(path),0x20),0)  # IN_OPEN
         main = f.path('/etc/nginx/nginx.conf').read_bytes()
-        cases = [('ssl_certificate',cert),('ssl_certificate_key',key),('include',config)]
+        cases = [('ssl_certificate',cert),('ssl_certificate_key',key),('include',config),('error_log',config)]
         for directive, path in cases:
             with self.subTest(directive=directive):
                 nginx = 'events {} http { '+directive+' "'+str(path)+'"; }\n'

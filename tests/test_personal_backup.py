@@ -528,6 +528,39 @@ class PersonalBackup(unittest.TestCase):
         self.assertNotEqual(result.returncode,0)
         self.assertEqual(marker.read_text(),'current healthy state')
 
+    def test_vision_restore_uses_trusted_host_not_display_name(self):
+        self.seed_vision()
+        archive = self.backup()
+        original = self.path('/etc/x-ui/x-ui.db').read_bytes()
+        for remark, fault in (('vision',None),('🇷🇺 XTLS',None),('🇫🇮 XTLS',None),('🌐 XTLS',None),
+                              ('🌐 XTLS','ambiguous'),('🌐 XTLS','forged')):
+            with self.subTest(remark=remark, fault=fault):
+                edited = Path(self.temp.name)/'edited.db'; edited.write_bytes(original)
+                with sqlite3.connect(edited) as db:
+                    db.execute("UPDATE inbounds SET remark=? WHERE tag='inbound-12000'", (remark,))
+                    columns = [r[1] for r in db.execute('PRAGMA table_info(inbounds)')]
+                    row = dict(zip(columns,db.execute("SELECT * FROM inbounds WHERE tag='inbound-12000'").fetchone()))
+                    row.update(id=200,remark='🇷🇺 XTLS',tag='administrator-inbound',port=12002)
+                    db.execute('INSERT INTO inbounds ('+','.join(columns)+') VALUES ('+','.join('?' for _ in columns)+')',
+                               [row[k] for k in columns])
+                    if fault == 'ambiguous':
+                        db.execute("INSERT INTO hosts(inbound_id,address,port,security,sni,alpn,allow_insecure) VALUES(200,'vision.example.com',443,'same','vision.example.com','[\"http/1.1\"]',0)")
+                    elif fault == 'forged':
+                        db.execute("UPDATE inbounds SET protocol='trojan' WHERE tag='inbound-12000'")
+                candidate = self.changed_archive(archive, db=edited.read_bytes())
+                marker = self.path('/etc/x-ui/preserved'); marker.write_text('target state')
+                (self.root/'commands').write_text('')
+                result = self.run_tool('restore',candidate)
+                if fault:
+                    self.assertNotEqual(result.returncode,0)
+                    self.assertEqual(marker.read_text(),'target state')
+                    self.assertFalse(any(c[:2]==['systemctl','stop'] for c in self.commands()))
+                else:
+                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                    with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
+                        self.assertEqual(db.execute("SELECT remark FROM inbounds WHERE tag='inbound-12000'").fetchone()[0],remark)
+                        self.assertEqual(db.execute("SELECT remark FROM inbounds WHERE tag='administrator-inbound'").fetchone()[0],'🇷🇺 XTLS')
+
     def test_installer_integration(self):
         tuning = function('tune_system')
         self.assertNotIn('/etc/sysctl.conf', tuning)
@@ -618,6 +651,19 @@ class PersonalBackup(unittest.TestCase):
                 self.assertIn(['systemctl', 'start', 'x-ui'], self.commands())
                 self.assertEqual(list(self.path('/var/backups/x-ui').iterdir()), [])
 
+    def test_restore_accepts_managed_dev_null_error_log_with_real_nginx(self):
+        import hashlib
+        self.assertTrue(os.environ.get('NGINX_BIN'), 'This regression requires real nginx -t')
+        config = self.path('/etc/nginx/nginx.conf')
+        original = config.read_text().replace('error_log stderr;', 'error_log /dev/null crit;')
+        config.write_text(original)
+        archive = self.backup()
+        digest = hashlib.sha256(archive.read_bytes()).digest()
+        result = self.run_tool('restore', archive)
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertEqual(config.read_text(), original, 'Preflight must only change its private nginx representation')
+        self.assertEqual(hashlib.sha256(archive.read_bytes()).digest(), digest)
+
     def test_restore_preflight_rejects_before_replacement(self):
         archive = self.backup()
         corrupt = Path(self.temp.name) / 'corrupt.tar.gz'
@@ -658,8 +704,7 @@ class PersonalBackup(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn('Restore completed successfully.', result.stdout)
 
-    def test_amneziawg_backup_restore_preserves_state_and_firewall(self):
-        import hashlib
+    def seed_amneziawg(self):
         import base64
         from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
         from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption
@@ -678,10 +723,15 @@ class PersonalBackup(unittest.TestCase):
         with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
             keys = [row[1] for row in db.execute('PRAGMA table_info(inbounds)')]
             row = dict(zip(keys,db.execute('SELECT * FROM inbounds LIMIT 1').fetchone()))
-            row.update(id=6, tag='inbound-8443-udp',protocol='amneziawg',port=8443,
+            row.update(id=db.execute('SELECT max(id)+1 FROM inbounds').fetchone()[0], tag='inbound-8443-udp',protocol='amneziawg',port=8443,
                        listen='0.0.0.0',enable=1,settings=json.dumps({'server':server,'clients':[]}))
             db.execute('INSERT INTO inbounds ('+','.join(keys)+') VALUES ('+','.join('?' for _ in keys)+')',
                        [row[k] for k in keys])
+        return keys, row
+
+    def test_amneziawg_backup_restore_preserves_state_and_firewall(self):
+        import hashlib
+        keys, row = self.seed_amneziawg()
         archive = self.backup()
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         for _ in range(2):
