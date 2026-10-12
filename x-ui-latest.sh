@@ -369,28 +369,78 @@ apt_system() {
             apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef \
             -o Dpkg::Options::=--force-confold -o Acquire::Retries=3 \
             -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
-            --no-remove "$@" 2>&1 | tee "$output" | {
-                local apt_line progress_at=$((SECONDS - 15))
-                while IFS= read -r apt_line || [[ -n "$apt_line" ]]; do
-                    if (( SECONDS - progress_at >= 15 )); then
-                        printf '%s\n' 'APT: working; detailed output follows at completion.' || exit 1
-                        progress_at=$SECONDS
-                    fi
-                done
-            }; then
+            --no-remove "$@" 2>&1 | tee "$output"; then
             statuses=("${PIPESTATUS[@]}")
         else
             statuses=("${PIPESTATUS[@]}")
         fi
         rc=${statuses[0]}
-        (( statuses[1] == 0 && statuses[2] == 0 )) || { rm -f "$output"; return 1; }
-        if (( rc == 0 )); then cat "$output"; rm -f "$output"; return 0; fi
+        (( statuses[1] == 0 )) || { rm -f "$output"; return 1; }
+        if (( rc == 0 )); then rm -f "$output"; return 0; fi
         # apt update's lists lock does not use DPkg::Lock::Timeout.
         if ! grep -Eq 'Could not get lock|Unable to acquire.*lock' "$output"; then break; fi
         (( SECONDS < deadline )) || break
         sleep 10
     done
-    cat "$output" >&2; rm -f "$output"; return "$rc"
+    rm -f "$output"; return "$rc"
+}
+
+setup_swap() {
+    [[ "${INSTALL_SECURITY:-n}" == y ]] || return 0
+    SWAP_RESULT=skipped
+    SWAP_REASON='required tools unavailable'
+    local tool active fs available fstab_tmp='' identity
+    for tool in swapon swapoff findmnt df awk fallocate chmod mkswap stat cp mv mktemp grep rm; do
+        command -v "$tool" >/dev/null || return 0
+    done
+    SWAP_REASON='cannot inspect active swap'
+    active=$(swapon --show=NAME --noheadings --raw) || return 0
+    if [[ -n "$active" ]]; then SWAP_RESULT=existing; return 0; fi
+    SWAP_REASON='/swapfile already exists'
+    [[ ! -e /swapfile && ! -L /swapfile ]] || return 0
+    SWAP_REASON='unsupported filesystem'
+    fs=$(findmnt -n -o FSTYPE --target /) || return 0
+    [[ "$fs" == ext4 || "$fs" == xfs ]] || return 0
+    SWAP_REASON='less than 4 GiB free'
+    available=$(df -Pk / | awk 'END {print $4}') || return 0
+    [[ "$available" =~ ^[0-9]+$ ]] && (( available >= 4194304 )) || return 0
+    SWAP_REASON='fstab unavailable or already references /swapfile'
+    [[ -f /etc/fstab && ! -L /etc/fstab ]] || return 0
+    awk '$1 == "/swapfile" {found=1} END {exit found}' /etc/fstab || return 0
+    SWAP_REASON='cannot create private swap file'
+    (set -o noclobber; umask 077; : > /swapfile) 2>/dev/null || return 0
+    identity=$(stat -c '%d:%i' /swapfile) || { rm -f /swapfile; return 0; }
+    # Only this invocation's file is owned; never remove pre-existing swap.
+    while :; do
+        SWAP_REASON='allocation failed'
+        fallocate -l 1G /swapfile && chmod 600 /swapfile || break
+        SWAP_REASON='mkswap failed'
+        mkswap /swapfile || break
+        SWAP_REASON='activation failed'
+        swapon /swapfile || break
+        active=$(swapon --show=NAME --noheadings --raw) || break
+        grep -Fxq /swapfile <<< "$active" || break
+        SWAP_REASON='fstab update failed'
+        # Stage the append privately: a failed write must not leave a partial entry.
+        fstab_tmp=$(mktemp /etc/.3x-ui-fstab.XXXXXX) || break
+        cp -p /etc/fstab "$fstab_tmp" || break
+        printf '\n/swapfile none swap sw 0 0\n' >> "$fstab_tmp" || break
+        mv -f "$fstab_tmp" /etc/fstab || break
+        SWAP_RESULT=created
+        return 0
+    done
+    [[ -z "$fstab_tmp" ]] || rm -f "$fstab_tmp"
+    if active=$(swapon --show=NAME --noheadings --raw); then
+        if grep -Fxq /swapfile <<< "$active"; then
+            swapoff /swapfile || { SWAP_REASON+='; swap cleanup failed'; return 0; }
+        fi
+        if [[ ! -L /swapfile && "$(stat -c '%d:%i' /swapfile)" == "$identity" ]]; then
+            rm -f /swapfile || SWAP_REASON+='; file cleanup failed'
+        fi
+    else
+        SWAP_REASON+='; activation unknown, file retained'
+    fi
+    return 0
 }
 
 preflight_base_os() {
@@ -484,7 +534,7 @@ install_packages() {
         systemctl daemon-reload && systemctl enable --now nginx || return 1
     fi
 
-    apt_system -yqq --no-install-recommends install ca-certificates || return 1
+    apt_system -y --no-install-recommends install ca-certificates || return 1
     local binary
     for binary in openssl sysctl ip ss tar gzip curl wget jq bash sudo nginx certbot sqlite3 ufw nc mtr python3 setcap; do
         command -v "$binary" >/dev/null || { msg_err "Required binary is missing: $binary"; return 1; }
@@ -2313,6 +2363,11 @@ show_results() {
         failed_rolled_back) msg_warn ' [!] VPS Security + DoT     Failed — rolled back / unchanged' ;;
         failed_unverified) msg_warn ' [!] VPS Security + DoT     Failed — rollback not verified' ;;
     esac
+    case "${SWAP_RESULT:-not_requested}" in
+        created) msg_ok ' [✓] SWAP 1 GiB             Created and enabled' ;;
+        existing) msg_inf ' [i] SWAP                   Already configured' ;;
+        skipped) msg_warn " [!] SWAP                   Skipped ($SWAP_REASON)" ;;
+    esac
     case "${VISION_RESULT:-not_requested}" in
         configured) msg_ok " [✓] VLESS TLS Vision       Ready ($vision_domain:443)" ;;
         failed_rolled_back) msg_warn ' [!] VLESS TLS Vision       Failed — rolled back' ;;
@@ -2636,6 +2691,7 @@ main() {
     preflight_panel_release || { msg_err "Release preflight failed; existing deployment was not removed."; exit 1; }
     preflight_amneziawg || { msg_err "AmneziaWG preflight failed; existing deployment was not removed."; exit 1; }
     preflight_integrated_features || { msg_err 'Optional feature preflight failed; existing deployment was not removed.'; exit 1; }
+    setup_swap || { SWAP_RESULT=skipped; SWAP_REASON='setup failed'; }
     prepare_base_os || { msg_err 'OS preparation failed; deployment was not removed, package changes may remain.'; exit 1; }
     prepare_system_dns || { msg_err 'DNS preparation failed; existing deployment was not removed.'; exit 1; }
     local awg_xui_stopped=n

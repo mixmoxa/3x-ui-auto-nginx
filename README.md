@@ -81,7 +81,7 @@ Replace `panel.example.com` and `reality.example.com` with your own domains. Opt
 
 *Recommended for less experienced users · Enabled by default (`Y`)*
 
-The installer offers additional protection for your VPS: Fail2ban for SSH, encrypted system DNS, and automatic security updates.
+The installer automatically configures additional server protection: Fail2ban against SSH password brute-force attacks, encrypted system DNS (DoT), automatic security updates for the system and packages, and a 1 GiB swap file to improve resilience when memory runs low.
 
 **Read the settings below before enabling this option**, particularly the automatic reboot schedule.
 
@@ -90,6 +90,7 @@ The installer offers additional protection for your VPS: Fail2ban for SSH, encry
 
 Choosing `Y` enables:
 
+- **1 GiB swap.** If no swap is active, the filesystem is supported and at least 4 GiB is free, the installer creates and enables a swap file. Existing swap settings remain unchanged. If these conditions are not met, this step is skipped without stopping installation.
 - **SSH protection — Fail2ban.** Limits repeated unsuccessful logins using the actual SSH ports. Existing SSH authentication settings are not changed.
 - **Encrypted DNS (DoT).** System DNS uses `systemd-resolved` and strict DNS-over-TLS with Cloudflare and Google resolvers. It never silently falls back to unencrypted queries if those resolvers are unavailable.
 - **Automatic security updates.** Package lists are updated at 02:30, with security updates installed at 02:50.

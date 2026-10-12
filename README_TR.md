@@ -81,7 +81,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 *Deneyimsiz kullanıcılara önerilir · Varsayılan olarak açık (`Y`)*
 
-Kurulum aracı SSH için Fail2ban, şifreli sistem DNS'i ve otomatik güvenlik güncellemeleriyle sunucunuza ek koruma sağlayabilir.
+Kurulum aracı ek sunucu korumasını otomatik olarak yapılandırır: SSH parola kaba kuvvet saldırılarına karşı Fail2ban, şifreli sistem DNS’i (DoT), sistem ve paketler için otomatik güvenlik güncellemeleri ve bellek yetersizliğinde kararlılığı artırmak için 1 GiB swap dosyası.
 
 **Bu seçeneği etkinleştirmeden önce aşağıdaki ayrıntıları**, özellikle otomatik yeniden başlatma takvimini okuyun.
 
@@ -90,6 +90,7 @@ Kurulum aracı SSH için Fail2ban, şifreli sistem DNS'i ve otomatik güvenlik g
 
 `Y` seçildiğinde şu ayarlar uygulanır:
 
+- **1 GiB swap.** Etkin swap yoksa, dosya sistemi destekleniyorsa ve en az 4 GiB boş alan varsa kurulum aracı swap dosyasını oluşturup etkinleştirir. Mevcut swap ayarları değiştirilmez. Koşullar sağlanmazsa kurulum durdurulmadan bu adım atlanır.
 - **SSH koruması — Fail2ban.** Gerçek SSH dinleme portlarına göre tekrarlanan başarısız giriş denemelerini sınırlar. Mevcut SSH kimlik doğrulama ayarlarını değiştirmez.
 - **Şifreli DNS (DoT).** Sistem DNS'i `systemd-resolved` üzerinden zorunlu DNS-over-TLS ile çalışır; Cloudflare ve Google sunucuları kullanılır. Şifreli sunucular kullanılamazsa düz metin DNS sorgularına geçilmez.
 - **Otomatik güvenlik güncellemeleri.** Paket listeleri 02:30'da güncellenir, güvenlik güncellemeleri 02:50'de yüklenir.
