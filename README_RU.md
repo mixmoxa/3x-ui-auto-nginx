@@ -41,13 +41,21 @@
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-После запуска установщик последовательно предложит настроить следующие компоненты:
+После запуска установщик последовательно предложит настроить следующие компоненты. Ниже приведены точные формулировки вопросов, которые вы увидите в терминале:
+
+---
 
 ### 1. 🌐 Домен панели 3X-UI
 
+> `Enter the domain for your 3X-UI panel:`
+
 Укажите домен, через который будут доступны панель управления, подписки и дополнительные веб-сервисы.
 
+---
+
 ### 2. 🛰️ Домен VLESS REALITY
+
+> `Enter the domain for VLESS REALITY:`
 
 Укажите второй домен для подключения REALITY. Оба домена должны указывать на IP-адрес вашего VPS.
 
@@ -67,6 +75,8 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 ---
 
 ### 3. 🔐 Расширенная безопасность VPS
+
+> `Enhance VPS security? [Y/n]:`
 
 *Рекомендуется неопытным пользователям · Включена по умолчанию (`Y`)*
 
@@ -96,16 +106,22 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ### 4. 🔗 VLESS XTLS Vision
 
+> `Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]:`
+
 *Дополнительное подключение · По умолчанию отключено (`N`)*
 
 Альтернативное VLESS-подключение с TLS, которое может быть полезно, если REALITY работает нестабильно или блокируется в вашей сети. Устанавливается как отдельный профиль в панели 3X-UI.
 
 > [!IMPORTANT]
 > **Для XTLS Vision требуется третий домен**, отличный от доменов панели и REALITY. Его DNS-запись должна указывать на IP-адрес VPS. HTTPS-сертификат и маршрутизация nginx настраиваются автоматически.
+>
+> После выбора `Y` установщик дополнительно запросит домен: `${extra}`.
 
 ---
 
 ### 5. 🔑 Amnezia WG
+
+> `Set up an additional AmneziaWG connection? [y/N]:`
 
 *Дополнительное подключение · По умолчанию отключено (`N`)*
 
@@ -127,6 +143,8 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 ---
 
 ### 6. 🛡️ AdGuard Home + DNS-over-HTTPS
+
+> `Install and configure AdGuard Home? [y/N]:`
 
 *Дополнительный DNS-сервер · По умолчанию отключён (`N`)*
 
@@ -163,6 +181,8 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 ---
 
 ### 7. 👤 Автоматическое создание клиента и подписки
+
+> `Create a client in 3X-UI and display a subscription link after installation? [Y/n]:`
 
 *Рекомендуется · Включено по умолчанию (`Y`)*
 
