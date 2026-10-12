@@ -115,7 +115,10 @@ class SecuritySystemd(unittest.TestCase):
         self.assertEqual(set(props['CapabilityBoundingSet'].lower().split()),{'cap_dac_override','cap_net_admin','cap_net_bind_service','cap_net_raw'})
         with tempfile.TemporaryDirectory() as directory:
             panel=helper('amneziawg').Panel(f'https://127.0.0.1:{FIXTURE["panel_port"]}/{FIXTURE["panel_path"]}/','integration','temporary-fixture-password',directory,('--cacert',str(cert)))
-            panel.create('deploy.example')
+            inbound=panel.create('deploy.example')
+            # Upstream starts an AWG instance only once it has an enabled peer.
+            panel.request('panel/api/clients/add',{'client':{'email':'sandbox-integration','enable':True},
+                                                  'inboundIds':[inbound['id']]})
         for restarted in (False,True):
             if restarted: run('systemctl','restart','x-ui')
             deadline=time.monotonic()+45
