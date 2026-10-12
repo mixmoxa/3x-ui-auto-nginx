@@ -153,8 +153,13 @@ class RealIntegration(unittest.TestCase):
                 if len(assets)!=1: raise ValueError('Missing/ambiguous ARM asset: '+name)
                 digest=assets[0]['digest'].removeprefix('sha256:')
             else: digest=manifest['archives'][arch]
-            download(f'https://github.com/MHSanaei/3x-ui/releases/download/{version}/{name}',archive)
-            download(f'https://github.com/MHSanaei/3x-ui/releases/download/{version}/{name}.sha256',sidecar)
+            cached=os.environ.get('INTEGRATION_ARTIFACTS')
+            if cached and not cls.release['candidate']:
+                shutil.copyfile(Path(cached)/name,archive)
+                shutil.copyfile(Path(cached)/(name+'.sha256'),sidecar)
+            else:
+                download(f'https://github.com/MHSanaei/3x-ui/releases/download/{version}/{name}',archive)
+                download(f'https://github.com/MHSanaei/3x-ui/releases/download/{version}/{name}.sha256',sidecar)
             if hashlib.sha256(archive.read_bytes()).hexdigest()!=digest or sidecar.read_text().split()!=[digest,name]:
                 raise ValueError('Official ARM archive/sidecar mismatch: '+arch)
             validate_layout(archive,arch)

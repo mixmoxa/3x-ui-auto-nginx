@@ -42,7 +42,7 @@ CI checks every tracked shell script with `bash -n` and ShellCheck **error-only*
 
 Every confirmed bug must follow: **reproducing RED regression test → fix → same test PASS → full suite PASS**.
 
-Fast regression (`nonroot`/`root`) uses fixtures, fault injection and negative paths. Real integration uses nginx, pinned/checksummed Xray from 3x-ui v3.9.0, the real private-state x-ui subscription backend and Mihomo. The integration suite downloads verified official binaries automatically; there are no silent missing-binary skips or repository secrets. For offline runs, `INTEGRATION_ARTIFACTS` may point to downloaded `x-ui.tar.gz`, `x-ui.sha256` and `mihomo.gz`; the same hash verification remains mandatory. All listeners and state stay local/temporary, and child processes have bounded cleanup. GitHub jobs have 25-minute deadlines.
+Fast regression (`nonroot`/`root`) uses fixtures, fault injection and negative paths. Real integration uses nginx, pinned/checksummed Xray from the verified 3x-ui baseline, the real private-state x-ui subscription backend and Mihomo. The integration suite downloads verified official binaries automatically; there are no silent missing-binary skips or repository secrets. For offline runs, `INTEGRATION_ARTIFACTS` may point to downloaded `x-ui.tar.gz`, `x-ui.sha256` and `mihomo.gz`, plus each `x-ui-linux-armv5/armv6/armv7.tar.gz` archive and its `.sha256` sidecar for the verified-baseline ARM checks; the same hash verification remains mandatory. All listeners and state stay local/temporary, and child processes have bounded cleanup. GitHub jobs have 25-minute deadlines.
 
 Real services (`services`) runs on native `ubuntu-24.04` and `ubuntu-26.04` hosted runners. It verifies pinned official AdGuard Home v0.107.79, loopback DNS, nginx TLS DoH/admin, and Certbot HTTP-01 issuance/renewal against pinned Pebble v2.10.1 with validation enabled and local DNS. No public DNS, Let's Encrypt or secrets are used. Both native jobs also run the pinned official panel’s embedded AmneziaWG TCP/UDP, client export, restart and cryptographic-negative test; no kernel module or external VPN server is installed. `SERVICES_ARTIFACTS` can supply `agh.tar.gz` and `pebble.tar.gz` offline; both pinned hashes are still checked before execution.
 
@@ -61,7 +61,7 @@ Live VPS acceptance is still required for public DNS, Let's Encrypt, systemd boo
 
 ## Verified upstream baseline and Canary
 
-`verified_panel_release()` in `x-ui-latest.sh` is the single version/digest source for production and real integration. The default is 3x-ui v3.9.0 / bundled Xray 26.9.30. Archive pins cover every supported download architecture; functional integration currently covers **amd64 only**. A pinned checksum does not certify architecture-specific runtime behavior.
+`verified_panel_release()` in `x-ui-latest.sh` is the single version/digest source for production and real integration. The default is 3x-ui v3.10.0 / bundled Xray 26.10.10. Archive pins cover every supported download architecture; full transport integration currently covers **amd64 only**, with additional QEMU ARMv5/v6/v7 CLI, X25519 and config-validation checks. A pinned checksum does not certify architecture-specific runtime behavior.
 
 The installer bootstraps only release-preflight dependencies, then verifies the selected official archive, sidecar and pinned/API digest and validates its layout **before managed cleanup**. Installation consumes that same private archive. Explicit `-version <tag>` requires a published stable release >= v3.8.0 with verifiable assets, and warns when outside the baseline. A manual version choice is not an automatic promotion.
 
@@ -72,7 +72,7 @@ A small Actions cache stores only the tested result, keyed by version, digest an
 For an explicit local candidate run (non-root, integration dependencies installed):
 
 ```bash
-python3 tests/upstream_canary.py probe --directory /tmp/xui-canary --version v3.9.0
+python3 tests/upstream_canary.py probe --directory /tmp/xui-canary --version v3.10.0
 NGINX_BIN=/usr/sbin/nginx python3 tests/upstream_canary.py run --directory /tmp/xui-canary
 python3 tests/upstream_canary.py report --directory /tmp/xui-canary
 ```

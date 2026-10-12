@@ -88,7 +88,7 @@ class SecuritySystemd(unittest.TestCase):
         def expand(group):
             if group not in groups:
                 values=set()
-                for line in run('systemd-analyze','syscall-filter',group).splitlines():
+                for line in run('env','SYSTEMD_COLORS=0','systemd-analyze','--no-pager','syscall-filter',group).splitlines():
                     name=line.strip()
                     if not name or name.startswith('#') or name==group: continue
                     if name.startswith('@'): values.update(expand(name))
