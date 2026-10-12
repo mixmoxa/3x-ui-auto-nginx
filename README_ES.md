@@ -15,7 +15,7 @@ Dos dominios, un VPS limpio y unos minutos para completar la instalación.
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 
-[Versiones](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Telegram Web Proxy Manager](#telemt-web-manager) · [Incidencias](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
+[📦 Versiones](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [🐛 Informar de un problema](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 Contacto](https://t.me/promsdev)
 
 </div>
 
@@ -27,7 +27,7 @@ Solo necesitas dos dominios y un VPS limpio. El instalador selecciona y desplieg
 
 | | |
 | --- | --- |
-| **Conexiones preconfiguradas**<br>REALITY, XHTTP, Hysteria2, WebSocket y Trojan gRPC ya vienen configurados. | **Servicios internos protegidos**<br>El panel y las suscripciones no exponen sus puertos internos directamente a Internet. |
+| **Conexiones preconfiguradas**<br>REALITY, XHTTP, Hysteria2, Amnezia WG, VLESS XTLS Vision, WebSocket TLS y Trojan gRPC. | **Servicios internos protegidos**<br>El panel y las suscripciones no exponen sus puertos internos directamente a Internet. |
 | **Enrutamiento nginx restringido**<br>Las solicitudes no pueden redirigirse a puertos locales arbitrarios. | **Backup / Restore v3**<br>Recupera tu VPS o restaura una copia en un servidor nuevo, incluso de otro proveedor. |
 | **Certificados automáticos**<br>Emisión y renovación de Let's Encrypt sin configuración manual. | **AdGuard Home + DoH**<br>Activación opcional durante la instalación, sin necesidad de un tercer dominio. |
 
@@ -41,15 +41,164 @@ Configura los registros DNS de **dos dominios** para que apunten a la IP de tu V
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-El instalador pide ambos dominios y ofrece AmneziaWG y AdGuard Home como opciones. También puedes indicar los dominios directamente:
+
+Tras iniciarse, el instalador te guiará por las siguientes etapas. Las preguntas aparecen exactamente como se muestran en la terminal:
+
+---
+
+### 1. 🌐 Dominio del panel 3X-UI
+
+> `Enter the domain for your 3X-UI panel:`
+
+Indica el dominio de acceso al panel de administración, las suscripciones y los servicios web adicionales.
+
+---
+
+### 2. 🛰️ Dominio de VLESS REALITY
+
+> `Enter the domain for VLESS REALITY:`
+
+Indica un segundo dominio para REALITY. Los registros DNS de ambos dominios deben apuntar a la IP de tu VPS.
+
+<details>
+<summary>ℹ️ Parámetros adicionales de ejecución</summary>
+
+Puedes indicar ambos dominios directamente, sin introducirlos de forma interactiva:
 
 ```bash
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
 ```
 
-> **⚠️ Solo para instalaciones nuevas o reinstalaciones completas.** `x-ui-latest.sh` elimina la base de datos anterior de 3x-ui y la configuración de nginx. **No lo utilices para actualizar un VPS en funcionamiento.** Guarda primero una copia de seguridad fuera del servidor. Si detecta una instalación existente, la reinstalación o desinstalación requiere escribir exactamente `YES` en mayúsculas.
+Sustituye `panel.example.com` y `reality.example.com` por tus propios dominios. Las funciones opcionales se seguirán eligiendo de forma interactiva.
 
-Al terminar recibirás la **URL del panel, credenciales aleatorias y la URL de diagnóstico** (MTR/LibreSpeed con autenticación mediante 3x-ui). Si instalas AdGuard Home, también verás su URL de administración, contraseña y dirección DoH.
+</details>
+
+---
+
+### 3. 🔐 Seguridad avanzada del VPS
+
+> `Enhance VPS security? [Y/n]:`
+
+*Recomendado para usuarios con poca experiencia · Activado por defecto (`Y`)*
+
+El instalador ofrece protección adicional para el servidor: Fail2ban para SSH, DNS del sistema cifrado y actualizaciones de seguridad automáticas.
+
+**Lee los detalles siguientes antes de activar esta opción**, especialmente el horario de reinicios automáticos.
+
+<details>
+<summary>🔐 Descripción detallada de los ajustes de seguridad</summary>
+
+Al elegir `Y`, el instalador configura:
+
+- **Protección SSH — Fail2ban.** Limita los intentos de acceso fallidos en los puertos SSH reales. No modifica los ajustes existentes de autenticación SSH.
+- **DNS cifrado (DoT).** El DNS del sistema usa `systemd-resolved` con DNS-over-TLS obligatorio y resolutores de Cloudflare y Google. Si estos no están disponibles, no recurre a consultas sin cifrar.
+- **Actualizaciones de seguridad automáticas.** Las listas de paquetes se actualizan a las 02:30 y las actualizaciones se instalan a las 02:50.
+- **Reinicio automático — 04:38.** Si una actualización requiere reiniciar, el servidor lo hará a esa hora, **incluso con sesiones de usuario activas**, lo que puede interrumpir las conexiones.
+
+Los horarios corresponden a la zona horaria local del VPS.
+
+Se comprueba la compatibilidad de los ajustes existentes antes de modificarlos. Si falla la configuración de seguridad, se realiza una reversión controlada.
+
+**Importante:** esta opción no desactiva el acceso SSH mediante contraseña ni sustituye la administración del servidor. Configura primero el acceso con claves SSH y después desactiva manualmente la autenticación por contraseña.
+
+</details>
+
+---
+
+### 4. 🔗 VLESS XTLS Vision
+
+> `Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]:`
+
+*Conexión adicional · Desactivada por defecto (`N`)*
+
+Una conexión VLESS alternativa mediante TLS que puede ser útil si REALITY funciona de forma inestable o está bloqueado en tu red. Se crea como un perfil independiente en 3X-UI.
+
+> [!IMPORTANT]
+> **XTLS Vision necesita un tercer dominio**, distinto de los usados para el panel y REALITY. Su registro DNS debe apuntar a la IP del VPS. El certificado HTTPS y el enrutamiento nginx se configuran automáticamente.
+>
+> Si respondes `Y`, el instalador también solicitará este dominio: `Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains):`.
+
+---
+
+### 5. 🔑 Amnezia WG
+
+> `Set up an additional AmneziaWG connection? [y/N]:`
+
+*Conexión adicional · Desactivada por defecto (`N`)*
+
+Se crea una conexión AmneziaWG independiente en el panel 3X-UI. No es necesario otro dominio.
+
+<details>
+<summary>ℹ️ Más información sobre Amnezia WG</summary>
+
+El instalador configura AmneziaWG 3.1 en **UDP/8443** y añade automáticamente la regla necesaria de UFW.
+
+Después, crea un cliente en el panel 3X-UI para obtener una configuración o un enlace `vpn://` para una aplicación Amnezia compatible.
+
+El instalador crea la conexión del servidor, pero no genera clientes AmneziaWG automáticamente.
+
+La configuración y la regla del cortafuegos están incluidas en **Backup / Restore v3**.
+
+</details>
+
+---
+
+### 6. 🛡️ AdGuard Home + DNS-over-HTTPS
+
+> `Install and configure AdGuard Home? [y/N]:`
+
+*Servidor DNS opcional · Desactivado por defecto (`N`)*
+
+Un servidor DNS personal para bloquear anuncios y rastreadores, administrar clientes y realizar consultas DNS cifradas.
+
+<details>
+<summary>ℹ️ AdGuard Home y el control de acceso</summary>
+
+No se necesita un dominio adicional.
+
+Después de instalarlo, estarán disponibles:
+
+- **Panel de administración de AdGuard Home:** `https://panel.example.com/adg-.../` — una ruta aleatoria y exclusiva.
+- **DNS-over-HTTPS:** `https://panel.example.com/dns-query`.
+
+No se abren los puertos públicos TCP/UDP **53**. La configuración y los datos de AdGuard Home se incluyen en **Backup / Restore v3**.
+
+**⚠️ Recomendación de seguridad**
+
+Para un VPS personal, crea un [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) para cada dispositivo.
+
+En AdGuard Home, entra en **Configuración → Configuración DNS → Configuración de acceso → Clientes permitidos** y añade **solo los ClientID** creados, sin direcciones IP ni subredes.
+
+Utiliza direcciones DoH como:
+
+`https://panel.example.com/dns-query/<ClientID>`
+
+Tras configurarlo, se rechazarán las consultas que no tengan un ClientID permitido, incluidas las dirigidas a `/dns-query`.
+
+Utiliza identificadores largos y aleatorios. Consulta las [recomendaciones oficiales de seguridad de AdGuard Home](https://adguard-dns.io/kb/adguard-home/running-securely/).
+
+</details>
+
+---
+
+### 7. 👤 Creación automática del cliente y la suscripción
+
+> `Create a client in 3X-UI and display a subscription link after installation? [Y/n]:`
+
+*Recomendado · Activado por defecto (`Y`)*
+
+El instalador crea un cliente en 3X-UI y genera una URL de suscripción HTTPS personal para las conexiones configuradas y compatibles.
+
+El enlace aparecerá en el informe final. Si rechazas esta opción, podrás crear clientes manualmente desde el panel.
+
+---
+
+> [!CAUTION]
+> **Solo para instalaciones nuevas o reinstalaciones completas.** `x-ui-latest.sh` elimina la base de datos anterior de 3x-ui y la configuración de nginx: **no es un comando para actualizar un VPS en funcionamiento**. Guarda antes una copia de seguridad fuera del VPS. Para reinstalar o desinstalar una instalación existente debes introducir exactamente `YES` en mayúsculas.
+
+Al terminar se mostrarán **la URL del panel, el usuario y la contraseña, la URL de diagnóstico y el enlace de suscripción** (si elegiste crear un cliente). Si instalaste AdGuard Home, también verás la dirección de administración, la contraseña y el endpoint DoH.
+
+Si una actualización del sistema operativo requiere reiniciar, el instalador lo indicará. **El primer reinicio es manual**: ejecuta `sudo reboot`.
 
 ## 🚀 Perfiles de conexión
 
@@ -58,38 +207,21 @@ Al terminar recibirás la **URL del panel, credenciales aleatorias y la URL de d
 | VLESS + REALITY | ✅ Listo para usar |
 | VLESS + XHTTP | ✅ Listo para usar |
 | Hysteria2 | ✅ Listo para usar |
-| VLESS + WebSocket | ✅ Listo para usar |
+| VLESS + WebSocket (TLS) | ✅ Listo para usar |
 | Trojan + gRPC | ✅ Listo para usar |
-| AmneziaWG 3.1 | ✅ Opcional |
+| VLESS + XTLS Vision | ✅ Opcional |
+| Amnezia WG | ✅ Opcional |
 
-Los cinco perfiles principales ya están configurados. Activa en 3x-ui los que necesites sin modificar nginx. AmneziaWG solo se añade si lo seleccionas durante la instalación. **Crea los clientes en el panel**; la compatibilidad depende de la aplicación y su versión.
+El instalador configura cinco perfiles básicos: REALITY, XHTTP y Hysteria2 quedan habilitados de inmediato; WebSocket y Trojan gRPC se pueden habilitar desde el panel 3X-UI cuando sea necesario.
+
+XTLS Vision y Amnezia WG solo se añaden si los eliges durante la instalación. **Para usar las conexiones debes crear clientes**, automáticamente durante la instalación o manualmente desde el panel. Los clientes de Amnezia WG se crean por separado.
+
+La compatibilidad depende de la aplicación cliente y de su versión.
 
 ### Suscripciones
 
-Las suscripciones estándar, JSON y **Mihomo / Clash** se ofrecen mediante nginx y HTTPS. El parámetro `provider=1` devuelve la suscripción original para los proveedores de proxy, en lugar de una configuración Clash completa.
+Las suscripciones estándar, JSON y **Mihomo / Clash** se sirven mediante nginx y HTTPS. `provider=1` devuelve la suscripción original para los proveedores de proxy en lugar de una configuración completa de Clash.
 
-## 🧩 Funciones opcionales
-
-Ambas funciones se pueden seleccionar durante la instalación y vienen desactivadas por defecto.
-
-### AdGuard Home + DoH
-
-Responde `y` a `Install AdGuard Home with DNS-over-HTTPS? [y/N]:`. No hace falta un tercer dominio: la interfaz de administración utiliza una ruta aleatoria `/adg-.../` en el dominio del panel, y DoH está disponible en `https://panel.example.com/dns-query`. No se abre el puerto público TCP/UDP **53**. La configuración y los datos se incluyen en **Backup / Restore v3**.
-
-<details>
-<summary>⚠️ <strong>Recomendación de seguridad</strong></summary>
-
-Para un VPS personal, crea un [ClientID](https://adguard-dns.io/kb/es/adguard-home/clients/#clientid) por dispositivo y añade **solo estos identificadores** en **Configuración → Configuración de DNS → Configuración de acceso → Clientes permitidos** (sin direcciones IP ni rangos CIDR).
-
-Utiliza direcciones DoH como `/dns-query/<ClientID>`. Se rechazarán las consultas DNS sin un ClientID permitido, incluidas las enviadas al `/dns-query` estándar. Elige identificadores largos y aleatorios. [Recomendaciones oficiales de seguridad de AdGuard Home](https://adguard-dns.io/kb/es/adguard-home/running-securely/).
-
-</details>
-
----
-
-### AmneziaWG 3.1
-
-Durante la instalación puedes configurar **AmneziaWG 3.1 en UDP/8443** (desactivado por defecto). Responde `y` a `Install AmneziaWG on UDP port 8443? [y/N]:`. Está integrado en 3x-ui y utiliza el dominio del panel. Después, añade un cliente desde 3x-ui para obtener su configuración o enlace `vpn://`; el instalador no crea clientes. UFW permite automáticamente UDP/8443; **Backup / Restore v3** conserva la configuración y restaura la regla.
 
 ## 💾 Copias de seguridad y restauración
 
@@ -117,6 +249,11 @@ Los archivos se guardan en `/var/backups/x-ui/`.
 Las interfaces de los servicios no se exponen directamente a Internet. Se accede al panel, las suscripciones y los servicios adicionales mediante nginx y HTTPS, mientras que los puertos internos permanecen limitados al servidor.
 
 No existe un proxy genérico hacia puertos arbitrarios de localhost. Si se produce un error crítico, la instalación o restauración se detiene en lugar de iniciar una configuración incompleta.
+
+
+**¿No sabes cómo proteger tu VPS?** Puedes activar la seguridad avanzada durante la instalación para configurar protección SSH contra ataques de fuerza bruta, DNS cifrado y actualizaciones de seguridad. Antes, consulta los detalles y el horario de reinicios nocturnos en **Inicio rápido**.
+
+**Importante:** protege también el acceso al servidor. Usa claves SSH y comprueba que funcionan antes de desactivar la autenticación por contraseña. El instalador no la desactiva automáticamente.
 
 <a id="telemt-web-manager"></a>
 
