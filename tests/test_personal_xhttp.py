@@ -11,6 +11,7 @@ import re
 import shlex
 import shutil
 import socket
+import ssl
 import sqlite3
 import subprocess
 import tempfile
@@ -154,7 +155,7 @@ CD_COUNT=0
         result = subprocess.run(["bash", "-eu", "-c", startup], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("3X-UI AUTO NGINX", result.stdout)
-        self.assertIn("Automated 3x-ui / Xray deployment", result.stdout)
+        self.assertEqual(re.sub(r'\x1b\[[0-9;]*m','',result.stdout).strip(),"3X-UI AUTO NGINX")
         self.assertNotIn("X-UI-PRO", result.stdout.upper())
         self.assertNotIn("X-UI Secure Panel", SOURCE)
         helpers = '\n'.join(re.findall(r'^msg_\w+\(\).*$', SOURCE, re.M))
@@ -167,7 +168,7 @@ CD_COUNT=0
                                         "reality_domain": "reality.example.com" if provided else ""})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertTrue(result.stdout.endswith("panel.example.com|reality.example.com"))
-                for prompt in ("3x-ui panel domain (panel.example.com):", "REALITY domain (reality.example.com):"):
+                for prompt in ("Enter the domain for your 3X-UI panel:", "Enter the domain for VLESS REALITY:"):
                     self.assertEqual(prompt in result.stdout, not provided)
 
     def test_cpu_capabilities_are_advisory_and_fixture_driven(self):
@@ -236,7 +237,8 @@ printf 'CPU_STATE|%s|%s\n' "$CPU_SUPPORT_LEVEL" "$CPU_SUPPORT_TEXT"
         helpers = '\n'.join(re.findall(r'^msg_\w+\(\).*$', SOURCE, re.M))
         # Run the actual main ordering/summary on files; installer operations are no-ops.
         mocks = '\n'.join(name + '() { :; }' for name in (
-            "select_amneziawg", "preflight_amneziawg", "preflight_panel_release", "select_adguard", "cleanup_adguard", "validate_domains", "clean_previous_install", "install_packages", "setup_firewall", "get_server_ip",
+            "preflight_base_os", "prepare_base_os", "prepare_system_dns", "finish_initial_reboot",
+            "select_security", "select_vision", "select_client", "preflight_integrated_features", "select_amneziawg", "preflight_amneziawg", "preflight_panel_release", "select_adguard", "cleanup_adguard", "validate_domains", "clean_previous_install", "install_packages", "setup_firewall", "get_server_ip",
             "get_ssl_certs", "install_panel", "configure_nginx", "configure_xui_db", "install_clash_sub",
             "install_fake_site", "install_diagnostics", "tune_system", "install_backup_tool", "setup_certificate_renewal", "setup_acme_http", "confirm_destructive_reinstall",
         )) + r'''
@@ -316,12 +318,12 @@ echo 'x-ui 3.9.0'
                     self.assertEqual(len(calls), 3)
                     continue
                 self.assertEqual(calls[3:], ["binary -v", "ufw status"])
-                for item in ("3x-ui Auto Nginx — Installation Result", "Panel:", "Diagnostics", "Username: fixture-user",
+                for item in ("3X-UI Auto Nginx — Installation Result", "Panel:", "Diagnostics", "Username: fixture-user",
                              "Password: fixture-password", "Backup:", "x-ui-backup backup", "Certificate renewal",
                              "https://deploy.example/panel/", "https://deploy.example/panel/diag",
                              "Enabled by default: REALITY · XHTTP · Hysteria2", "Optional profiles: WS · Trojan gRPC"):
                     self.assertIn(item, text)
-                self.assertEqual("(3x-ui 3.9.0)" in text, not failed_version)
+                self.assertEqual("(3X-UI 3.9.0)" in text, not failed_version)
                 cpu_line = next(line for line in result.stdout.splitlines() if "CPU support" in line)
                 self.assertIn({"ok": "\x1b[1;32m", "warn": "\x1b[1;33m", "info": "\x1b[1;34m"}[cpu_level], cpu_line)
                 self.assertIn({"ok": "[✓]", "warn": "[!]", "info": "[i]"}[cpu_level], cpu_line)
@@ -329,7 +331,7 @@ echo 'x-ui 3.9.0'
                 self.assertIn({"ok": "hardware AES available", "warn": "hardware AES unavailable",
                                "info": "acceleration not assessed"}[cpu_level], cpu_line)
                 self.assertNotRegex(cpu_line, r"Unsupported|Failed|Unsafe")
-                self.assertLess(text.index("3x-ui / Xray"), text.index("CPU support"))
+                self.assertLess(text.index("3X-UI / Xray"), text.index("CPU support"))
                 self.assertLess(text.index("CPU support"), text.index("nginx"))
                 firewall_line = next(line for line in result.stdout.splitlines() if "Firewall / UFW" in line)
                 self.assertIn("\x1b[1;32m" if state == "active" else "\x1b[1;33m", firewall_line)
@@ -345,7 +347,7 @@ echo 'x-ui 3.9.0'
                     if label == "TLS certificates":
                         self.assertIn("Check certificate files" if warning else "Ready", line)
 
-    def firewall(self, status, connection="", sshd="", fail="", sshd_exit="0"):
+    def firewall(self, status, connection="", sshd="", fail="", sshd_exit="0", socket_state="inactive", socket_listen="", socket_exit="0"):
         # Run only setup_firewall; mock all UFW/sshd operations on private files.
         mock = '''ufw() {
     printf '%s\\n' "$*" >> "$FIREWALL_TEST_ROOT/calls"
@@ -366,6 +368,13 @@ sshd() {
     return "$SSHD_EXIT"
 }
 msg_err() { echo "$1" >&2; }
+systemctl() {
+    case "$*" in
+        'is-active ssh.socket') printf '%s' "$SOCKET_STATE"; [[ "$SOCKET_STATE" == active ]] ;;
+        'show ssh.socket -p Listen --value') printf '%s' "$SOCKET_LISTEN"; return "$SOCKET_EXIT" ;;
+        *) return 1 ;;
+    esac
+}
 '''
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -376,9 +385,29 @@ msg_err() { echo "$1" >&2; }
                 text=True, capture_output=True, env={
                     **os.environ, "FIREWALL_TEST_ROOT": tmp, "SSH_CONNECTION": connection,
                     "SSHD_OUTPUT": sshd, "SSHD_EXIT": sshd_exit, "FAIL_UFW": fail, "panel_port": FIXTURE["panel_port"],
+                    "SOCKET_STATE": socket_state, "SOCKET_LISTEN": socket_listen, "SOCKET_EXIT": socket_exit, "INSTALL_SECURITY": "n",
                 },
             )
             return result, (root / "calls").read_text().splitlines(), (root / "rules").read_text().splitlines(), (root / "status").read_text().strip()
+
+    def test_firewall_socket_activation_preserves_all_confirmed_ssh_ports(self):
+        cases = [('', '127.0.0.1:2222 (Stream)', {2222}),
+                 ('', '0.0.0.0:2222 (Stream) [2001:db8::22]:2200 (Stream) 2223 (Stream)', {2222,2200,2223}),
+                 ('198.51.100.10 54321 203.0.113.5 2224', '[::]:2222 (Stream)', {2222,2224})]
+        for connection, listen, expected in cases:
+            with self.subTest(listen=listen):
+                result,calls,_,state=self.firewall('inactive',connection,'port 22',socket_state='active',socket_listen=listen)
+                self.assertEqual(result.returncode,0,result.stderr)
+                ssh={int(call.split()[1].split('/')[0]) for call in calls if call.startswith('allow ') and call.endswith('/tcp') and call not in ('allow 80/tcp','allow 443/tcp')}
+                self.assertEqual(ssh,expected)
+                self.assertEqual(state,'active')
+        for listen in ('','[2001:db8::2222] (Stream)','0.0.0.0:2222 (Stream) unparsed','/run/ssh.sock (Stream)','[::]:65536 (Stream)'):
+            result,calls,_,state=self.firewall('inactive','198.51.100.10 54321 203.0.113.5 22','port 22',socket_state='active',socket_listen=listen)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(state,'inactive'); self.assertNotIn('--force enable',calls)
+            self.assertIn('WARNING',result.stderr)
+        result,calls,_,state=self.firewall('inactive',sshd='port 22',socket_state='active',socket_listen='[::]:2222 (Stream)',socket_exit='1')
+        self.assertEqual(state,'inactive'); self.assertNotIn('--force enable',calls)
 
     def test_firewall_active_preserves_existing_policy(self):
         result, calls, rules, status = self.firewall("active", sshd="port 22")
@@ -392,7 +421,7 @@ msg_err() { echo "$1" >&2; }
             with self.subTest(port=port):
                 result, calls, _, status = self.firewall("inactive", f"198.51.100.10 54321 203.0.113.5 {port}", "port 9999")
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(calls, ["status", "allow 80/tcp", "allow 443/tcp", "allow 443/udp", f"allow {int(port)}/tcp", "--force enable"])
+                self.assertEqual(calls, ["status", "allow 80/tcp", "allow 443/tcp", "allow 443/udp", "sshd -T"] + [f"allow {value}/tcp" for value in sorted({int(port),9999})] + ["--force enable"])
                 self.assertEqual(status, "active")
 
     def test_firewall_inactive_falls_back_to_effective_sshd_ports(self):
@@ -416,10 +445,11 @@ msg_err() { echo "$1" >&2; }
                 self.assertIn("UFW was not enabled automatically", result.stderr)
 
     def test_firewall_required_operation_failures_are_fatal(self):
-        commands = ["status", "allow 80/tcp", "allow 443/tcp", "allow 443/udp", "allow 2200/tcp", "--force enable"]
-        for index, command in enumerate(commands):
+        commands = ["status", "allow 80/tcp", "allow 443/tcp", "allow 443/udp", "sshd -T", "allow 2200/tcp", "--force enable"]
+        for command in ("status", "allow 80/tcp", "allow 443/tcp", "allow 443/udp", "allow 2200/tcp", "--force enable"):
+            index = commands.index(command)
             with self.subTest(command=command):
-                result, calls, _, _ = self.firewall("inactive", "a b c 2200", fail=command)
+                result, calls, _, _ = self.firewall("inactive", "198.51.100.10 54321 203.0.113.5 2200", sshd="port 2200", fail=command)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(calls, commands[:index + 1])
         result, calls, _, _ = self.firewall("unexpected")
@@ -477,13 +507,14 @@ python3() { echo "python3 $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != python-import ]]
         for failure in ("", "apt", "sysctl", "ip", "nginx", "python-import"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
                 log = Path(tmp) / "calls"
-                result = subprocess.run(["bash", "-u", "-c", mock + function("install_packages") + "\ninstall_packages\n"],
+                result = subprocess.run(["bash", "-u", "-c", mock + function("apt_system") + '\n' + function("install_packages") + "\ninstall_packages\n"],
                                         capture_output=True, text=True, env={**os.environ, "Pak": "apt", "INSTALL": "y",
                                                                             "TEST_LOG": str(log), "FAIL_DEP": failure})
                 self.assertEqual(result.returncode, 1 if failure else 0, result.stderr)
                 if not failure:
                     calls = log.read_text().splitlines()
-                    packages = next(c.split()[3:] for c in calls if c.startswith("apt -y install "))
+                    packages = next(c.split()[c.split().index('install')+1:] for c in calls if ' install curl ' in c)
+                    self.assertTrue(all('--no-remove' in c for c in calls if c.startswith('apt-get ')))
                     self.assertTrue(required.issubset(packages))
                     self.assertNotIn("cron", packages)
                     self.assertNotIn("python3-certbot-nginx", packages)
@@ -682,6 +713,66 @@ sleep() { :; }
         self.assertEqual(re.findall(r"location ~[^\n]+", shared), ["location ~ ^/subscription/(?<clash_sub_id>[^/]+)$ {"])
 
 
+    def test_subscription_real_nginx_status_and_secret_log_boundaries(self):
+        nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
+        self.assertTrue(nginx,'Real nginx is required for this regression')
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(handler):
+                status=404 if 'missing-fixture' in handler.path else handler.server.status
+                handler.send_response(status); handler.send_header('Content-Length','0'); handler.end_headers()
+            def log_message(handler,*args): pass
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); cert=root/'cert.pem'; key=root/'key.pem'
+            subprocess.run(['openssl','req','-x509','-newkey','ec','-pkeyopt','ec_paramgen_curve:prime256v1','-nodes','-days','1','-subj','/CN=localhost','-out',cert,'-keyout',key],check=True,capture_output=True)
+            tls=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); tls.load_cert_chain(cert,key)
+            secure=ThreadingHTTPServer(('127.0.0.1',0),Handler); secure.socket=tls.wrap_socket(secure.socket,server_side=True)
+            plain=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+            for server in (secure,plain):
+                server.status=200; threading.Thread(target=server.serve_forever,daemon=True).start()
+                self.addCleanup(server.server_close); self.addCleanup(server.shutdown)
+            with socket.socket() as reserved:
+                reserved.bind(('127.0.0.1',0)); public=reserved.getsockname()[1]
+            with socket.socket() as reserved:
+                reserved.bind(('127.0.0.1',0)); unavailable=reserved.getsockname()[1]
+            config=root/'nginx.conf'; includes=root/'includes.conf'
+            temp_paths=''.join(f'{kind}_temp_path {root}/{kind};\n' for kind in ('client_body','proxy','fastcgi','uwsgi','scgi'))
+            config.write_text(f'pid {root}/nginx.pid; error_log {root}/error.log info; events {{}} http {{ access_log {root}/access.log; '+temp_paths+f'map $http_user_agent $serve_clash_yaml {{ default 0; ~Mihomo 1; }} server {{ listen 127.0.0.1:{public}; set $hack 0; error_page 400 401 403 500 502 503 504 =404 /404; location = /404 {{ return 404; }} include {includes}; }} }}')
+            def update(sub,clash):
+                shared=render(SHARED,sub_port=str(sub))
+                main=render(MAIN,mtr_backend_port=str(clash))
+                block=re.search(r'    location = /__clash_api \{.*?^    \}',main,re.M|re.S).group()
+                includes.write_text(shared+'\n'+block)
+            update(secure.server_port,plain.server_port)
+            startup=(root/'nginx-startup.log').open('wb'); self.addCleanup(startup.close)
+            process=subprocess.Popen([nginx,'-p',str(root)+'/', '-c',config,'-g','daemon off;'],stdout=subprocess.DEVNULL,stderr=startup)
+            self.addCleanup(lambda: (process.terminate(),process.wait(timeout=10)) if process.poll() is None else None)
+            for attempt in range(100):
+                self.assertIsNone(process.poll(),'nginx did not start')
+                try:
+                    with socket.create_connection(('127.0.0.1',public),timeout=.1): break
+                except OSError: time.sleep(.02)
+            else: self.fail('nginx readiness expired')
+            cases=('ready','missing','500','503','unavailable','tls-failure')
+            for case in cases:
+                secure.status=plain.status=int(case) if case.isdigit() else 200
+                sub=unavailable if case=='unavailable' else plain.server_port if case=='tls-failure' else secure.server_port
+                clash=unavailable if case=='unavailable' else plain.server_port
+                update(sub,clash)
+                subprocess.run([nginx,'-p',str(root)+'/', '-c',config,'-s','reload'],check=True,capture_output=True)
+                time.sleep(.15)
+                token='missing-fixture' if case=='missing' else 'private-fixture-'+case
+                for route,agent in ((f'/subscription/{token}','RawClient'),(f'/subscription/nested/{token}','RawClient'),(f'/jsonsub/{token}','JsonClient'),(f'/subscription/{token}','Mihomo')):
+                    with self.subTest(case=case,route=route,agent=agent):
+                        connection=http.client.HTTPConnection('127.0.0.1',public,timeout=5)
+                        try:
+                            connection.request('GET',route,headers={'User-Agent':agent})
+                            response=connection.getresponse(); response.read()
+                            expected=404 if case=='missing' else int(case) if case.isdigit() else 502 if case=='unavailable' or (case=='tls-failure' and agent!='Mihomo') else 200
+                            self.assertEqual(response.status,expected)
+                        finally: connection.close()
+                        for log in ('access.log','error.log'):
+                            self.assertNotIn(token,(root/log).read_text(),log+' leaked subscription identifier')
+
     def test_nginx_runtime_rejects_arbitrary_ports_and_preserves_ws(self):
         nginx = os.environ.get("NGINX_BIN") or shutil.which("nginx")
         if not nginx:
@@ -859,8 +950,8 @@ curl() {
         main = function("main")
         self.assertEqual(len(re.findall(r"(?m)^\s*x-ui restart\b", main)), 1)
         self.assertGreater(main.index("x-ui restart"), main.index("configure_xui_db"))
-        self.assertRegex(main, r"install_panel\s*\|\|\s*exit 1")
-        self.assertRegex(main, r"configure_xui_db\s*\|\|\s*exit 1")
+        self.assertRegex(main, r"install_panel\s*\|\|\s*\{[^\n]*exit 1;")
+        self.assertRegex(main, r"configure_xui_db\s*\|\|\s*\{[^\n]*exit 1;")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             log = root / "calls"

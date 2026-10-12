@@ -47,6 +47,8 @@ class Panel:
         self.options = list(options)
         self.cookie = self.directory/'cookies'
         self.cookie.touch(mode=0o600)
+        self.headers = self.directory/'csrf-header'
+        self.headers.touch(mode=0o600)
         self.token = None
         self.token = self.request('csrf-token')['obj']
         self.request('login', {'username':username,'password':password})
@@ -57,7 +59,9 @@ class Panel:
                 '--connect-timeout','5','--max-time','20',*self.options,
                 '--cookie',str(self.cookie),'--cookie-jar',str(self.cookie)]
         if self.token:
-            argv += ['--header','X-CSRF-Token: '+self.token]
+            # Session secrets stay in the private temporary directory, never argv.
+            self.headers.write_text('X-CSRF-Token: '+self.token+'\n')
+            argv += ['--header','@'+str(self.headers)]
         if data is not None:
             argv += ['--header','Content-Type: application/json','--data-binary','@-']
         argv.append(self.base+path)

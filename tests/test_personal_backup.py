@@ -181,6 +181,8 @@ elif name == 'curl':
         print('200', end=''); sys.exit(0)
     if '/login.html' in url:
         print('<html><script src="login.fixture.js"></script></html>'); sys.exit(0)
+    if url == 'https://vision.example.com/':
+        print('vision cover'); sys.exit(0)
     if url.startswith('http://127.0.0.1/'):
         if '/.well-known/acme-challenge/' in url:
             print((root / 'var/www/acme/.well-known/acme-challenge' / url.rsplit('/', 1)[1]).read_text(), end='')
@@ -401,6 +403,164 @@ class PersonalBackup(unittest.TestCase):
                 dst.addfile(extra, io.BytesIO(b'bad') if extra.isfile() else None)
         return target
 
+    def test_restore_ignores_foreign_archived_certbot_objects(self):
+        for vision in (False,True):
+            with self.subTest(vision=vision):
+                if vision: self.seed_vision()
+                imported=('/etc/letsencrypt/renewal-hooks/deploy/foreign-import',
+                          '/etc/letsencrypt/renewal-hooks/pre/foreign-import',
+                          '/etc/letsencrypt/renewal-hooks/post/foreign-import',
+                          '/etc/letsencrypt/live/foreign-import.example/fullchain.pem',
+                          '/etc/letsencrypt/renewal/foreign-import.example.conf',
+                          '/etc/letsencrypt/accounts/foreign.example/dir/unused/private_key.json',
+                          '/etc/letsencrypt/cli.ini')
+                for name in imported: self.write(name,'foreign archived artifact\n',0o755)
+                archive=self.backup()
+                for name in imported: self.path(name).unlink()
+                preserved=('/etc/letsencrypt/renewal-hooks/deploy/target-admin',
+                           '/etc/letsencrypt/live/target-admin.example/fullchain.pem',
+                           '/etc/letsencrypt/renewal/target-admin.example.conf',
+                           '/etc/letsencrypt/cli.ini')
+                for name in preserved: self.write(name,'target administrator data\n',0o600)
+                before={name:self.path(name).read_bytes() for name in preserved}
+                result=self.run_tool('restore',archive)
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                for name in imported:
+                    if name not in preserved: self.assertFalse(self.path(name).exists(),'Foreign archived object imported: '+name)
+                self.assertEqual({name:self.path(name).read_bytes() for name in preserved},before)
+                for name in ('example.com','reality.example.com')+ (('vision.example.com',) if vision else ()):
+                    self.assertTrue(self.path('/etc/letsencrypt/live/'+name+'/fullchain.pem').is_file())
+                self.assertTrue(self.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx').is_file())
+                self.assertEqual(self.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision').is_file(),vision)
+                archive.unlink()
+
+    def test_restore_account_conflict_refuses_before_service_stop(self):
+        account='a'*32
+        account_root='/etc/letsencrypt/accounts/acme.example.test/dir/'+account
+        for name in ('meta.json','private_key.json','regr.json'):
+            self.write(account_root+'/'+name,'{}\n',0o600)
+        for name in ('example.com','reality.example.com'):
+            cfg=ConfigObj(str(self.path('/etc/letsencrypt/renewal/'+name+'.conf')))
+            cfg['renewalparams']['server']='https://acme.example.test/dir'
+            cfg['renewalparams']['account']=account; cfg.write()
+        archive=self.backup()
+        self.write(account_root+'/private_key.json','{"target":true}\n',0o600)
+        self.write('/etc/x-ui/marker','keep target')
+        (self.root/'commands').write_text('')
+        result=self.run_tool('restore',archive)
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(self.path(account_root+'/private_key.json').read_text(),'{"target":true}\n')
+        self.assertEqual(self.path('/etc/x-ui/marker').read_text(),'keep target')
+        self.assertFalse(any(c[:2]==['systemctl','stop'] for c in self.commands()))
+
+    def test_restore_preserves_foreign_certificate_lineages(self):
+        archive = self.backup()
+        foreign = self.path('/etc/letsencrypt/live/administrator.example/fullchain.pem')
+        foreign.parent.mkdir(parents=True); foreign.write_text('administrator-owned certificate')
+        result = self.run_tool('restore', str(archive))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(foreign.exists(), 'Restore deleted a foreign target lineage')
+        self.assertEqual(foreign.read_text(), 'administrator-owned certificate')
+
+    def test_old_archive_custom_vision_remark_is_not_project_ownership(self):
+        with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
+            db.execute("UPDATE inbounds SET remark='vision' WHERE id=(SELECT id FROM inbounds LIMIT 1)")
+        archive=self.backup()
+        result=self.run_tool('restore',archive)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM inbounds WHERE remark='vision'").fetchone()[0],1)
+
+    def test_restore_refuses_foreign_project_named_deploy_hook_before_change(self):
+        archive=self.backup()
+        hook=self.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision')
+        hook.write_text('#!/bin/sh\n# administrator hook\nexit 0\n'); hook.chmod(0o755)
+        self.write('/etc/x-ui/marker','keep-target')
+        (self.root/'commands').write_text('')
+        result=self.run_tool('restore',archive)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('administrator hook',hook.read_text())
+        self.assertEqual(self.path('/etc/x-ui/marker').read_text(),'keep-target')
+        self.assertFalse(any(c[:2]==['systemctl','stop'] for c in self.commands()))
+
+    def seed_vision(self):
+        from test_integrated_features import helper
+        vision = helper('vision')
+        certificates(self.root, extra=('vision.example.com',))
+        row = vision.inbound('vision.example.com', 12000, 12001,
+                str(self.path('/etc/letsencrypt/live/vision.example.com/fullchain.pem')),
+                str(self.path('/etc/letsencrypt/live/vision.example.com/privkey.pem')))
+        with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
+            iid = db.execute('SELECT max(id)+1 FROM inbounds').fetchone()[0]
+            db.execute('INSERT INTO inbounds(id,user_id,remark,enable,listen,port,protocol,settings,stream_settings,tag,sniffing) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                (iid,1,'vision',1,row['listen'],row['port'],row['protocol'],json.dumps(row['settings']),json.dumps(row['streamSettings']),row['tag'],json.dumps(row['sniffing'])))
+            columns = {r[1] for r in db.execute('PRAGMA table_info(hosts)')}
+            for column in ('sni', 'allow_insecure'):
+                if column not in columns: db.execute('ALTER TABLE hosts ADD COLUMN '+column)
+            db.execute('INSERT INTO hosts(inbound_id,sort_order,remark,address,port,security,sni,alpn,allow_insecure) VALUES(?,?,?,?,?,?,?,?,?)',
+                (iid,0,'vision','vision.example.com',443,'same','vision.example.com','["http/1.1"]',0))
+        self.write('/etc/nginx/sites-available/vision.conf', vision.fallback_config('vision.example.com',12001,str(self.path('/var/www/html'))))
+        self.path('/etc/nginx/sites-enabled').mkdir(exist_ok=True)
+        self.path('/etc/nginx/sites-enabled/vision.conf').symlink_to(self.path('/etc/nginx/sites-available/vision.conf'))
+        self.write('/etc/nginx/sites-available/vision-acme.conf', '# Managed by 3x-ui Auto Nginx: Vision\n')
+        self.write('/etc/nginx/stream-enabled/stream.conf','map $ssl_preread_server_name $sni_name {\n    hostnames;\n    vision.example.com vision;\n}\nupstream vision { server 127.0.0.1:12000; }\n')
+        source = relocated(function('render_vision_hook'),self.root)
+        body = subprocess.check_output(['bash','-c',source+'\nrender_vision_hook vision.example.com'],text=True)
+        self.write('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision',body,0o755)
+
+    def test_vision_backup_round_trip_and_missing_third_certificate_rejected(self):
+        self.seed_vision()
+        archive = self.backup()
+        result = self.run_tool('restore',str(archive))
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertTrue(self.path('/etc/letsencrypt/live/vision.example.com/fullchain.pem').is_file())
+        hook = self.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision')
+        current = hook.read_bytes()
+        source = relocated(function('render_vision_hook'), self.root)
+        hook.write_text(subprocess.check_output(['bash','-c',source+'\nrender_vision_hook vision.example.com legacy'],text=True))
+        archive = self.backup()
+        result = self.run_tool('restore',str(archive))
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertEqual(hook.read_bytes(),current,'Old canonical archives must restore the ready-checking hook')
+        broken = self.changed_archive(archive,omit=self.member('/etc/letsencrypt/live/vision.example.com/fullchain.pem'))
+        marker = self.path('/etc/x-ui/preserved'); marker.write_text('current healthy state')
+        result = self.run_tool('restore',str(broken))
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(marker.read_text(),'current healthy state')
+
+    def test_vision_restore_uses_trusted_host_not_display_name(self):
+        self.seed_vision()
+        archive = self.backup()
+        original = self.path('/etc/x-ui/x-ui.db').read_bytes()
+        for remark, fault in (('vision',None),('🇷🇺 XTLS',None),('🇫🇮 XTLS',None),('🌐 XTLS',None),
+                              ('🌐 XTLS','ambiguous'),('🌐 XTLS','forged')):
+            with self.subTest(remark=remark, fault=fault):
+                edited = Path(self.temp.name)/'edited.db'; edited.write_bytes(original)
+                with sqlite3.connect(edited) as db:
+                    db.execute("UPDATE inbounds SET remark=? WHERE tag='inbound-12000'", (remark,))
+                    columns = [r[1] for r in db.execute('PRAGMA table_info(inbounds)')]
+                    row = dict(zip(columns,db.execute("SELECT * FROM inbounds WHERE tag='inbound-12000'").fetchone()))
+                    row.update(id=200,remark='🇷🇺 XTLS',tag='administrator-inbound',port=12002)
+                    db.execute('INSERT INTO inbounds ('+','.join(columns)+') VALUES ('+','.join('?' for _ in columns)+')',
+                               [row[k] for k in columns])
+                    if fault == 'ambiguous':
+                        db.execute("INSERT INTO hosts(inbound_id,address,port,security,sni,alpn,allow_insecure) VALUES(200,'vision.example.com',443,'same','vision.example.com','[\"http/1.1\"]',0)")
+                    elif fault == 'forged':
+                        db.execute("UPDATE inbounds SET protocol='trojan' WHERE tag='inbound-12000'")
+                candidate = self.changed_archive(archive, db=edited.read_bytes())
+                marker = self.path('/etc/x-ui/preserved'); marker.write_text('target state')
+                (self.root/'commands').write_text('')
+                result = self.run_tool('restore',candidate)
+                if fault:
+                    self.assertNotEqual(result.returncode,0)
+                    self.assertEqual(marker.read_text(),'target state')
+                    self.assertFalse(any(c[:2]==['systemctl','stop'] for c in self.commands()))
+                else:
+                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                    with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
+                        self.assertEqual(db.execute("SELECT remark FROM inbounds WHERE tag='inbound-12000'").fetchone()[0],remark)
+                        self.assertEqual(db.execute("SELECT remark FROM inbounds WHERE tag='administrator-inbound'").fetchone()[0],'🇷🇺 XTLS')
+
     def test_installer_integration(self):
         tuning = function('tune_system')
         self.assertNotIn('/etc/sysctl.conf', tuning)
@@ -416,7 +576,7 @@ class PersonalBackup(unittest.TestCase):
         tool = function('install_backup_tool')
         self.assertIn('${GITHUB_RAW}/assets/backup/x-ui-backup.sh', tool)
         self.assertNotIn('mozaroc', tool)
-        self.assertIn('    install_backup_tool || exit 1\n', function('main'))
+        self.assertRegex(function('main'), r'    install_backup_tool \|\| \{ msg_err [^\n]*; exit 1; \}')
         download = Path(self.temp.name) / 'download.sh'
         download.write_text('#!/bin/bash\necho backup-tool\n')
         mock = ('curl() { [[ "$2" == "$GITHUB_RAW/assets/backup/x-ui-backup.sh" ]] || return 9; '
@@ -491,6 +651,19 @@ class PersonalBackup(unittest.TestCase):
                 self.assertIn(['systemctl', 'start', 'x-ui'], self.commands())
                 self.assertEqual(list(self.path('/var/backups/x-ui').iterdir()), [])
 
+    def test_restore_accepts_managed_dev_null_error_log_with_real_nginx(self):
+        import hashlib
+        self.assertTrue(os.environ.get('NGINX_BIN'), 'This regression requires real nginx -t')
+        config = self.path('/etc/nginx/nginx.conf')
+        original = config.read_text().replace('error_log stderr;', 'error_log /dev/null crit;')
+        config.write_text(original)
+        archive = self.backup()
+        digest = hashlib.sha256(archive.read_bytes()).digest()
+        result = self.run_tool('restore', archive)
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertEqual(config.read_text(), original, 'Preflight must only change its private nginx representation')
+        self.assertEqual(hashlib.sha256(archive.read_bytes()).digest(), digest)
+
     def test_restore_preflight_rejects_before_replacement(self):
         archive = self.backup()
         corrupt = Path(self.temp.name) / 'corrupt.tar.gz'
@@ -531,8 +704,7 @@ class PersonalBackup(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn('Restore completed successfully.', result.stdout)
 
-    def test_amneziawg_backup_restore_preserves_state_and_firewall(self):
-        import hashlib
+    def seed_amneziawg(self):
         import base64
         from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
         from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption
@@ -551,10 +723,15 @@ class PersonalBackup(unittest.TestCase):
         with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
             keys = [row[1] for row in db.execute('PRAGMA table_info(inbounds)')]
             row = dict(zip(keys,db.execute('SELECT * FROM inbounds LIMIT 1').fetchone()))
-            row.update(id=6, tag='inbound-8443-udp',protocol='amneziawg',port=8443,
+            row.update(id=db.execute('SELECT max(id)+1 FROM inbounds').fetchone()[0], tag='inbound-8443-udp',protocol='amneziawg',port=8443,
                        listen='0.0.0.0',enable=1,settings=json.dumps({'server':server,'clients':[]}))
             db.execute('INSERT INTO inbounds ('+','.join(keys)+') VALUES ('+','.join('?' for _ in keys)+')',
                        [row[k] for k in keys])
+        return keys, row
+
+    def test_amneziawg_backup_restore_preserves_state_and_firewall(self):
+        import hashlib
+        keys, row = self.seed_amneziawg()
         archive = self.backup()
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         for _ in range(2):
@@ -848,7 +1025,7 @@ class PersonalBackup(unittest.TestCase):
         calls=self.commands()
         pause=calls.index(['systemctl','stop','certbot.timer'])
         idle=calls.index(['systemctl','is-active','certbot.service'])
-        replacement=next(i for i,c in enumerate(calls) if c[0]=='cp' and c[-1]==str(self.path('/etc/letsencrypt')))
+        replacement=next(i for i,c in enumerate(calls) if c[0]=='cp' and c[-1]==str(self.path('/etc/letsencrypt/renewal/example.com.conf')))
         activation=calls.index(['systemctl','enable','--now','certbot.timer'])
         health=calls.index(['systemctl','is-enabled','--quiet','certbot.timer'],activation)
         self.assertLess(pause,idle);self.assertLess(idle,replacement)

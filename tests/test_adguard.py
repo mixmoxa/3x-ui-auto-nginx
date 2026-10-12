@@ -243,7 +243,7 @@ class AdGuardInstaller(unittest.TestCase):
                                  'install_adguard; echo Installation-Complete',FAIL=failure)
                 self.assertNotEqual(r.returncode,0,r.stdout+r.stderr)
                 self.assertNotIn('Installation-Complete',r.stdout)
-                self.assertIn('Core 3x-ui stack remains operational.',r.stdout)
+                self.assertIn('Core 3X-UI stack remains operational.',r.stdout)
                 self.assertFalse((self.root/'opt/AdGuardHome').exists())
                 self.assertFalse((self.root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf').exists())
                 self.assertFalse((self.root/'etc/systemd/system/AdGuardHome.service').exists())
@@ -274,7 +274,7 @@ class AdGuardInstaller(unittest.TestCase):
         self.assertFalse((self.root/'opt/AdGuardHome').exists())
 
     def test_core_first_and_opt_out_has_no_optional_installation(self):
-        operations=('select_amneziawg','preflight_amneziawg','preflight_panel_release','confirm_destructive_reinstall','validate_domains','clean_previous_install','install_packages',
+        operations=('preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot','select_security','select_vision','select_client','preflight_integrated_features','select_amneziawg','preflight_amneziawg','preflight_panel_release','confirm_destructive_reinstall','validate_domains','clean_previous_install','install_packages',
                     'setup_firewall','get_server_ip','setup_acme_http','get_ssl_certs','install_panel','configure_nginx',
                     'configure_xui_db','install_clash_sub','install_fake_site','install_diagnostics','tune_system',
                     'install_backup_tool','setup_certificate_renewal','check_installation','show_results')
@@ -401,7 +401,7 @@ class AdGuardInstaller(unittest.TestCase):
                     self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
                     self.assertNotIn('Installation-Complete', r.stdout)
                     self.assertFalse((self.root/'opt/AdGuardHome').exists())
-                    self.assertIn('Core 3x-ui stack remains operational.', r.stdout)
+                    self.assertIn('Core 3X-UI stack remains operational.', r.stdout)
                 else:
                     self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
                     self.assertIn('/control/status', log)
@@ -437,7 +437,7 @@ class AdGuardInstaller(unittest.TestCase):
 
     def final_result(self, requested, failure='', unverified=False):
         # Exercise the actual main, optional install/rollback and summary on private state.
-        operations = ('select_amneziawg','preflight_amneziawg','preflight_panel_release','confirm_destructive_reinstall', 'validate_domains', 'clean_previous_install',
+        operations = ('preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot','select_security','select_vision','select_client','preflight_integrated_features','select_amneziawg','preflight_amneziawg','preflight_panel_release','confirm_destructive_reinstall', 'validate_domains', 'clean_previous_install',
                       'install_packages', 'setup_firewall', 'get_server_ip', 'setup_acme_http',
                       'get_ssl_certs', 'install_panel', 'configure_nginx', 'configure_xui_db',
                       'install_clash_sub', 'install_fake_site', 'install_diagnostics', 'tune_system',
@@ -474,7 +474,7 @@ main
                               UNVERIFIED='1' if unverified else '0', PYTHONOPTIMIZE='1')
 
     def assert_core_credentials(self, result):
-        self.assertIn('3x-ui Auto Nginx — Installation Result', result.stdout)
+        self.assertIn('3X-UI Auto Nginx — Installation Result', result.stdout)
         self.assertIn('https://example.com/panel/', result.stdout)
         self.assertIn('Username: panel-user', result.stdout)
         self.assertEqual(result.stdout.count('Password: generated-panel-secret'), 1)
@@ -487,7 +487,7 @@ main
         self.assert_core_credentials(r)
         self.assertIn('[✓] AdGuard Home           Running (v0.107.79)', r.stdout)
         self.assertIn('[✓] DNS-over-HTTPS         Ready', r.stdout)
-        self.assertIn('AdGuard Home: https://example.com/adg-'+'A'*12+'/', r.stdout)
+        self.assertIn('AdGuard Home:\n https://example.com/adg-'+'A'*12+'/', r.stdout)
         self.assertEqual(r.stdout.count('Password: '+'A'*32), 1)
         self.assertNotIn('A'*32, self.calls.read_text())
 
@@ -504,10 +504,10 @@ main
         r = self.final_result(True, 'cookie-unusable')
         self.assertEqual(r.returncode, 1, r.stdout+r.stderr)
         self.assert_core_credentials(r)
-        self.assertIn('[✓] 3x-ui / Xray           Running', r.stdout)
+        self.assertIn('[✓] 3X-UI / Xray           Running', r.stdout)
         self.assertIn('[!] AdGuard Home           Failed — rolled back', r.stdout)
         self.assertIn('[!] DNS-over-HTTPS         Not installed', r.stdout)
-        self.assertIn('The core 3x-ui stack remains operational.', r.stdout)
+        self.assertIn('The core 3X-UI stack remains operational.', r.stdout)
         self.assert_no_agh_credentials_or_success(r)
         self.assertIn('core-health 2', self.calls.read_text())
         self.assertFalse((self.root/'opt/AdGuardHome').exists())
@@ -518,7 +518,7 @@ main
         self.assert_core_credentials(r)
         self.assertIn('Post-rollback core health could not be verified.', r.stdout)
         self.assertIn('[!] AdGuard Home           Failed — rollback not verified', r.stdout)
-        for label in ('3x-ui / Xray', 'nginx', 'XHTTP', 'Diagnostics', 'Certificate renewal'):
+        for label in ('3X-UI / Xray', 'nginx', 'XHTTP', 'Diagnostics', 'Certificate renewal'):
             line = next(l for l in r.stdout.splitlines() if label in l and '[!]' in l)
             self.assertIn('Post-rollback health not verified', line)
             self.assertNotIn('[✓] '+label, r.stdout)

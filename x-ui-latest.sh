@@ -9,10 +9,7 @@ msg_inf() { echo -e "\e[1;34m$1\e[0m"; }
 msg_warn() { printf '\e[1;33m%s\e[0m\n' "$1"; }
 
 echo
-msg_inf '============================================================'
-msg_inf '  3X-UI AUTO NGINX'
-msg_inf '  Automated 3x-ui / Xray deployment'
-msg_inf '============================================================'
+msg_inf '3X-UI AUTO NGINX'
 echo
 
 # ─── Pre-flight checks ───────────────────────────────────────────────────────
@@ -92,16 +89,27 @@ AUTODOMAIN="n"
 CFALLOW="n"
 PANEL_VERSION=""
 INSTALL_AGH=n
+INSTALL_SECURITY=n
+DNS_PREPARED=n
+DNS_FINALIZED=n
+DNS_ROLLBACK_ATTEMPTED=n
+DNS_ROLLBACK_RESULT=not_requested
+INSTALL_VISION=n
+CREATE_CLIENT=n
+vision_domain=''
 
 # ─── Stop & clean previous install (called from main, after domain validation) ─
 clean_previous_install() {
     systemctl stop x-ui 2>/dev/null || true
-    rm -rf /etc/systemd/system/x-ui.service
-    rm -rf /usr/local/x-ui
-    rm -rf /etc/x-ui
-    rm -rf /etc/nginx/sites-enabled/*
-    rm -rf /etc/nginx/sites-available/*
-    rm -rf /etc/nginx/stream-enabled/*
+    if [[ "${VISION_PREVIOUS_HOOK:-}" == owned ]]; then
+        rm -f /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision
+    fi
+    rm -rf /etc/systemd/system/x-ui.service || return 1
+    rm -rf /usr/local/x-ui || return 1
+    rm -rf /etc/x-ui || return 1
+    rm -rf /etc/nginx/sites-enabled/* || return 1
+    rm -rf /etc/nginx/sites-available/* || return 1
+    rm -rf /etc/nginx/stream-enabled/* || return 1
 }
 
 # ─── Port / path generators ──────────────────────────────────────────────────
@@ -176,7 +184,7 @@ _validate_panel_version() {
     local version="${1#v}"
     if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
        [[ "$(printf '%s\n' 3.8.0 "$version" | sort -V | head -n1)" != "3.8.0" ]]; then
-        msg_err "Unsupported 3x-ui version: $1. Use a stable release >= v3.8.0."
+        msg_err "Unsupported 3X-UI version: $1. Use a stable release >= v3.8.0."
         return 1
     fi
 }
@@ -197,7 +205,7 @@ detect_existing_installation() {
     if [[ -e /etc/x-ui || -e /usr/local/x-ui || -e /usr/bin/x-ui ||
           -e /etc/systemd/system/x-ui.service || -e /lib/systemd/system/x-ui.service ]] ||
        systemctl is-active --quiet x-ui 2>/dev/null || systemctl is-enabled --quiet x-ui 2>/dev/null; then
-        EXISTING_INSTALL_CATEGORIES+=("3x-ui installation")
+        EXISTING_INSTALL_CATEGORIES+=("3X-UI installation")
     fi
     if [[ -e /usr/local/lib/3x-ui-pro || -e /usr/local/bin/x-ui-backup ||
           -e /etc/systemd/system/mtr-backend.service ]] ||
@@ -233,7 +241,7 @@ confirm_destructive_reinstall() {
     msg_warn '  Existing installation detected'
     msg_warn '============================================================'
     for category in "${EXISTING_INSTALL_CATEGORIES[@]}"; do msg_warn " [!] $category"; done
-    printf '\nContinuing will remove the current 3x-ui deployment and replace\nnginx configuration. Copy a backup off-host before continuing.\n\n'
+    printf '\nContinuing will run a full OS dist-upgrade (services may restart),\nremove the current 3X-UI deployment and replace nginx configuration.\nThe OS upgrade cannot be rolled back. Copy a backup off-host first.\n\n'
     printf 'Type YES to remove the existing deployment and continue: '
     if ! IFS= read -r answer || [[ "$answer" != YES ]]; then
         msg_err 'Cancelled. Existing deployment was not changed.'
@@ -294,7 +302,7 @@ uninstall_xui() {
 if [[ ${UNINSTALL} == *"y"* ]]; then
     confirm_destructive_reinstall || exit 1
     uninstall_xui || exit 1
-    msg_ok "3x-ui Auto Nginx completely uninstalled."
+    msg_ok "3X-UI Auto Nginx completely uninstalled."
     exit 0
 fi
 
@@ -325,9 +333,7 @@ IP4=$(ip route get 8.8.8.8 2>&1 | grep -Po -- 'src \K\S*')
 validate_domains() {
     while true; do
         [[ -n "$domain" ]] && break
-        msg_inf "PANEL DOMAIN"
-        echo "Public domain for the panel and optional services."
-        echo -en "3x-ui panel domain (panel.example.com): "
+        printf 'Enter the domain for your 3X-UI panel: '
         read -r domain || { msg_err "Panel domain is required."; return 1; }
     done
     domain=$(echo "$domain" | tr -d '[:space:]')
@@ -337,9 +343,7 @@ validate_domains() {
 
     while true; do
         [[ -n "$reality_domain" ]] && break
-        msg_inf "REALITY DOMAIN"
-        echo "Separate domain for the REALITY camouflage site."
-        echo -en "REALITY domain (reality.example.com): "
+        printf 'Enter the domain for VLESS REALITY: '
         read -r reality_domain || { msg_err "REALITY domain is required."; return 1; }
     done
     reality_domain=$(echo "$reality_domain" | tr -d '[:space:]')
@@ -356,18 +360,131 @@ validate_domains() {
 # ─────────────────────────────────────────────────────────────────────────────
 # INSTALL PACKAGES
 # ─────────────────────────────────────────────────────────────────────────────
+apt_system() {
+    local output attempt rc deadline=$((SECONDS + 300))
+    local -a statuses
+    output=$(mktemp) || return 1
+    for attempt in {1..30}; do
+        if DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l UCF_FORCE_CONFFOLD=1 \
+            apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef \
+            -o Dpkg::Options::=--force-confold -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
+            --no-remove "$@" 2>&1 | tee "$output" | {
+                local apt_line progress_at=$((SECONDS - 15))
+                while IFS= read -r apt_line || [[ -n "$apt_line" ]]; do
+                    if (( SECONDS - progress_at >= 15 )); then
+                        printf '%s\n' 'APT: working; detailed output follows at completion.' || exit 1
+                        progress_at=$SECONDS
+                    fi
+                done
+            }; then
+            statuses=("${PIPESTATUS[@]}")
+        else
+            statuses=("${PIPESTATUS[@]}")
+        fi
+        rc=${statuses[0]}
+        (( statuses[1] == 0 && statuses[2] == 0 )) || { rm -f "$output"; return 1; }
+        if (( rc == 0 )); then cat "$output"; rm -f "$output"; return 0; fi
+        # apt update's lists lock does not use DPkg::Lock::Timeout.
+        if ! grep -Eq 'Could not get lock|Unable to acquire.*lock' "$output"; then break; fi
+        (( SECONDS < deadline )) || break
+        sleep 10
+    done
+    cat "$output" >&2; rm -f "$output"; return "$rc"
+}
+
+preflight_base_os() {
+    local audit binary
+    for binary in apt-get apt-config dpkg systemctl timedatectl getent /usr/sbin/sshd; do
+        command -v "$binary" >/dev/null || { msg_err "Base OS tool unavailable: $binary"; return 1; }
+    done
+    audit=$(dpkg --audit) || return 1
+    [[ -z "$audit" ]] || { msg_err 'Incomplete dpkg state; repair it before installation.'; return 1; }
+    BASE_SSH_POLICY=$(/usr/sbin/sshd -T) || return 1
+    systemctl is-active --quiet ssh.service || systemctl is-active --quiet ssh.socket || {
+        msg_err 'No active SSH service/socket; refusing OS preparation.'; return 1;
+    }
+    BASE_SSH_LISTEN=''
+    if systemctl is-active --quiet ssh.socket; then
+        BASE_SSH_LISTEN=$(systemctl show ssh.socket -p Listen --value) || return 1
+    fi
+    getent ahosts debian.org >/dev/null || { msg_err 'Initial libc DNS resolution failed.'; return 1; }
+}
+
+verify_base_os() {
+    local binary
+    [[ "$(/usr/sbin/sshd -T)" == "$BASE_SSH_POLICY" ]] || { msg_err 'Effective SSH policy changed during OS preparation.'; return 1; }
+    systemctl is-active --quiet ssh.service || systemctl is-active --quiet ssh.socket || return 1
+    if [[ -n "$BASE_SSH_LISTEN" ]]; then
+        [[ "$(systemctl show ssh.socket -p Listen --value)" == "$BASE_SSH_LISTEN" ]] && systemctl is-active --quiet ssh.socket || return 1
+    fi
+    for binary in curl wget jq python3 openssl ip ss ufw; do
+        command -v "$binary" >/dev/null || return 1
+    done
+    getent ahosts debian.org >/dev/null
+}
+
+prepare_base_os() {
+    msg_warn 'Preparing OS: full dist-upgrade; package changes cannot be rolled back.'
+    apt_system -o APT::Update::Error-Mode=any update || { msg_err "APT list refresh failed (exit $?). Package changes are not rolled back."; return 1; }
+    # Simulation and execution both reject any package removal.
+    apt_system -s -y dist-upgrade || { msg_err "Full upgrade simulation failed (exit $?). No deployment cleanup was performed."; return 1; }
+    apt_system -y dist-upgrade || { msg_err "Full OS upgrade failed (exit $?). Package changes are not rolled back."; return 1; }
+    apt_system -y --no-install-recommends install curl wget jq python3 openssl \
+        ca-certificates procps iproute2 ufw tar gzip || { msg_err "System dependency installation failed (exit $?). Package changes are not rolled back."; return 1; }
+    verify_base_os || return 1
+    BASE_OS_RESULT=configured
+}
+
+prepare_system_dns() {
+    [[ "${INSTALL_SECURITY:-n}" == y ]] || return 0
+    local output status
+    DNS_PREPARED=y
+    if ! output=$(python3 "$PANEL_STAGE/managed-security.py" --prepare-dns "$PANEL_STAGE/dns-checkpoint"); then
+        status=$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])') || status=failed_unverified
+        [[ "$status" != failed_rolled_back ]] || DNS_PREPARED=n
+        printf '%s' "$output" | python3 -c 'import json,sys; [print("[!] DNS preparation: "+w,file=sys.stderr) for w in json.load(sys.stdin)["warnings"]]'
+        return 1
+    fi
+    if ! output=$(python3 "$PANEL_STAGE/managed-security.py" --preflight); then
+        printf '%s' "$output" | python3 -c 'import json,sys; [print("[!] Security readiness: "+w,file=sys.stderr) for w in json.load(sys.stdin)["warnings"]]'
+        return 1
+    fi
+    verify_base_os
+}
+
+rollback_system_dns() {
+    local output
+    DNS_ROLLBACK_ATTEMPTED=y
+    DNS_ROLLBACK_RESULT=failed_unverified
+    output=$(python3 "$PANEL_STAGE/managed-security.py" --rollback-dns "$PANEL_STAGE/dns-checkpoint")
+    DNS_ROLLBACK_RESULT=$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])') || return 1
+    printf '%s' "$output" | python3 -c 'import json,sys; [print("[!] "+w,file=sys.stderr) for w in json.load(sys.stdin)["warnings"]]'
+    if [[ "$DNS_ROLLBACK_RESULT" == failed_rolled_back ]]; then DNS_PREPARED=n; return 0; fi
+    return 1
+}
+
+finish_initial_reboot() {
+    [[ -e /var/run/reboot-required ]] || return 0
+    if (( $1 != 0 )); then
+        msg_warn 'Reboot required, but installation failed. Inspect the failure before rebooting manually: sudo reboot'
+    else
+        msg_warn 'Initial upgrade requires a manual reboot: sudo reboot. Post-reboot acceptance is pending.'
+    fi
+}
+
 install_packages() {
     if [[ ${INSTALL} == *"y"* ]]; then
         local version
         version=$(grep -oP '(?<=VERSION_ID=")[0-9]+' /etc/os-release)
         [[ "$version" == "20" || "$version" == "22" ]] && echo "System: Ubuntu $version"
 
-        $Pak -y update || return 1
-        $Pak -y install curl wget jq bash sudo nginx-full certbot sqlite3 ufw netcat-openbsd mtr python3 python3-configobj python3-cryptography libcap2-bin openssl procps iproute2 tar gzip tzdata ca-certificates || return 1
+        apt_system -o APT::Update::Error-Mode=any update || { msg_err "APT list refresh failed (exit $?). Package changes are not rolled back."; return 1; }
+        apt_system -y install curl wget jq bash sudo nginx-full certbot sqlite3 ufw netcat-openbsd mtr python3 python3-configobj python3-cryptography libcap2-bin openssl procps iproute2 tar gzip tzdata ca-certificates || return 1
         systemctl daemon-reload && systemctl enable --now nginx || return 1
     fi
 
-    apt-get install -yqq --no-install-recommends ca-certificates || return 1
+    apt_system -yqq --no-install-recommends install ca-certificates || return 1
     local binary
     for binary in openssl sysctl ip ss tar gzip curl wget jq bash sudo nginx certbot sqlite3 ufw nc mtr python3 setcap; do
         command -v "$binary" >/dev/null || { msg_err "Required binary is missing: $binary"; return 1; }
@@ -448,7 +565,7 @@ get_ssl_certs() {
 # ─────────────────────────────────────────────────────────────────────────────
 configure_nginx() {
     install -d -o root -g root -m 0755 /etc/nginx/snippets/x-ui-auto-optional || return 1
-    mkdir -p /etc/nginx/stream-enabled /etc/nginx/snippets
+    mkdir -p /etc/nginx/stream-enabled /etc/nginx/snippets || return 1
 
     # nginx >= 1.25.1 deprecates "listen ... http2" in favor of "http2 on;";
     # older versions (Ubuntu 24.04) don't know the new directive
@@ -481,6 +598,7 @@ server {
     ssl_preread on;
 }
 EOF
+    [[ $? -eq 0 ]] || return 1
 
     grep -xqFR "stream { include /etc/nginx/stream-enabled/*.conf; }" /etc/nginx/* \
         || echo "stream { include /etc/nginx/stream-enabled/*.conf; }" >> /etc/nginx/nginx.conf
@@ -493,7 +611,11 @@ EOF
     # Shared proxy locations for xray inbounds (included by both vhosts)
     cat > /etc/nginx/snippets/includes.conf <<EOF
     #Subscription — prefix location covers all sub-paths (assets, JS, etc.)
+    # Local error_page overrides inherited cover-page redirects; backend 5xx retain their status.
     location /${sub_path}/ {
+        access_log off;
+        error_log /dev/null crit;
+        error_page 404 =404 @subscription_error;
         if (\$hack = 1) { return 404; }
         proxy_redirect off;
         proxy_set_header Host \$host;
@@ -502,6 +624,9 @@ EOF
         proxy_pass https://127.0.0.1:${sub_port};
     }
     location = /${sub_path} {
+        access_log off;
+        error_log /dev/null crit;
+        error_page 404 =404 @subscription_error;
         if (\$hack = 1) { return 404; }
         proxy_redirect off;
         proxy_set_header Host \$host;
@@ -512,6 +637,9 @@ EOF
     # Regex takes priority over prefix: catches subscription IDs (one-level deep)
     # and routes Clash/Mihomo clients to dynamic clash.yaml generator
     location ~ ^/${sub_path}/(?<clash_sub_id>[^/]+)$ {
+        access_log off;
+        error_log /dev/null crit;
+        error_page 404 =404 @subscription_error;
         if (\$hack = 1) { return 404; }
         if (\$serve_clash_yaml = 1) { rewrite ^ /__clash_api?sub_id=\$clash_sub_id last; }
         proxy_redirect off;
@@ -525,6 +653,9 @@ EOF
 
     #Subscription (json)
     location /${json_path} {
+        access_log off;
+        error_log /dev/null crit;
+        error_page 404 =404 @subscription_error;
         if (\$hack = 1) { return 404; }
         proxy_redirect off;
         proxy_set_header Host \$host;
@@ -533,12 +664,21 @@ EOF
         proxy_pass https://127.0.0.1:${sub_port};
     }
     location /${json_path}/ {
+        access_log off;
+        error_log /dev/null crit;
+        error_page 404 =404 @subscription_error;
         if (\$hack = 1) { return 404; }
         proxy_redirect off;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_pass https://127.0.0.1:${sub_port};
+    }
+
+    location @subscription_error {
+        access_log off;
+        error_log /dev/null crit;
+        return 404;
     }
 
     #XHTTP
@@ -585,6 +725,7 @@ EOF
 
     location / { try_files \$uri \$uri/ =404; }
 EOF
+    [[ $? -eq 0 ]] || return 1
 
     # HTTP-level maps. The clash maps are consumed by the shared includes.conf
     # snippet, which is included by BOTH vhosts, so they live in their own
@@ -603,6 +744,7 @@ map "\$is_clash_ua:\$arg_provider" \$serve_clash_yaml {
     default 0;
 }
 EOF
+    [[ $? -eq 0 ]] || return 1
 
     # Main domain vhost (TLS termination at 7443, proxy_protocol)
     cat > "/etc/nginx/sites-available/${domain}" <<EOF
@@ -793,6 +935,9 @@ server {
     # ── Clash YAML generator — internal, proxied here by rewrite from sub_path ────
     location = /__clash_api {
         internal;
+        access_log off;
+        error_log /dev/null crit;
+        error_page 404 =404 @subscription_error;
         proxy_pass          http://127.0.0.1:${mtr_backend_port}/api/clash\$is_args\$args;
         proxy_http_version  1.1;
         proxy_set_header    X-Real-IP \$remote_addr;
@@ -802,6 +947,7 @@ server {
     include /etc/nginx/snippets/includes.conf;
 }
 EOF
+    [[ $? -eq 0 ]] || return 1
 
     # Reality domain vhost (plain TLS at 9443, no proxy_protocol)
     cat > "/etc/nginx/sites-available/${reality_domain}" <<EOF
@@ -827,23 +973,22 @@ server {
     include /etc/nginx/snippets/includes.conf;
 }
 EOF
+    [[ $? -eq 0 ]] || return 1
 
     # Activate configs
     if [[ -f "/etc/nginx/sites-available/${domain}" ]]; then
-        rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default
-        ln -sf "/etc/nginx/sites-available/00-maps.conf"       /etc/nginx/sites-enabled/
-        ln -sf "/etc/nginx/sites-available/${domain}"          /etc/nginx/sites-enabled/
-        ln -sf "/etc/nginx/sites-available/${reality_domain}"  /etc/nginx/sites-enabled/
-        ln -sf "/etc/nginx/sites-available/80.conf"            /etc/nginx/sites-enabled/
+        rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default || return 1
+        ln -sf "/etc/nginx/sites-available/00-maps.conf"       /etc/nginx/sites-enabled/ || return 1
+        ln -sf "/etc/nginx/sites-available/${domain}"          /etc/nginx/sites-enabled/ || return 1
+        ln -sf "/etc/nginx/sites-available/${reality_domain}"  /etc/nginx/sites-enabled/ || return 1
+        ln -sf "/etc/nginx/sites-available/80.conf"            /etc/nginx/sites-enabled/ || return 1
     else
         msg_err "${domain} nginx config not found!" && exit 1
     fi
 
-    if [[ $(nginx -t 2>&1 | grep -o 'successful') != "successful" ]]; then
-        msg_err "nginx config check failed!" && exit 1
-    fi
+    nginx -t || { msg_err "nginx configuration test failed; see nginx error above."; return 1; }
 
-    systemctl reload nginx || exit 1
+    systemctl reload nginx || return 1
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -877,7 +1022,7 @@ _panel_initial_config() {
         (SELECT value FROM settings WHERE key='webPort'),
         (SELECT value FROM settings WHERE key='webBasePath');") || return 1
     [[ "$initialized" == "$config_username|127.0.0.1|$panel_port|/$panel_path/" ]] || {
-        msg_err "3x-ui initial settings were not saved correctly."
+        msg_err "3X-UI initial settings were not saved correctly."
         return 1
     }
 }
@@ -907,22 +1052,29 @@ VERIFIED_RELEASE_JSON
 
 bootstrap_panel_dependencies() {
     local binary missing=0
-    for binary in curl python3 tar gzip sha256sum; do
+    for binary in curl python3 tar gzip sha256sum ip ss; do
         command -v "$binary" >/dev/null 2>&1 || missing=1
     done
     [[ -s /etc/ssl/certs/ca-certificates.crt ]] || missing=1
     if (( missing )); then
-        apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update || return 1
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            curl ca-certificates python3 tar gzip || return 1
+        apt_system -o APT::Update::Error-Mode=any update || { msg_err "APT list refresh failed (exit $?). Package changes are not rolled back."; return 1; }
+        apt_system -y --no-install-recommends install \
+            curl ca-certificates python3 tar gzip iproute2 || return 1
     fi
-    for binary in curl python3 tar gzip sha256sum; do
+    for binary in curl python3 tar gzip sha256sum ip ss; do
         command -v "$binary" >/dev/null 2>&1 || { msg_err "Release preflight requires $binary."; return 1; }
     done
     [[ -s /etc/ssl/certs/ca-certificates.crt ]]
 }
 
 release_panel_preflight() {
+    if [[ "${DNS_PREPARED:-n}" == y && "${DNS_FINALIZED:-n}" != y && "${DNS_ROLLBACK_ATTEMPTED:-n}" != y ]]; then
+        rollback_system_dns || msg_err 'Original DNS rollback could not be verified.'
+    fi
+    if [[ "${DNS_ROLLBACK_RESULT:-}" == failed_unverified ]]; then
+        msg_warn "Private stage retained for DNS rollback inspection: $PANEL_STAGE"
+        return 1
+    fi
     [[ -z "${PANEL_STAGE:-}" ]] || rm -rf -- "$PANEL_STAGE"
 }
 
@@ -938,7 +1090,7 @@ with tarfile.open(sys.argv[1], 'r:gz') as archive:
         if (path.is_absolute() or '..' in path.parts or not path.parts or
                 path.parts[0] != 'x-ui' or member.name in seen or
                 not (member.isfile() or member.isdir())):
-            raise ValueError('Unsafe 3x-ui archive member: '+member.name)
+            raise ValueError('Unsafe 3X-UI archive member: '+member.name)
         seen.add(member.name)
     for name in ('x-ui/x-ui', 'x-ui/x-ui.sh', 'x-ui/x-ui.service.debian',
                  'x-ui/bin/xray-linux-'+sys.argv[2]):
@@ -954,7 +1106,7 @@ _download_panel_archive() {
     if ! curl -fLsS --retry 3 --connect-timeout 15 --max-time 300 "$url" -o "$archive" ||
        ! curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 "${url}.sha256" -o "$checksum"; then
         rm -f "$archive" "$checksum"
-        msg_err "Failed to download the 3x-ui release or checksum."
+        msg_err "Failed to download the 3X-UI release or checksum."
         return 1
     fi
     expected=$(python3 - "$checksum" "${url##*/}" <<'PY'
@@ -975,7 +1127,7 @@ PY
     rm -f "$checksum"
     if [[ "$expected" != "$actual" || ( -n "$pinned" && "$pinned" != "$actual" ) ]]; then
         rm -f "$archive"
-        msg_err "3x-ui release checksum verification failed."
+        msg_err "3X-UI release checksum verification failed."
         return 1
     fi
 }
@@ -997,10 +1149,10 @@ preflight_panel_release() {
         pinned=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["archives"][sys.argv[2]])' \
             "$PANEL_STAGE/baseline.json" "$PANEL_ARCH") || return 1
     else
-        msg_warn "Explicit 3x-ui $PANEL_TAG selection: not the verified baseline; compatibility and full installer acceptance are not assured."
+        msg_warn "Explicit 3X-UI $PANEL_TAG selection: not the verified baseline; compatibility and full installer acceptance are not assured."
         curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 \
             "https://api.github.com/repos/MHSanaei/3x-ui/releases/tags/${PANEL_TAG}" \
-            -o "$PANEL_STAGE/release.json" || { msg_err "Stable 3x-ui release $PANEL_TAG is unavailable."; return 1; }
+            -o "$PANEL_STAGE/release.json" || { msg_err "Stable 3X-UI release $PANEL_TAG is unavailable."; return 1; }
         pinned=$(python3 - "$PANEL_STAGE/release.json" "$PANEL_TAG" "$asset" <<'PY'
 import json, re, sys
 release = json.load(open(sys.argv[1]))
@@ -1017,22 +1169,22 @@ if not isinstance(digest, str) or not re.fullmatch(r'sha256:[0-9a-f]{64}', diges
     raise ValueError('Release asset lacks an official SHA-256 digest')
 print(digest[7:])
 PY
-        ) || { msg_err "Unsupported or unverifiable 3x-ui release $PANEL_TAG."; return 1; }
+        ) || { msg_err "Unsupported or unverifiable 3X-UI release $PANEL_TAG."; return 1; }
     fi
     PANEL_ARCHIVE="$PANEL_STAGE/$asset"
     _download_panel_archive \
         "https://github.com/MHSanaei/3x-ui/releases/download/${PANEL_TAG}/$asset" \
         "$PANEL_ARCHIVE" "$pinned" || return 1
-    _validate_panel_archive "$PANEL_ARCHIVE" "$PANEL_ARCH" || { msg_err "Invalid 3x-ui release archive."; return 1; }
+    _validate_panel_archive "$PANEL_ARCHIVE" "$PANEL_ARCH" || { msg_err "Invalid 3X-UI release archive."; return 1; }
     chmod 400 "$PANEL_ARCHIVE" || return 1
-    msg_ok "3x-ui $PANEL_TAG archive verified before deployment cleanup."
+    msg_ok "3X-UI $PANEL_TAG archive verified before deployment cleanup."
 }
 
 install_panel() {
     local tag_version="${PANEL_TAG:?Release preflight is required}" archive="${PANEL_ARCHIVE:?Release preflight is required}"
     [[ -f "$archive" ]] || { msg_err "Verified release archive is unavailable."; return 1; }
     cd /usr/local/ || return 1
-    echo "Installing 3x-ui ${tag_version} ..."
+    echo "Installing 3X-UI ${tag_version} ..."
 
     [[ -d /usr/local/x-ui/ ]] && systemctl stop x-ui 2>/dev/null; rm -rf /usr/local/x-ui/
     if ! tar zxvf "$archive" -C /usr/local; then
@@ -1057,7 +1209,7 @@ install_panel() {
     cp -f x-ui.service.debian /etc/systemd/system/x-ui.service
     systemctl daemon-reload
 
-    msg_ok "3x-ui ${tag_version} installed."
+    msg_ok "3X-UI ${tag_version} installed."
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1088,7 +1240,7 @@ configure_xui_db() {
 
     x-ui stop 2>/dev/null || true
 
-    local output private_key public_key trojan_pass emoji_flag xray_bin
+    local output private_key public_key trojan_pass xray_bin
     # install_panel renames armv5/6/7 binaries to xray-linux-arm
     xray_bin="/usr/local/x-ui/bin/xray-linux-$(_arch)"
     [[ -f "$xray_bin" ]] || xray_bin="/usr/local/x-ui/bin/xray-linux-arm"
@@ -1336,16 +1488,17 @@ EOF
 # ─────────────────────────────────────────────────────────────────────────────
 install_clash_sub() {
     local clash_dir="/var/www/subpage"
-    mkdir -p "${clash_dir}"
+    mkdir -p "${clash_dir}" || return 1
     if curl -fsSL "${GITHUB_RAW}/assets/clash/clash.yaml" -o "${clash_dir}/clash.yaml.tpl"; then
         # Substitute domain and sub_path; leave ${EMAIL} for mtr-backend to fill per-request
-        sed -i "s|\${DOMAIN}|${domain}|g"     "${clash_dir}/clash.yaml.tpl"
-        sed -i "s|\${SUB_PATH}|${sub_path}|g" "${clash_dir}/clash.yaml.tpl"
-        chown -R www-data:www-data "${clash_dir}" 2>/dev/null || true
-        chmod 644 "${clash_dir}/clash.yaml.tpl"
+        sed -i "s|\${DOMAIN}|${domain}|g"     "${clash_dir}/clash.yaml.tpl" || return 1
+        sed -i "s|\${SUB_PATH}|${sub_path}|g" "${clash_dir}/clash.yaml.tpl" || return 1
+        chown -R www-data:www-data "${clash_dir}" 2>/dev/null || return 1
+        chmod 644 "${clash_dir}/clash.yaml.tpl" || return 1
         msg_ok "Clash subscription template installed."
     else
         msg_err "Failed to download clash.yaml from GitHub."
+        return 1
     fi
 }
 
@@ -1355,13 +1508,14 @@ install_fake_site() {
     site_id=$(printf "site-%02d" "$idx")
     local url="${GITHUB_RAW}/assets/fake-sites/${site_id}/index.html"
 
-    mkdir -p /var/www/html
+    mkdir -p /var/www/html || return 1
     if curl -fsSL "$url" -o /var/www/html/index.html; then
-        chown -R www-data:www-data /var/www/html 2>/dev/null || true
-        chmod 644 /var/www/html/index.html
+        chown -R www-data:www-data /var/www/html 2>/dev/null || return 1
+        chmod 644 /var/www/html/index.html || return 1
         msg_ok "Fake cover site '${site_id}' installed."
     else
         msg_err "Failed to download fake site ${site_id} from GitHub."
+        return 1
     fi
 }
 
@@ -1373,34 +1527,34 @@ install_diagnostics() {
     local backend_script="/usr/local/lib/3x-ui-pro/mtr-backend.py"
 
     # Diagnostics HTML page
-    mkdir -p "${diag_webroot}"
-    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/index.html" -o "${diag_webroot}/index.html"
+    mkdir -p "${diag_webroot}" || return 1
+    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/index.html" -o "${diag_webroot}/index.html" || return 1
     sed -i \
         -e "s|__DIAG_PATH__|${diag_path}|g" \
         -e "s|__SERVER_DOMAIN__|${domain}|g" \
         -e "s|__SERVER_IP__|${IP4}|g" \
-        "${diag_webroot}/index.html"
+        "${diag_webroot}/index.html" || return 1
 
     # LibreSpeed engine (speed test frontend, LGPL — github.com/librespeed/speedtest)
     curl -fsSL "${GITHUB_RAW}/assets/diagnostics/librespeed/speedtest.js" \
-        -o "${diag_webroot}/speedtest.js"
+        -o "${diag_webroot}/speedtest.js" || return 1
     curl -fsSL "${GITHUB_RAW}/assets/diagnostics/librespeed/speedtest_worker.js" \
-        -o "${diag_webroot}/speedtest_worker.js"
+        -o "${diag_webroot}/speedtest_worker.js" || return 1
 
     # Test download files
     local testfiles="${diag_webroot}/testfiles"
-    mkdir -p "${testfiles}"
-    [[ -f "${testfiles}/test-15k.bin"  ]] || dd if=/dev/zero bs=1024    count=15   of="${testfiles}/test-15k.bin"  status=none
-    [[ -f "${testfiles}/test-17k.bin"  ]] || dd if=/dev/zero bs=1024    count=17   of="${testfiles}/test-17k.bin"  status=none
-    [[ -f "${testfiles}/test-100m.bin" ]] || dd if=/dev/zero bs=1048576 count=100  of="${testfiles}/test-100m.bin" status=none
-    [[ -f "${testfiles}/test-1g.bin"   ]] || dd if=/dev/zero bs=1048576 count=1024 of="${testfiles}/test-1g.bin"   status=none
-    rm -f "${testfiles}/test-512m.bin"   # only used by the old single-stream speed test
-    chown -R www-data:www-data "${diag_webroot}" 2>/dev/null || true
+    mkdir -p "${testfiles}" || return 1
+    [[ -f "${testfiles}/test-15k.bin"  ]] || dd if=/dev/zero bs=1024    count=15   of="${testfiles}/test-15k.bin"  status=none || return 1
+    [[ -f "${testfiles}/test-17k.bin"  ]] || dd if=/dev/zero bs=1024    count=17   of="${testfiles}/test-17k.bin"  status=none || return 1
+    [[ -f "${testfiles}/test-100m.bin" ]] || dd if=/dev/zero bs=1048576 count=100  of="${testfiles}/test-100m.bin" status=none || return 1
+    [[ -f "${testfiles}/test-1g.bin"   ]] || dd if=/dev/zero bs=1048576 count=1024 of="${testfiles}/test-1g.bin"   status=none || return 1
+    rm -f "${testfiles}/test-512m.bin" || return 1   # only used by the old single-stream speed test
+    chown -R www-data:www-data "${diag_webroot}" 2>/dev/null || return 1
 
     # MTR backend Python script
-    mkdir -p "$(dirname "${backend_script}")"
-    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/mtr-backend.py" -o "${backend_script}"
-    chmod 755 "${backend_script}"
+    mkdir -p "$(dirname "${backend_script}")" || return 1
+    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/mtr-backend.py" -o "${backend_script}" || return 1
+    chmod 755 "${backend_script}" || return 1
 
     # Grant mtr raw socket capability (runs as restricted user, no root needed)
     # mtr-packet is the helper that actually opens the raw socket
@@ -1409,7 +1563,7 @@ install_diagnostics() {
 
     # Dedicated system user for mtr-backend
     id mtr-backend &>/dev/null || \
-        useradd --system --no-create-home --shell /usr/sbin/nologin mtr-backend
+        useradd --system --no-create-home --shell /usr/sbin/nologin mtr-backend || return 1
 
     # Systemd service for mtr-backend
     cat > /etc/systemd/system/mtr-backend.service <<EOF
@@ -1451,10 +1605,11 @@ SyslogIdentifier=mtr-backend
 [Install]
 WantedBy=multi-user.target
 EOF
+    [[ $? -eq 0 ]] || return 1
 
-    systemctl daemon-reload
-    systemctl enable mtr-backend
-    systemctl restart mtr-backend
+    systemctl daemon-reload || return 1
+    systemctl enable mtr-backend || return 1
+    systemctl restart mtr-backend || return 1
 
     msg_ok "Network diagnostics installed at https://${domain}/${panel_path}/diag (panel login required)"
 }
@@ -1717,40 +1872,70 @@ check_installation() {
 # FIREWALL
 # ─────────────────────────────────────────────────────────────────────────────
 setup_firewall() {
-    local status port client_ip client_port server_ip extra ssh_config
+    local status port socket_state socket_listen='' ssh_config='' detected
     local -a ssh_ports=()
     status=$(LC_ALL=C ufw status) || return 1
     case "$status" in
         "Status: active"*|"Status: inactive"*) ;;
         *) msg_err "Cannot determine UFW status." >&2; return 1 ;;
     esac
-
     for port in 80/tcp 443/tcp 443/udp; do
         ufw allow "$port" || return 1
     done
     [[ "$status" == "Status: active"* ]] && return 0
 
-    read -r client_ip client_port server_ip port extra <<< "${SSH_CONNECTION:-}"
-    if [[ -n "$client_ip" && -n "$client_port" && -n "$server_ip" && -z "$extra" && "$port" =~ ^[0-9]{1,5}$ ]] \
-       && (( 10#$port >= 1 && 10#$port <= 65535 )); then
-        ssh_ports=("$port")
-    else
-        ssh_config=$(sshd -T 2>/dev/null) || ssh_config=""
-        mapfile -t ssh_ports < <(awk '$1 == "port" {print $2}' <<< "$ssh_config" | sort -u)
-    fi
-
-    local ssh_allowed=false
+    socket_state=$(systemctl is-active ssh.socket 2>/dev/null) || :
+    case "$socket_state" in
+        active) socket_listen=$(systemctl show ssh.socket -p Listen --value 2>/dev/null) || socket_listen='' ;;
+        inactive|failed) ssh_config=$(sshd -T 2>/dev/null) || ssh_config='' ;;
+        *) echo 'WARNING: Cannot determine ssh.socket state; UFW was not enabled automatically.' >&2; return 0 ;;
+    esac
+    detected=$(python3 - "${SSH_CONNECTION:-}" "$socket_state" "$socket_listen" "$ssh_config" <<'PYSSH'
+import ipaddress, re, sys
+connection, state, listen, effective = sys.argv[1:]
+def port(value):
+    if not re.fullmatch(r'[0-9]{1,5}', value) or not 1 <= int(value) <= 65535:
+        raise ValueError('Invalid SSH port')
+    return int(value)
+ports = set()
+try:
+    fields = connection.split()
+    if len(fields) == 4:
+        ipaddress.ip_address(fields[0]); ipaddress.ip_address(fields[2]); port(fields[1])
+        ports.add(port(fields[3]))
+except ValueError:
+    pass
+try:
+    if state == 'active':
+        endpoints = re.findall(r'(\S+)\s+\(Stream\)', listen)
+        if not endpoints or re.sub(r'\S+\s+\(Stream\)', '', listen).strip():
+            raise ValueError('Unrecognized ssh.socket Listen')
+        for endpoint in endpoints:
+            match = re.fullmatch(r'\[([^\]]+)\]:([0-9]+)|([^:\s]+):([0-9]+)|([0-9]+)', endpoint)
+            if not match: raise ValueError('Unrecognized SSH endpoint')
+            if match[1]:
+                if ipaddress.ip_address(match[1]).version != 6: raise ValueError('Invalid IPv6 endpoint')
+            elif match[3] and match[3] != '*':
+                if ipaddress.ip_address(match[3]).version != 4: raise ValueError('Invalid IPv4 endpoint')
+            ports.add(port(match[2] or match[4] or match[5]))
+    else:
+        for value in re.findall(r'^port (\S+)$', effective, re.M):
+            try: ports.add(port(value))
+            except ValueError: pass
+    if not ports: raise ValueError('No confirmed SSH port')
+except ValueError:
+    sys.exit(1)
+print('\n'.join(map(str, sorted(ports))))
+PYSSH
+    ) || {
+        echo 'WARNING: SSH port could not be detected reliably (including active ssh.socket). Application rules were added, but UFW was not enabled automatically.' >&2
+        return 0
+    }
+    mapfile -t ssh_ports <<< "$detected"
     for port in "${ssh_ports[@]}"; do
-        if [[ "$port" =~ ^[0-9]{1,5}$ ]] && (( 10#$port >= 1 && 10#$port <= 65535 )); then
-            ufw allow "$((10#$port))/tcp" || return 1
-            ssh_allowed=true
-        fi
+        ufw allow "$port/tcp" || return 1
     done
-    if [[ "$ssh_allowed" == true ]]; then
-        ufw --force enable || return 1
-    else
-        echo "WARNING: UFW is inactive and the SSH port could not be detected. Application rules were added, but UFW was not enabled automatically." >&2
-    fi
+    ufw --force enable || return 1
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1759,10 +1944,8 @@ setup_firewall() {
 select_amneziawg() {
     INSTALL_AWG=n
     local answer
-    msg_inf 'AMNEZIAWG'
-    echo 'Optional AmneziaWG 3.1; add clients later in the panel.'
     while true; do
-        printf 'Install AmneziaWG on UDP port 8443? [y/N]: '
+        printf 'Set up an additional AmneziaWG connection? [y/N]: '
         IFS= read -r answer || return 0
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -1772,15 +1955,78 @@ select_amneziawg() {
     done
 }
 
-preflight_amneziawg() {
-    [[ "${INSTALL_AWG:-n}" == y ]] || return 0
-    [[ "${PANEL_TAG:-}" == v3.9.0 ]] || { msg_err "AmneziaWG 3.1 integration requires verified 3x-ui v3.9.0."; return 1; }
-    # Python is guaranteed by release preflight even on a clean OS.
-    python3 - <<'PYPORT' || return 1
-import socket
-with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as listener:
-    listener.bind(('0.0.0.0',8443))
+awg_port_available() {
+    python3 - <<'PYPORT'
+import errno, socket, sys
+for family, address in ((socket.AF_INET,'0.0.0.0'), (socket.AF_INET6,'::')):
+    try:
+        with socket.socket(family, socket.SOCK_DGRAM) as listener:
+            if family == socket.AF_INET6: listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            listener.bind((address,8443))
+    except OSError as error:
+        if family == socket.AF_INET6 and error.errno in (errno.EAFNOSUPPORT, errno.EADDRNOTAVAIL): continue
+        sys.exit(1 if error.errno == errno.EADDRINUSE else 2)
 PYPORT
+}
+
+check_awg_reinstall_owner() {
+    systemctl is-active --quiet x-ui || return 1
+    python3 - "${XUIDB:-/etc/x-ui/x-ui.db}" <<'PYOWNER'
+import os, pathlib, re, sqlite3, subprocess, sys
+try:
+    unit = pathlib.Path('/etc/systemd/system/x-ui.service')
+    if not unit.is_file() or unit.is_symlink(): sys.exit(1)
+    with sqlite3.connect(pathlib.Path(sys.argv[1]).as_uri()+'?mode=ro', uri=True) as db:
+        rows = db.execute("SELECT protocol,listen,port,tag,enable FROM inbounds WHERE protocol='amneziawg' OR tag='inbound-8443-udp'").fetchall()
+    if rows != [('amneziawg','0.0.0.0',8443,'inbound-8443-udp',1)]: sys.exit(1)
+    main = int(subprocess.check_output(['systemctl','show','x-ui','-p','MainPID','--value'], text=True).strip())
+    if main <= 1 or os.readlink(f'/proc/{main}/exe') != '/usr/local/x-ui/x-ui': sys.exit(1)
+    listing = subprocess.check_output(['ss','-H','-lntup'], text=True)
+    owners = set()
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) < 6 or fields[:2] != ['udp','UNCONN'] or fields[4].rsplit(':',1)[-1] != '8443': continue
+        pids = set(map(int, re.findall(r'pid=(\d+)',line)))
+        if fields[4] not in ('*:8443','0.0.0.0:8443','[::]:8443',':::8443') or len(pids) != 1: sys.exit(1)
+        owners.update(pids)
+    if len(owners) != 1: sys.exit(1)
+    pid = owners.pop()
+    # Official 3X-UI v3.9.0 embeds AWG in the panel process. A managed
+    # Xray child is also accepted; neither case admits a foreign owner.
+    if pid == main: sys.exit(0)
+    executable = pathlib.Path(os.readlink(f'/proc/{pid}/exe'))
+    parent = int(pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(')',1)[1].split()[1])
+    if (parent != main or executable.parent != pathlib.Path('/usr/local/x-ui/bin')
+            or not re.fullmatch(r'xray-linux-[A-Za-z0-9_-]+',executable.name) or not executable.is_file()): sys.exit(1)
+except (OSError, ValueError, sqlite3.Error, subprocess.CalledProcessError):
+    sys.exit(1)
+PYOWNER
+}
+
+prepare_awg_reinstall() {
+    [[ "${AWG_REINSTALL:-n}" == y ]] || return 0
+    check_awg_reinstall_owner || { msg_err 'AWG ownership changed before cleanup; existing deployment preserved.'; return 1; }
+    systemctl stop x-ui || { msg_err 'Cannot stop owned 3X-UI before AWG reinstall; configuration preserved.'; return 1; }
+    if ! awg_port_available; then
+        systemctl start x-ui || msg_warn 'Previous 3X-UI restart failed; inspect services. Configuration retained.'
+        msg_err 'UDP/8443 did not become available after stopping owned 3X-UI/Xray; reinstall stopped before cleanup.'
+        return 1
+    fi
+}
+
+preflight_amneziawg() {
+    AWG_REINSTALL=n
+    [[ "${INSTALL_AWG:-n}" == y ]] || return 0
+    [[ "${PANEL_TAG:-}" == v3.9.0 ]] || { msg_err "AmneziaWG 3.1 integration requires verified 3X-UI v3.9.0."; return 1; }
+    local port_result=0
+    awg_port_available || port_result=$?
+    if (( port_result != 0 )); then
+        (( port_result == 1 )) && check_awg_reinstall_owner || {
+            msg_err 'UDP/8443 is unavailable and a unique owned AWG listener could not be confirmed; existing deployment preserved.'
+            return 1
+        }
+        AWG_REINSTALL=y
+    fi
     AWG_HELPER="${PANEL_STAGE:?Release preflight is required}/managed-amneziawg.py"
     curl -fsSL --connect-timeout 15 --max-time 60 "${GITHUB_RAW}/assets/amneziawg/managed.py" -o "$AWG_HELPER" || return 1
 }
@@ -1795,11 +2041,9 @@ install_amneziawg() {
 
 select_adguard() {
     INSTALL_AGH=n
-    msg_inf "ADGUARD HOME"
-    echo "Optional filtering DNS and DoH through the panel domain."
     local answer
     while true; do
-        printf 'Install AdGuard Home with DNS-over-HTTPS? [y/N]: '
+        printf 'Install and configure AdGuard Home? [y/N]: '
         if ! IFS= read -r answer; then return 0; fi
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -1993,7 +2237,7 @@ install_adguard() {
         AGH_PASSWORD=''
         if (( result == 0 )); then
             AGH_RESULT=failed_rolled_back
-            msg_warn 'Core 3x-ui stack remains operational.'
+            msg_warn 'Core 3X-UI stack remains operational.'
         else
             msg_err 'Rollback could not be verified. Inspect nginx and core services.'
         fi
@@ -2007,24 +2251,30 @@ install_adguard() {
 show_results() {
     local version version_label="" firewall
     version=$(/usr/local/x-ui/x-ui -v 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1) || version=""
-    [[ -n "$version" ]] && version_label=" (3x-ui ${version})"
+    [[ -n "$version" ]] && version_label=" (3X-UI ${version})"
 
     echo
     msg_inf '============================================================'
-    msg_inf '  3x-ui Auto Nginx — Installation Result'
+    msg_inf " [i] Base OS                ${BASE_OS_RESULT:-not_prepared} (full upgrade is not rollbackable)"
+    msg_inf " [i] Local timezone         $(timedatectl show -p Timezone --value)"
+    if [[ "${INSTALL_SECURITY:-n}" == y ]]; then
+        msg_inf ' [i] APT schedule           update 02:30 / upgrade 02:50; reboot 04:38, including logged-in users'
+    fi
+    [[ ! -e /var/run/reboot-required ]] || msg_warn ' [!] Reboot required; post-reboot acceptance pending'
+    msg_inf '  3X-UI Auto Nginx — Installation Result'
     msg_inf '============================================================'
     # The core passed its initial gate; optional rollback may leave its current health unverified.
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
-        msg_warn ' [!] 3x-ui / Xray           Post-rollback health not verified'
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
+        msg_warn ' [!] 3X-UI / Xray           Post-rollback health not verified'
     else
-        msg_ok " [✓] 3x-ui / Xray           Running${version_label}"
+        msg_ok " [✓] 3X-UI / Xray           Running${version_label}"
     fi
     case "${CPU_SUPPORT_LEVEL:-info}" in
         ok)   msg_ok " [✓] CPU support             ${CPU_SUPPORT_TEXT}" ;;
         warn) msg_warn " [!] CPU support             ${CPU_SUPPORT_TEXT}" ;;
         *)    msg_inf " [i] CPU support             ${CPU_SUPPORT_TEXT:-Compatible (acceleration not assessed)}" ;;
     esac
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_warn ' [!] nginx                  Post-rollback health not verified'
     else
         msg_ok ' [✓] nginx                  Running'
@@ -2036,12 +2286,12 @@ show_results() {
     else
         msg_warn ' [!] TLS certificates       Check certificate files'
     fi
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_warn ' [!] XHTTP                  Post-rollback health not verified'
     else
         msg_ok ' [✓] XHTTP                  Ready'
     fi
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_warn ' [!] Diagnostics            Post-rollback health not verified'
     elif [[ -s /var/www/diagnostics/index.html && -s /var/www/diagnostics/speedtest.js &&
           -s /var/www/diagnostics/speedtest_worker.js && -s /usr/local/lib/3x-ui-pro/mtr-backend.py ]]; then
@@ -2058,6 +2308,23 @@ show_results() {
         configured) msg_ok " [✓] AmneziaWG              Configured (UDP/8443)" ;;
         failed) msg_warn " [!] AmneziaWG              Not configured" ;;
     esac
+    case "${SECURITY_RESULT:-not_requested}" in
+        configured) msg_ok ' [✓] VPS Security + DoT     Configured (strict system TLS DNS)' ;;
+        failed_rolled_back) msg_warn ' [!] VPS Security + DoT     Failed — rolled back / unchanged' ;;
+        failed_unverified) msg_warn ' [!] VPS Security + DoT     Failed — rollback not verified' ;;
+    esac
+    case "${VISION_RESULT:-not_requested}" in
+        configured) msg_ok " [✓] VLESS TLS Vision       Ready ($vision_domain:443)" ;;
+        failed_rolled_back) msg_warn ' [!] VLESS TLS Vision       Failed — rolled back' ;;
+        failed_unverified) msg_warn ' [!] VLESS TLS Vision       Failed — rollback not verified' ;;
+    esac
+    case "${CLIENT_RESULT:-not_requested}" in
+        configured)
+            msg_ok ' [✓] Client                  Created'
+            msg_ok ' [✓] Subscription            Ready'
+            ;;
+        failed_unverified) msg_warn ' [!] Client / Subscription   Failed verification — inspect panel before retrying' ;;
+    esac
     case "${AGH_RESULT:-not_requested}" in
         installed)
             msg_ok ' [✓] AdGuard Home           Running (v0.107.79)'
@@ -2069,7 +2336,7 @@ show_results() {
             msg_warn ' [!] AdGuard Home           Failed — rollback not verified'
             msg_warn ' [!] DNS-over-HTTPS         State not verified' ;;
     esac
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_warn ' [!] Certificate renewal    Post-rollback health not verified'
     else
         msg_ok ' [✓] Certificate renewal    Webroot + systemd timer'
@@ -2087,15 +2354,28 @@ show_results() {
     msg_inf "\n Diagnostics (panel login required):"
     msg_inf " https://${domain}/${panel_path}/diag"
     printf '\n Username: %s\n Password: %s\n' "$config_username" "$config_password"
+    if [[ "${CLIENT_RESULT:-not_requested}" == configured ]]; then
+        local subscription_url
+        subscription_url=$(printf '%s' "$CLIENT_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["url"])')
+        msg_inf "\n Subscription:"
+        msg_inf " $subscription_url"
+        printf '%s' "$CLIENT_OUTPUT" | python3 -c 'import json,sys; print(" " + " / ".join(json.load(sys.stdin)["protocols"]))'
+        CLIENT_OUTPUT=''
+    fi
+    if [[ "${AWG_RESULT:-not_requested}" == configured ]]; then
+        msg_inf "\n AmneziaWG:"
+        msg_inf ' AWG vpn:// export requires an Amnezia-compatible application.'
+    fi
     msg_inf "\n Backup:"
     printf ' x-ui-backup backup\n\n'
     if [[ "${AGH_RESULT:-not_requested}" == installed ]]; then
-        msg_inf " AdGuard Home: https://${domain}/${AGH_PATH}/"
+        msg_inf " AdGuard Home:"
+        msg_inf " https://${domain}/${AGH_PATH}/"
         printf ' Login: admin\n Password: %s\n DoH: https://%s/dns-query\n\n' "$AGH_PASSWORD" "$domain"
         AGH_PASSWORD=''
     elif [[ "${AGH_RESULT:-not_requested}" == failed_rolled_back ]]; then
-        msg_warn ' AdGuard Home was not installed. The core 3x-ui stack remains operational.'
-    elif [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
+        msg_warn ' AdGuard Home was not installed. The core 3X-UI stack remains operational.'
+    elif [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_warn ' Post-rollback core health could not be verified. Inspect nginx and core services.'
     fi
     msg_inf '============================================================'
@@ -2106,39 +2386,305 @@ show_results() {
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
+select_security() {
+    local answer
+    INSTALL_SECURITY=n
+    printf 'Enhance VPS security? [Y/n]: '
+    while IFS= read -r answer; do
+        case "$answer" in
+            ''|y|Y) INSTALL_SECURITY=y; return 0 ;;
+            n|N) return 0 ;;
+            *) printf 'Please enter y or n.\n' ;;
+        esac
+    done
+    return 0
+}
+
+select_vision() {
+    local answer
+    INSTALL_VISION=n
+    while true; do
+        printf 'Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]: '
+        IFS= read -r answer || return 0
+        case "$answer" in
+            ''|n|N) return 0 ;;
+            y|Y) break ;;
+            *) printf 'Please enter y or n.\n' ;;
+        esac
+    done
+    printf 'Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains): '
+    IFS= read -r vision_domain || return 1
+    vision_domain=${vision_domain,,}
+    [[ -n "$vision_domain" ]] || return 1
+    INSTALL_VISION=y
+}
+
+select_client() {
+    local answer
+    CREATE_CLIENT=n
+    while true; do
+        printf 'Create a client in 3X-UI and display a subscription link after installation? [Y/n]: '
+        IFS= read -r answer || return 0
+        case "$answer" in
+            ''|y|Y) CREATE_CLIENT=y; return 0 ;;
+            n|N) return 0 ;;
+            *) printf 'Please enter y or n.\n' ;;
+        esac
+    done
+}
+
+preflight_vision_artifacts() {
+    VISION_PREVIOUS_HOOK=''
+    VISION_OWNED_LINEAGE=''
+    local name file hook old_domain='' nginx_domain=''
+    for name in vision vision-acme; do
+        file="/etc/nginx/sites-available/$name.conf"
+        if [[ -e "$file" || -L "$file" ]]; then
+            [[ -f "$file" && ! -L "$file" && "$(head -n1 "$file")" == '# Managed by 3x-ui Auto Nginx: Vision' &&
+               "$(stat -c '%u:%g:%a' "$file")" == '0:0:644' ]] || { msg_err "Unowned Vision artifact: $file"; return 1; }
+        fi
+        file="/etc/nginx/sites-enabled/$name.conf"
+        if [[ -e "$file" || -L "$file" ]]; then
+            [[ -L "$file" && "$(readlink "$file")" == "/etc/nginx/sites-available/$name.conf" ]] || {
+                msg_err "Unowned Vision link: $file"; return 1;
+            }
+        fi
+    done
+    if [[ -f /etc/nginx/sites-available/vision.conf || -f /etc/nginx/sites-available/vision-acme.conf ]]; then
+        nginx_domain=$(python3 "$PANEL_STAGE/managed-vision.py" --preflight-nginx \
+            /etc/nginx/sites-available/vision.conf /etc/nginx/sites-available/vision-acme.conf) || {
+            msg_err 'Modified/unrecognized Vision nginx configuration; deployment preserved.'; return 1;
+        }
+    fi
+    hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision
+    if [[ -e "$hook" || -L "$hook" ]]; then
+        [[ -f "$hook" && ! -L "$hook" && "$(stat -c '%u:%g:%a' "$hook")" == '0:0:755' ]] || return 1
+        old_domain=$(sed -n 's/^VISION_DOMAIN=//p' "$hook")
+        [[ "$old_domain" =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ && "$old_domain" == *.* ]] || return 1
+        cmp -s "$hook" <(render_vision_hook "$old_domain") ||
+            cmp -s "$hook" <(render_vision_hook "$old_domain" legacy) || { msg_err 'Unowned Vision deploy-hook; deployment preserved.'; return 1; }
+        [[ -z "$nginx_domain" || "$old_domain" == "$nginx_domain" ]] || { msg_err 'Vision hook/nginx domains differ.'; return 1; }
+        VISION_PREVIOUS_HOOK=owned
+    fi
+    if [[ "${INSTALL_VISION:-n}" == y ]] &&
+       [[ -e "/etc/letsencrypt/live/$vision_domain" || -L "/etc/letsencrypt/live/$vision_domain" ||
+          -e "/etc/letsencrypt/archive/$vision_domain" || -L "/etc/letsencrypt/archive/$vision_domain" ||
+          -e "/etc/letsencrypt/renewal/$vision_domain.conf" || -L "/etc/letsencrypt/renewal/$vision_domain.conf" ]]; then
+        [[ "$VISION_PREVIOUS_HOOK" == owned && "$old_domain" == "$vision_domain" && "$nginx_domain" == "$vision_domain" &&
+           -f /etc/nginx/sites-available/vision.conf && -f /etc/nginx/sites-available/vision-acme.conf ]] || {
+            msg_err 'Existing Vision lineage has no complete verified project ownership; deployment preserved.'; return 1;
+        }
+        check_webroot_lineage "$vision_domain" || return 1
+        VISION_OWNED_LINEAGE=$vision_domain
+    fi
+}
+
+preflight_integrated_features() {
+    if [[ "${INSTALL_VISION:-n}" == y || "${CREATE_CLIENT:-n}" == y ]]; then
+        [[ "$PANEL_TAG" == v3.9.0 ]] || {
+            msg_err 'Vision and initial client require verified 3X-UI v3.9.0; select N with other versions.'; return 1;
+        }
+        # Reuse the existing authenticated local HTTPS/CSRF implementation.
+        AWG_HELPER="$PANEL_STAGE/managed-amneziawg.py"
+        curl -fsSL --connect-timeout 15 --max-time 60 "$GITHUB_RAW/assets/amneziawg/managed.py" -o "$AWG_HELPER" || return 1
+    fi
+    local feature
+    for feature in security vision client; do
+        case "$feature" in
+            security) [[ "${INSTALL_SECURITY:-n}" == y ]] || continue ;;
+            vision) [[ "${INSTALL_VISION:-n}" == y || -e /etc/nginx/sites-available/vision.conf || -e /etc/nginx/sites-available/vision-acme.conf ]] || continue ;;
+            client) [[ "${CREATE_CLIENT:-n}" == y ]] || continue ;;
+        esac
+        curl -fsSL --connect-timeout 15 --max-time 60 "$GITHUB_RAW/assets/$feature/managed.py" -o "$PANEL_STAGE/managed-$feature.py" || return 1
+        python3 - "$PANEL_STAGE/managed-$feature.py" <<'PYCHECK' || return 1
+import ast, sys
+ast.parse(open(sys.argv[1]).read())
+PYCHECK
+    done
+    preflight_vision_artifacts || return 1
+    if [[ "${INSTALL_SECURITY:-n}" == y ]]; then
+        local security_preflight
+        if ! security_preflight=$(python3 "$PANEL_STAGE/managed-security.py" --preflight); then
+            printf '%s' "$security_preflight" | python3 -c 'import json,sys; [print("[!] Security preflight: "+w, file=sys.stderr) for w in json.load(sys.stdin)["warnings"]]'
+            return 1
+        fi
+    fi
+    [[ "${INSTALL_VISION:-n}" == y ]] || return 0
+    get_server_ip
+    python3 - "$vision_domain" "$domain" "$reality_domain" "$IP4" "$IP6" <<'PYDOMAIN' || return 1
+import ipaddress, re, socket, sys
+name, panel, reality, ipv4, ipv6 = sys.argv[1:]
+if (len(name)>253 or '.' not in name or name.lower() in (panel.lower(), reality.lower())
+    or not all(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label) for label in name.split('.'))):
+    sys.exit('Invalid/conflicting Vision domain; deployment preserved')
+expected = {str(ipaddress.ip_address(ip)) for ip in (ipv4, ipv6) if ip}
+actual = {str(ipaddress.ip_address(row[4][0])) for row in socket.getaddrinfo(name, 443, type=socket.SOCK_STREAM)}
+if not actual or not expected or not actual <= expected:
+    sys.exit('Every Vision A/AAAA record must point to this VPS; deployment preserved')
+PYDOMAIN
+}
+
+render_vision_hook() {
+    local readiness="--connect-timeout 2 --max-time 3 --retry 4 --retry-delay 1 --retry-max-time 10 --retry-all-errors"
+    # Recognize only the exact previous canonical hook for existing installations/archives.
+    [[ "${2:-}" != legacy ]] || readiness="--connect-timeout 5 --max-time 20"
+    printf '#!/usr/bin/env bash\nset -Eeuo pipefail\nVISION_DOMAIN=%q\n' "$1"
+    cat <<'VISIONHOOK'
+[[ "${RENEWED_LINEAGE:-}" == "/etc/letsencrypt/live/$VISION_DOMAIN" ]] || exit 0
+openssl x509 -in "$RENEWED_LINEAGE/fullchain.pem" -noout -checkend 0 -checkhost "$VISION_DOMAIN"
+cert_key=$(openssl x509 -in "$RENEWED_LINEAGE/fullchain.pem" -pubkey -noout)
+private_key=$(openssl pkey -in "$RENEWED_LINEAGE/privkey.pem" -pubout)
+[[ "$cert_key" == "$private_key" ]] || exit 1
+# Xray 26.9.30 polls files hourly; ensure the deployed certificate is used now.
+systemctl restart x-ui
+systemctl is-active --quiet x-ui
+curl -q -fsS --noproxy '*' --http1.1 --resolve "$VISION_DOMAIN:443:127.0.0.1" \
+VISIONHOOK
+    printf '    %s "https://$VISION_DOMAIN/" >/dev/null\n' "$readiness"
+}
+
+install_vision() {
+    VISION_RESULT=failed_unverified
+    local new_lineage=0 result=0 vision_output='' hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision vision_port fallback_port vision_stage='rendering ACME configuration' vision_exit=1
+    vision_port=$(make_port)
+    fallback_port=$(make_port)
+    while [[ "$fallback_port" == "$vision_port" ]]; do fallback_port=$(make_port); done
+    [[ -e "/etc/letsencrypt/live/$vision_domain" || -e "/etc/letsencrypt/renewal/$vision_domain.conf" ]] || new_lineage=1
+    if (( ! new_lineage )) && [[ "${VISION_OWNED_LINEAGE:-}" != "$vision_domain" ]]; then
+        VISION_RESULT=failed_rolled_back
+        msg_warn 'Existing Vision lineage was not approved by project ownership preflight; preserved.'
+        return 1
+    fi
+    if python3 "$PANEL_STAGE/managed-vision.py" --render-acme "$vision_domain" > /etc/nginx/sites-available/vision-acme.conf &&
+       { vision_stage='activating ACME configuration'; chmod 0644 /etc/nginx/sites-available/vision-acme.conf &&
+         ln -s /etc/nginx/sites-available/vision-acme.conf /etc/nginx/sites-enabled/vision-acme.conf; } &&
+       { vision_stage='validating ACME nginx configuration'; nginx -t; } &&
+       { vision_stage='reloading ACME nginx'; systemctl reload nginx; } &&
+       { vision_stage='issuing/checking Vision certificate'; if (( new_lineage )); then
+             certbot certonly --webroot --webroot-path /var/www/acme --cert-name "$vision_domain" \
+                 -d "$vision_domain" --non-interactive --agree-tos --register-unsafely-without-email;
+         else check_webroot_lineage "$vision_domain";
+         fi; } &&
+       { vision_stage='installing Vision renewal hook'; render_vision_hook "$vision_domain" > "$hook" && chown root:root "$hook" && chmod 0755 "$hook" && bash -n "$hook"; } &&
+       { vision_stage='configuring Vision inbound/nginx/HTTPS'; vision_output=$(printf '%s' "$config_password" | python3 "$PANEL_STAGE/managed-vision.py" "$AWG_HELPER" \
+           "$domain" "$panel_path" "$config_username" "$vision_domain" "$vision_port" "$fallback_port" "${emoji_flag:-🌐}"); }; then
+        VISION_RESULT=configured
+        return 0
+    else
+        vision_exit=$?
+    fi
+    if [[ -n "$vision_output" ]]; then
+        VISION_RESULT=$(printf '%s' "$vision_output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])') || VISION_RESULT=failed_unverified
+    elif [[ "$vision_stage" == 'configuring Vision inbound/nginx/HTTPS' ]]; then
+        # No result after entering the API helper cannot establish rollback.
+        VISION_RESULT=failed_unverified
+    else
+        # Failure before API changes; only newly owned webroot/hook artifacts exist.
+        VISION_RESULT=failed_rolled_back
+    fi
+    if [[ "$VISION_RESULT" == failed_rolled_back ]]; then
+        rm -f "$hook" || result=1
+        rm -f /etc/nginx/sites-enabled/vision-acme.conf /etc/nginx/sites-available/vision-acme.conf || result=1
+        if (( new_lineage )) && [[ -e "/etc/letsencrypt/live/$vision_domain" || -e "/etc/letsencrypt/renewal/$vision_domain.conf" ]]; then
+            certbot delete --cert-name "$vision_domain" --non-interactive || result=1
+        fi
+    else
+        msg_warn 'Vision rollback is unverified; retained certificate and managed renewal artifacts for inspection.'
+    fi
+    nginx -t && systemctl reload nginx && check_installation || result=1
+    if (( result != 0 )); then VISION_RESULT=failed_unverified; fi
+    msg_warn "Vision failed during $vision_stage (exit $vision_exit): rollback=$VISION_RESULT"
+    return 1
+}
+
+install_security() {
+    local output
+    SECURITY_RESULT=failed_unverified
+    output=$(python3 "$PANEL_STAGE/managed-security.py")
+    SECURITY_RESULT=$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])') || return 1
+    printf '%s' "$output" | python3 -c 'import json,sys; [print("[!] "+w) for w in json.load(sys.stdin)["warnings"]]'
+    if [[ "$SECURITY_RESULT" == configured ]]; then DNS_FINALIZED=y; return 0; fi
+    local failed_security=$SECURITY_RESULT
+    if [[ "${DNS_PREPARED:-n}" == y ]]; then
+        if rollback_system_dns; then
+            [[ "$failed_security" == failed_unverified ]] || SECURITY_RESULT=failed_rolled_back
+        else
+            SECURITY_RESULT=failed_unverified
+        fi
+    fi
+    return 1
+}
+
+install_initial_client() {
+    CLIENT_RESULT=failed_unverified
+    CLIENT_OUTPUT=$(printf '%s' "$config_password" | python3 "$PANEL_STAGE/managed-client.py" \
+        "$AWG_HELPER" "$domain" "$panel_path" "$config_username") || return 1
+    CLIENT_RESULT=configured
+}
+
 main() {
     confirm_destructive_reinstall || exit 1
     validate_domains || exit 1
+    select_security || exit 1
+    select_vision || exit 1
     select_amneziawg || exit 1
     select_adguard || exit 1
+    select_client || exit 1
+    printf '\nPreparing system...\n'
+    msg_warn 'Initial full OS upgrade is mandatory; services may restart. A required initial reboot is manual (sudo reboot).'
+    preflight_base_os || { msg_err 'Base OS preflight failed; existing deployment was not removed.'; exit 1; }
     preflight_panel_release || { msg_err "Release preflight failed; existing deployment was not removed."; exit 1; }
     preflight_amneziawg || { msg_err "AmneziaWG preflight failed; existing deployment was not removed."; exit 1; }
-    cleanup_adguard || { msg_err "Cannot clean AdGuard Home; core deployment was not removed."; exit 1; }
-    clean_previous_install
+    preflight_integrated_features || { msg_err 'Optional feature preflight failed; existing deployment was not removed.'; exit 1; }
+    prepare_base_os || { msg_err 'OS preparation failed; deployment was not removed, package changes may remain.'; exit 1; }
+    prepare_system_dns || { msg_err 'DNS preparation failed; existing deployment was not removed.'; exit 1; }
+    local awg_xui_stopped=n
+    if [[ "${AWG_REINSTALL:-n}" == y ]]; then
+        prepare_awg_reinstall || { msg_err 'AWG reinstall preparation failed; deployment was not removed.'; exit 1; }
+        awg_xui_stopped=y
+    fi
+    cleanup_adguard || {
+        msg_err "Cannot clean AdGuard Home; core deployment was not removed."
+        if [[ "$awg_xui_stopped" == y ]]; then
+            if systemctl start x-ui && systemctl is-active --quiet x-ui; then
+                msg_warn 'Reinstall aborted; previous x-ui is active and its configuration retained. AdGuard Home may require inspection.'
+            else
+                msg_warn 'Reinstall aborted; previous x-ui could not be confirmed active. Configuration retained; recover manually with sudo systemctl start x-ui. AdGuard Home may require inspection.'
+            fi
+        fi
+        exit 1
+    }
+    clean_previous_install || { msg_err "Previous deployment cleanup failed (exit $?). See the cause above; installation stopped."; exit 1; }
     install_packages || { msg_err "Dependency setup failed."; exit 1; }
     setup_firewall || { msg_err "Firewall setup failed."; exit 1; }
-    get_server_ip
+    get_server_ip || { msg_err "VPS IP detection failed (exit $?). See the cause above; installation stopped."; exit 1; }
     setup_acme_http || { msg_err "ACME HTTP setup failed."; exit 1; }
     get_ssl_certs || { msg_err "Webroot certificate setup failed."; exit 1; }
 
-    install_panel || exit 1
+    install_panel || { msg_err "3X-UI installation failed (exit $?). See the cause above; installation stopped."; exit 1; }
 
-    configure_nginx
-    configure_xui_db || exit 1
-    install_clash_sub
-    install_fake_site
-    install_diagnostics
-    tune_system || exit 1
-    install_backup_tool || exit 1
+    configure_nginx || { msg_err "nginx configuration failed (exit $?). See the cause above; installation stopped."; exit 1; }
+    configure_xui_db || { msg_err "3X-UI database configuration failed (exit $?). See the cause above; installation stopped."; exit 1; }
+    install_clash_sub || { msg_err "Clash template download/setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
+    install_fake_site || { msg_err "Cover site download/setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
+    install_diagnostics || { msg_err "Diagnostics download/setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
+    tune_system || { msg_err "System tuning failed (exit $?). See the cause above; installation stopped."; exit 1; }
+    install_backup_tool || { msg_err "Backup tool setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
     setup_certificate_renewal || { msg_err "Certificate renewal setup failed."; exit 1; }
 
     if ! systemctl is-enabled --quiet x-ui; then
-        systemctl daemon-reload && systemctl enable x-ui.service || exit 1
+        systemctl daemon-reload && systemctl enable x-ui.service || { msg_err "3X-UI service enablement failed (exit $?). Installation stopped."; exit 1; }
     fi
-    x-ui restart || exit 1
+    x-ui restart || { msg_err "3X-UI restart failed (exit $?). Installation stopped."; exit 1; }
     check_installation || { msg_err "Installation failed mandatory health checks."; exit 1; }
 
     local install_result=0
+    VISION_RESULT=not_requested
+    SECURITY_RESULT=not_requested
+    CLIENT_RESULT=not_requested
+    if [[ "${INSTALL_VISION:-n}" == y ]]; then
+        install_vision || install_result=1
+    fi
     AWG_RESULT=not_requested
     if [[ "${INSTALL_AWG:-n}" == y ]]; then
         AWG_RESULT=failed
@@ -2148,7 +2694,25 @@ main() {
     if [[ "$INSTALL_AGH" == y ]]; then
         install_adguard || install_result=1
     fi
+    # DNS was prepared and verified before cleanup; repeat runtime checks here.
+    if [[ "${INSTALL_SECURITY:-n}" == y ]]; then
+        install_security || install_result=1
+    fi
+    if [[ "${CREATE_CLIENT:-n}" == y ]]; then
+        # A retained unverified Vision inbound may lack its public SNI route.
+        if [[ "$VISION_RESULT" != failed_unverified ]] && check_installation; then
+            install_initial_client || install_result=1
+        else
+            install_result=1
+            CLIENT_RESULT=failed_unverified
+        fi
+    fi
+    CORE_RESULT=configured
+    if [[ "${INSTALL_SECURITY:-n}${INSTALL_VISION:-n}${INSTALL_AWG:-n}${INSTALL_AGH:-n}${CREATE_CLIENT:-n}" != nnnnn ]]; then
+        if ! check_installation; then CORE_RESULT=failed_unverified; install_result=1; fi
+    fi
     show_results
+    finish_initial_reboot "$install_result" || install_result=1
     return "$install_result"
 }
 

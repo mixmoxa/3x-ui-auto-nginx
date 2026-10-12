@@ -1,5 +1,6 @@
 """Real loopback services; host installation and systemd remain outside this suite."""
 import base64
+import errno
 import hashlib
 from http.cookies import SimpleCookie
 import json
@@ -83,7 +84,7 @@ class RealServices(unittest.TestCase):
                 labels.append(packet[offset:offset+length].decode('ascii'));offset+=length
             offset+=1;kind,klass=struct.unpack('!HH',packet[offset:offset+4]);end=offset+4
             name='.'.join(labels);requests.append((name,kind))
-            address='127.0.0.1' if name in ('panel.example.test','reality.example.test','broken.example.test','unrelated.example.test','example.com','reality.example.com') else '198.51.100.42'
+            address='127.0.0.1' if name in ('panel.example.test','reality.example.test','vision.example.test','broken.example.test','unrelated.example.test','example.com','reality.example.com') else '198.51.100.42'
             data=struct.pack('!6H',int.from_bytes(packet[:2],'big'),0x8180,1,1 if kind==1 else 0,0,0)+packet[12:end]
             if kind==1:data+=b'\xc0\x0c'+struct.pack('!HHIH',1,klass,60,4)+socket.inet_aton(address)
             return data
@@ -103,8 +104,15 @@ class RealServices(unittest.TestCase):
                     return data
                 length=int.from_bytes(exact(2),'big');response=dns_response(exact(length))
                 handler.request.sendall(len(response).to_bytes(2,'big')+response)
-        self.dns=socketserver.ThreadingUDPServer(('127.0.0.1',0),DNS)
-        tcp=socketserver.ThreadingTCPServer(self.dns.server_address,DNSTCP)
+        for attempt in range(10):
+            self.dns=socketserver.ThreadingUDPServer(('127.0.0.1',0),DNS)
+            try:
+                tcp=socketserver.ThreadingTCPServer(self.dns.server_address,DNSTCP)
+                break
+            except OSError as error:
+                self.dns.server_close()
+                if error.errno != errno.EADDRINUSE or attempt == 9:
+                    raise
         self.allocated.add(self.dns.server_address[1])
         for server in (self.dns,tcp):
             threading.Thread(target=server.serve_forever,daemon=True).start()
@@ -324,12 +332,41 @@ class RealServices(unittest.TestCase):
 
     def test_real_certbot_pebble_http01_issuance_renewal_and_negative(self):
         nginx=self.start_nginx();self.start_pebble()
-        for domain in (self.domain,self.reality):self.issue(domain)
-        before={domain:self.lineage(domain) for domain in (self.domain,self.reality)}
+        domains = (self.domain, self.reality, 'vision.example.test')
+        # Use the production separate Vision webroot vhost on the same HTTP listener.
+        from test_integrated_features import helper
+        vision = helper('vision').acme_config(domains[2])
+        vision = vision.replace('listen 80;', f'listen 127.0.0.1:{self.http};').replace('    listen [::]:80;\n','').replace('/var/www/acme', str(self.webroot))
+        config = self.root/'nginx.conf'; config.write_text(config.read_text().replace('http {', 'http {\n'+vision, 1))
+        subprocess.run([self.nginx, '-t', '-p', str(self.root)+'/', '-c', config], check=True, capture_output=True, timeout=15)
+        subprocess.run([self.nginx, '-s', 'reload', '-p', str(self.root)+'/', '-c', config], check=True, capture_output=True, timeout=15)
+        for domain in domains:self.issue(domain)
+        # Exercise the production allowlist merge on actual Certbot/Pebble
+        # lineages and account JSON, then renew from the restored state.
+        from certificate_fixtures import relocate
+        import shlex
+        certroot=self.root/'etc/letsencrypt'; hooks=certroot/'renewal-hooks/deploy'; hooks.mkdir(parents=True,exist_ok=True)
+        generator='\n'.join(relocate(function(name),self.root) for name in ('check_xray_runtime','render_certificate_hook','render_vision_hook'))
+        core_hook=subprocess.check_output(['bash','-c',generator+'\nrender_certificate_hook "$1" "$2"','fixture',self.domain,self.reality],text=True)
+        vision_hook=subprocess.check_output(['bash','-c',generator+'\nrender_vision_hook "$1"','fixture',domains[2]],text=True)
+        for name,body in (('3x-ui-auto-nginx',core_hook),('3x-ui-auto-nginx-vision',vision_hook),('foreign-import','#!/bin/sh\nexit 77\n')):
+            (hooks/name).write_text(body); (hooks/name).chmod(0o755)
+        accounts={str(p.relative_to(certroot)):p.read_bytes() for p in (certroot/'accounts').rglob('*.json')}
+        self.assertTrue(accounts,'Real Certbot did not create account metadata')
+        saved=self.root/'saved-certbot'; certroot.rename(saved)
+        certroot.mkdir(); (certroot/'renewal-hooks/deploy').mkdir(parents=True)
+        target_hook=certroot/'renewal-hooks/deploy/administrator'; target_hook.write_text('#!/bin/sh\nexit 0\n'); target_hook.chmod(0o755)
+        backup_source=(ROOT/'assets/backup/x-ui-backup.sh').read_text()
+        script='\n'.join(relocate(function(name,backup_source),self.root) for name in ('restored_certificate_domains','restored_vision_domain','render_vision_hook','project_certbot_accounts','restore_project_certificates'))
+        subprocess.run(['bash','-eu','-c','die() { echo "$*" >&2; exit 1; };\n'+script+'\nrestore_project_certificates '+shlex.quote(str(saved))],check=True,capture_output=True,text=True)
+        self.assertFalse((certroot/'renewal-hooks/deploy/foreign-import').exists())
+        self.assertEqual(target_hook.read_text(),'#!/bin/sh\nexit 0\n')
+        self.assertEqual({str(p.relative_to(certroot)):p.read_bytes() for p in (certroot/'accounts').rglob('*.json')},accounts)
+        before={domain:self.lineage(domain) for domain in domains}
         access=(self.root/'access.log').read_text()
         self.assertGreaterEqual(len(re.findall(r'GET /\.well-known/acme-challenge/[^ ]+ HTTP/1.1" 200',access)),2)
-        for domain in (self.domain,self.reality):
-            self.certbot('renew','--cert-name',domain,'--force-renewal','--no-random-sleep-on-renew')
+        for domain in domains:
+            self.certbot('renew','--cert-name',domain,'--force-renewal','--no-random-sleep-on-renew','--no-directory-hooks')
             self.assertNotEqual(self.lineage(domain),before[domain])
             self.assertIsNone(nginx.poll(),'Renewal must not stop nginx')
         empty=self.root/'wrong-webroot';empty.mkdir()

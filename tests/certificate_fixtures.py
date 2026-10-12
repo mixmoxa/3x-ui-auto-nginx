@@ -23,8 +23,8 @@ def relocate(source, root):
                   lambda m: str(root) + m[0], source)
 
 
-def certificates(root, panel='example.com', reality='reality.example.com', mapped=True):
-    for domain in (panel, reality):
+def certificates(root, panel='example.com', reality='reality.example.com', mapped=True, extra=()):
+    for domain in (panel, reality, *extra):
         live = root / 'etc/letsencrypt/live' / domain
         live.mkdir(parents=True, exist_ok=True)
         subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1',

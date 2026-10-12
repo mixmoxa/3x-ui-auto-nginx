@@ -13,6 +13,7 @@ import shlex
 import signal
 import socket
 import socketserver
+import ssl
 import sqlite3
 import stat
 import subprocess
@@ -21,6 +22,8 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
+import uuid
 from urllib.parse import parse_qs, quote, urlsplit
 
 from test_personal_xhttp import ROOT, FIXTURE, render, seed, SHARED, MAIN, function as installer_function
@@ -338,7 +341,7 @@ class RealIntegration(unittest.TestCase):
             self.passed.append('Config validation')
 
     def nginx_config(self):
-        shared = render(SHARED, ws_port=str(self.backends['ws']),trojan_port=str(self.backends['trojan-grpc']))
+        shared = render(SHARED, sub_port=str(self.backends['sub']), ws_port=str(self.backends['ws']),trojan_port=str(self.backends['trojan-grpc']))
         # Match backend relationship while keeping the seeded public paths unchanged.
         shared = shared.replace(f"/{self.backends['ws']}/websocket",'/10003/websocket').replace(
             f"/{self.backends['trojan-grpc']}/trojan",'/10004/trojan').replace('/dev/shm/uds2023.sock',str(self.uds))
@@ -354,6 +357,13 @@ class RealIntegration(unittest.TestCase):
         stream = stream.replace('127.0.0.1:8443',f"127.0.0.1:{self.backends['reality']}").replace(
             '127.0.0.1:7443',f"127.0.0.1:{self.backends['tls']}")
         stream = stream.replace('listen     443;',f'listen 127.0.0.1:{self.public};').replace('listen     [::]:443;','')
+        if hasattr(self, 'vision_artifacts'):
+            stream_file, _, enabled = self.vision_artifacts
+            stream_file.write_text(stream)
+            stream = f'include {stream_file};'
+            self.vision_site = f'include {enabled.parent}/*.conf;'
+        elif hasattr(self, 'vision_module'):
+            stream = self.vision_module.stream_config(stream, 'vision.example', self.vision_port)
         temp = '\n'.join(f'{kind}_temp_path {self.root}/{kind};' for kind in ('client_body','proxy','fastcgi','uwsgi','scgi'))
         maps = render('cat > /etc/nginx/sites-available/00-maps.conf')
         cover = f"server {{ listen 127.0.0.1:{self.backends['cover']} ssl http2; ssl_certificate {self.cert}; ssl_certificate_key {self.key}; ssl_protocols TLSv1.3; return 200 'cover'; }}"
@@ -361,7 +371,7 @@ class RealIntegration(unittest.TestCase):
 worker_processes 1; daemon off; pid {self.root}/nginx.pid; error_log {self.root}/nginx-error.log;
 events {{ worker_connections 256; }}
 stream {{ {stream} }}
-http {{ access_log off; {temp} {maps} {main} {cover} }}
+http {{ access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {main} {cover} {getattr(self, 'vision_site', '')} }}
 '''
         path = self.root/'nginx.conf';path.write_text(config)
         result = subprocess.run([self.nginx,'-t','-p',str(self.root)+'/', '-c',path],text=True,capture_output=True,timeout=15)
@@ -424,6 +434,351 @@ http {{ access_log off; {temp} {maps} {main} {cover} }}
         self.passed.append(name+' positive/negative')
 
     def test_reality(self): self.transport('reality')
+
+    def test_vision_deploy_hook_waits_for_delayed_xray(self):
+        from certificate_fixtures import certificates, function, relocate
+        from test_integrated_features import helper
+        self.vision_module = helper('vision')
+        self.vision_port, fallback = port(self.allocated_ports), port(self.allocated_ports)
+        certificates(self.root, extra=('vision.example',))
+        lineage = self.root/'etc/letsencrypt/live/vision.example'
+        cover = self.root/'vision-site'; cover.mkdir(); (cover/'index.html').write_text('vision-cover')
+        self.vision_site = self.vision_module.fallback_config('vision.example', fallback, str(cover))
+        self.nginx_config()
+        inbound = self.vision_module.inbound('vision.example', self.vision_port, fallback,
+            str(lineage/'fullchain.pem'), str(lineage/'privkey.pem'))
+        config = self.validate({'inbounds': [inbound], 'outbounds': [{'protocol': 'freedom'}]}, 'hook-vision')
+        backup = (ROOT/'assets/backup/x-ui-backup.sh').read_text()
+        self.assertEqual(function('render_vision_hook'), function('render_vision_hook', backup))
+        generator = relocate(function('render_vision_hook'), self.root)
+        body = subprocess.check_output(['bash', '-c', generator+'\nrender_vision_hook vision.example'], text=True)
+        # Only host service control, privileged port and private CA are mapped;
+        # the rendered hook, curl, nginx stream, TLS and Xray fallback are real.
+        trigger, pidfile = self.root/'restart', self.root/'service-pid'
+        failures = []
+        def restart():
+            try:
+                deadline = time.monotonic()+10
+                while not trigger.exists():
+                    if time.monotonic() >= deadline: raise RuntimeError('Hook did not restart its service')
+                    time.sleep(.01)
+                process = self.launch(['bash', '-c', 'sleep 1.2; exec "$@"', 'delayed-xray',
+                    self.xray, 'run', '-c', config], 'hook-xray')
+                pidfile.write_text(str(process.pid))
+            except Exception as error:
+                failures.append(type(error).__name__)
+        worker = threading.Thread(target=restart, daemon=True); worker.start()
+        mapping = '''systemctl() {
+    if [[ "$*" == 'restart x-ui' ]]; then
+        touch "$TRIGGER"
+        for attempt in {1..100}; do [[ ! -f "$PIDFILE" ]] || return 0; sleep .01; done
+        return 1
+    fi
+    [[ "$*" == 'is-active --quiet x-ui' ]] && kill -0 "$(cat "$PIDFILE")"
+}
+curl() { command curl --cacert "$TRUST" "$@"; }
+'''
+        body = body.replace('$VISION_DOMAIN:443:', f'$VISION_DOMAIN:{self.public}:').replace(
+            'https://$VISION_DOMAIN/', f'https://$VISION_DOMAIN:{self.public}/')
+        env = {**os.environ, 'TRIGGER': str(trigger), 'PIDFILE': str(pidfile), 'TRUST': str(lineage/'fullchain.pem'),
+               'RENEWED_LINEAGE': str(lineage)}
+        started = time.monotonic()
+        result = subprocess.run(['bash', '-c', mapping+body], env=env, capture_output=True, text=True, timeout=18)
+        worker.join(timeout=2)
+        self.assertFalse(worker.is_alive()); self.assertEqual(failures, [])
+        self.assertEqual(result.returncode, 0, 'Delayed Xray readiness: '+result.stderr)
+        self.assertGreaterEqual(time.monotonic()-started, 1.2)
+        self.assertIn('curl:', result.stderr, 'The regression must actually attempt HTTPS before Xray is ready')
+        # A genuinely untrusted certificate remains fail-closed within the bound.
+        env['TRUST'] = str(self.cert)
+        result = subprocess.run(['bash', '-c', 'systemctl() { return 0; };\ncurl() { command curl --cacert "$TRUST" "$@"; }\n'+body],
+            env=env, capture_output=True, text=True, timeout=18)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('certificate', result.stderr.lower())
+        self.assertNotIn('--insecure', body)
+        self.passed.append('Vision deploy-hook delayed Xray / strict TLS')
+
+    def test_vision_and_initial_client_official_api(self):
+        from test_integrated_features import helper
+        client, awg, self.vision_module = helper('client'), helper('amneziawg'), helper('vision')
+        self.http_access_log = str(self.root/'http-access.log')
+        self.vision_port, fallback = port(self.allocated_ports), port(self.allocated_ports)
+        vision_cert, vision_key = self.root/'vision.pem', self.root/'vision.key'
+        subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1',
+                        '-subj','/CN=vision.example','-addext','subjectAltName=DNS:vision.example',
+                        '-out',vision_cert,'-keyout',vision_key],check=True,capture_output=True,timeout=20)
+        self.vision_module.certificate('vision.example', vision_cert, vision_key)
+        cover_root = self.root/'vision-site'; cover_root.mkdir(); (cover_root/'index.html').write_text('vision-cover')
+        self.vision_site = self.vision_module.fallback_config('vision.example', fallback, str(cover_root))
+        self.vision_site = self.vision_site.replace('    server_tokens off;',
+            f'    access_log {self.root}/vision-access.log;\n    server_tokens off;')
+        self.vision_artifacts = (self.root/'vision-stream.conf', self.root/'vision.conf', self.root/'enabled/vision.conf')
+        self.vision_artifacts[2].parent.mkdir()
+        # The real child starts asynchronously. Widen its startup window so
+        # readiness is tested reliably, rather than depending on runner speed.
+        core = self.root/'bin'/self.xray.name
+        core.rename(core.with_suffix('.real'))
+        core.write_text('#!/bin/sh\ncase "$1" in -c|run) sleep 1.2;; esac\nexec '+shlex.quote(str(core.with_suffix('.real')))+' "$@"\n')
+        core.chmod(0o755)
+        with sqlite3.connect(self.root/'db/x-ui.db') as db:
+            db.execute("UPDATE inbounds SET enable=0 WHERE protocol='trojan' OR json_extract(stream_settings,'$.network')='ws'")
+            for key, value in {'subURI':f'https://deploy.example:{self.public}/subscription/',
+                               'subJsonURI':f'https://deploy.example:{self.public}/jsonsub/'}.items():
+                db.execute('UPDATE settings SET value=? WHERE key=?', (value,key))
+        self.nginx_config()
+        env = {**os.environ, 'XUI_DB_FOLDER':str(self.root/'db'), 'XUI_BIN_FOLDER':str(self.root/'bin'), 'XUI_LOG_FOLDER':str(self.root/'logs')}
+        server = self.launch([self.xui], 'vision-panel', env)
+        self.ready(server, ('127.0.0.1', self.backends['panel']))
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            api = awg.Panel(f'https://deploy.example:{self.public}/panel/', 'integration', self.auth, directory,
+                ['--cacert', str(self.cert), '--resolve', f'deploy.example:{self.public}:127.0.0.1'])
+            # Distinguish CSRF rejection from invalid-body/API validation failure.
+            before_csrf = api.request('panel/api/clients/list')['obj']
+            active = api.request('panel/api/inbounds/list')['obj']
+            missing_csrf = subprocess.check_output(['curl','-q','-sS','--noproxy','*',*api.options,
+                '--resolve',f'deploy.example:{self.backends["panel"]}:127.0.0.1',
+                '--cookie',str(api.cookie),'--header','Content-Type: application/json','--data-binary','@-',
+                '--max-time','20','-o','/dev/null','-w','%{http_code}',
+                f'https://deploy.example:{self.backends["panel"]}/panel/panel/api/clients/add'],
+                input=json.dumps({'client':{'email':'csrf-negative','enable':True},'inboundIds':[active[0]['id']]}).encode(),timeout=25)
+            # Native 403 is checked directly: nginx deliberately masks it as 404.
+            self.assertEqual(missing_csrf,b'403')
+            self.assertEqual(api.request('panel/api/clients/list')['obj'],before_csrf)
+            wrong_trust = [True]
+            def production_run(*args):
+                # Private process/config paths and test CA replace host services;
+                # nginx validation/reload and HTTPS still execute real binaries.
+                if args == ('nginx','-t'):
+                    args=(self.nginx,'-t','-p',str(self.root)+'/', '-c',str(self.root/'nginx.conf'))
+                elif args == ('systemctl','reload','nginx'):
+                    args=(self.nginx,'-s','reload','-p',str(self.root)+'/', '-c',str(self.root/'nginx.conf'))
+                elif args == ('systemctl','is-active','--quiet','x-ui'):
+                    self.assertIsNone(server.poll()); return
+                elif args[0]=='curl':
+                    args=tuple(arg.replace('vision.example:443:',f'vision.example:{self.public}:')
+                               .replace('https://vision.example/',f'https://vision.example:{self.public}/') for arg in args)
+                    args+=('--cacert',str(self.cert if wrong_trust[0] else vision_cert))
+                subprocess.run(args,check=True,capture_output=True,timeout=40)
+            with patch.object(self.vision_module,'run',side_effect=production_run), \
+                 patch.object(self.vision_module,'fallback_config',return_value=self.vision_module.fallback_config('vision.example',fallback,str(cover_root)).replace(
+                     '    server_tokens off;',f'    access_log {self.root}/vision-access.log;\n    server_tokens off;')):
+                original_stream=self.vision_artifacts[0].read_bytes()
+                with self.assertRaises(self.vision_module.Failure) as failed:
+                    self.vision_module.configure(api,'vision.example',self.vision_port,fallback,
+                        *self.vision_artifacts,str(vision_cert),str(vision_key))
+                self.assertEqual(failed.exception.status,'failed_rolled_back')
+                self.assertIn('certificate verification failed',str(failed.exception))
+                self.assertEqual(self.vision_artifacts[0].read_bytes(),original_stream)
+                self.assertFalse(self.vision_artifacts[1].exists()); self.assertFalse(self.vision_artifacts[2].is_symlink())
+                self.assertEqual({r['id'] for r in api.request('panel/api/inbounds/list')['obj']},{r['id'] for r in active})
+                self.ready(server,('127.0.0.1',self.backends['reality']))
+                for name in ('reality','xhttp'): self.client(name,server_log='vision-panel.log')
+                print('REAL production Vision TLS failure / owned rollback / REALITY and XHTTP preserved: PASS',flush=True)
+                wrong_trust[0]=False
+                iid=self.vision_module.configure(api,'vision.example',self.vision_port,fallback,
+                    *self.vision_artifacts,str(vision_cert),str(vision_key),flag='🇫🇮')
+            created = next(r for r in api.request('panel/api/inbounds/list')['obj'] if r['id']==iid)
+            self.assertEqual(created['remark'],'🇫🇮 XTLS')
+            with sqlite3.connect(self.root/'db/x-ui.db') as db:
+                self.assertEqual(db.execute('SELECT remark FROM hosts WHERE inbound_id=?',(iid,)).fetchone()[0],'vision')
+            self.assertTrue(self.vision_artifacts[2].is_symlink())
+            print('REAL production Vision configure / nginx reload / delayed Xray readiness / trusted HTTPS: PASS',flush=True)
+            awg_row = api.create('deploy.example', port(self.allocated_ports, udp=True))
+            api.request('panel/api/server/restartXrayService', {})
+            self.ready(server, ('127.0.0.1', self.vision_port))
+            try:
+                result = client.create(api)
+            except Exception:
+                # Non-secret diagnostics: compare routing with the native backend.
+                latest = api.request('panel/api/clients/list')['obj'][-1]['subId']
+                rec = api.request('panel/api/clients/list')['obj'][-1]
+                actual_links = client.decode_subscription(client.fetch(api,f'https://deploy.example:{self.public}/subscription/'+latest))
+                official_links = api.request('panel/api/clients/links/'+rec['email'])['obj']
+                for label, values in (('subscription',actual_links), ('API',official_links)):
+                    print(label+' link metadata: '+str([(urlsplit(link).scheme,urlsplit(link).hostname if not link.startswith('vpn://') else 'AWG',
+                        sorted(parse_qs(urlsplit(link).query))) for link in values]),flush=True)
+                for target, name in ((f'https://deploy.example:{self.public}/subscription/', 'nginx'),
+                                     (f'https://deploy.example:{self.backends["sub"]}/subscription/', 'native')):
+                    status = subprocess.check_output(['curl','-sS','--noproxy','*','--cacert',str(self.cert),
+                        '--resolve',f'deploy.example:{urlsplit(target).port}:127.0.0.1', '-o','/dev/null','-w','%{http_code}',target+latest],timeout=20)
+                    print(name+' subscription HTTP: '+status.decode(),flush=True)
+                raise
+            again = client.create(api, {'email':result['email'], 'subId':result['subId']})
+            self.assertEqual(again['email'], result['email'])
+            self.assertEqual(stat.S_IMODE((self.root/'db/x-ui.db').stat().st_mode),0o600)
+            self.assertEqual(stat.S_IMODE((self.root/'bin/config.json').stat().st_mode),0o600)
+            expected = client.active_inbounds(api)
+            self.assertEqual(len(expected),5)
+            record = api.request('panel/api/clients/get/'+result['email'])['obj']
+            self.assertEqual(set(record['inboundIds']), {r['id'] for r in expected})
+            for key in ('totalGB','expiryTime','limitIp','limitHwid','tgId'):
+                self.assertEqual(record['client'][key],0,key)
+            self.assertTrue(record['client']['enable']); self.assertRegex(record['client']['subId'],r'^[a-z0-9]{16}$')
+            self.assertNotIn('ws', result['protocols']); self.assertNotIn('trojan-grpc', result['protocols'])
+            links = client.decode_subscription(client.fetch(api,result['url']))
+            vision_links = [link for link in links if urlsplit(link).hostname=='vision.example']
+            self.assertEqual(len(vision_links),1)
+            query = parse_qs(urlsplit(vision_links[0]).query)
+            self.assertEqual(query['flow'],['xtls-rprx-vision']); self.assertEqual(query['security'],['tls'])
+            self.assertIn(query.get('type',['tcp'])[0],('tcp','raw'))
+            raw = api.request('panel/api/setting/defaultSettings',{})['obj']
+            configs = json.loads(client.fetch(api,raw['subJsonURI']+result['subId']))
+            core_profiles = set()
+            for native in configs:
+                for outgoing in native.get('outbounds',[]):
+                    stream = outgoing.get('streamSettings',{})
+                    name = ('reality' if stream.get('security')=='reality' else
+                            'xhttp' if stream.get('network')=='xhttp' else
+                            'hysteria2' if outgoing.get('protocol')=='hysteria' else None)
+                    if name:
+                        self.clients[name] = native; core_profiles.add(name)
+                        if name=='xhttp':
+                            vless = outgoing['settings']
+                            vless = vless['servers'][0] if 'servers' in vless else vless
+                            user = vless.get('users',[vless])[0]
+                            self.assertFalse(user.get('flow'),'JSON XHTTP inherited Vision flow')
+            self.assertEqual(core_profiles,{'reality','xhttp','hysteria2'})
+            for name in sorted(core_profiles): self.client(name,server_log='vision-panel.log')
+            vision_config = next(config for config in configs if any(
+                o.get('streamSettings',{}).get('tlsSettings',{}).get('serverName')=='vision.example' for o in config.get('outbounds',[])))
+            outbound = next(o for o in vision_config['outbounds'] if o['protocol']=='vless')
+            settings = outbound['settings']; dest=settings['servers'][0] if 'servers' in settings else settings
+            self.assertEqual((dest['address'],dest['port']),('vision.example',443))
+            dest.update(address='127.0.0.1',port=self.public)
+            outbound['streamSettings']['tlsSettings'].update(allowInsecure=False, certificates=[{'certificateFile':str(vision_cert),'usage':'verify'}])
+            socks=port(self.allocated_ports)
+            config={'inbounds':[{'listen':'127.0.0.1','port':socks,'protocol':'socks','settings':{'auth':'noauth'}}], 'outbounds':[outbound]}
+            process=self.launch([self.xray,'run','-c',self.validate(config,'vision-client')],'vision-client')
+            self.ready(process,('127.0.0.1',socks))
+            delivered=subprocess.run(['curl','-fsS','--noproxy','','--socks5-hostname',f'127.0.0.1:{socks}',
+                '--connect-timeout','5','--max-time','15',f'http://127.0.0.1:{self.origin.server_port}/vision'],capture_output=True,text=True,timeout=20)
+            self.assertEqual(delivered.returncode,0,delivered.stderr); self.assertEqual(delivered.stdout,self.marker)
+            stop(process)
+            # A wrong UUID must not carry a proxied request to the internal origin.
+            bad = json.loads(json.dumps(config))
+            bad_dest = bad['outbounds'][0]['settings']
+            if 'servers' in bad_dest: bad_dest = bad_dest['servers'][0]
+            if 'users' in bad_dest: bad_dest['users'][0]['id'] = str(uuid.uuid4())
+            else: bad_dest['id'] = str(uuid.uuid4())
+            bad_process = self.launch([self.xray,'run','-c',self.validate(bad,'vision-invalid-client')],'vision-invalid-client')
+            self.ready(bad_process,('127.0.0.1',socks))
+            denied = subprocess.run(['curl','-fsS','--noproxy','','--socks5-hostname',f'127.0.0.1:{socks}',
+                '--connect-timeout','3','--max-time','5',f'http://127.0.0.1:{self.origin.server_port}/denied'],capture_output=True,timeout=10)
+            self.assertNotEqual(denied.returncode,0); self.assertNotIn(self.marker.encode(),denied.stdout)
+            stop(bad_process)
+            # Import the official URI provider through real Mihomo, including TLS trust and flow.
+            provider = self.root/'vision-provider.txt'
+            provider.write_text(vision_links[0].replace('@vision.example:443',f'@vision.example:{self.public}'))
+            mixed, control = port(self.allocated_ports), port(self.allocated_ports)
+            mihomo_config = self.root/'vision-mihomo.yaml'
+            mihomo_config.write_text(f'''mixed-port: {mixed}
+external-controller: 127.0.0.1:{control}
+bind-address: 127.0.0.1
+hosts:
+  vision.example: 127.0.0.1
+tls:
+  custom-certifactes:
+    - {json.dumps(vision_cert.read_text())}
+proxy-providers:
+  sub:
+    type: file
+    path: {provider}
+proxy-groups:
+  - name: VPN
+    type: select
+    proxies: [DIRECT]
+    use: [sub]
+rules:
+  - MATCH,VPN
+''')
+            mihomo = self.launch([self.mihomo,'-d',self.root,'-f',mihomo_config],'vision-mihomo')
+            self.ready(mihomo,('127.0.0.1',control)); self.ready(mihomo,('127.0.0.1',mixed))
+            # A direct option must never satisfy the Vision transfer assertion.
+            from urllib.request import build_opener, ProxyHandler, Request
+            from urllib.error import URLError
+            controller=build_opener(ProxyHandler({}))
+            deadline=time.monotonic()+15
+            while time.monotonic()<deadline:
+                self.assertIsNone(mihomo.poll(),'Mihomo exited before provider readiness')
+                try:
+                    with controller.open(f'http://127.0.0.1:{control}/providers/proxies/sub',timeout=1) as response:
+                        proxies=json.load(response).get('proxies',[])
+                    if len(proxies)==1 and proxies[0].get('type','').lower()=='vless':
+                        break
+                except (URLError,TimeoutError): pass
+                time.sleep(.05)
+            else: self.fail('Official Vision provider did not load in Mihomo')
+            selection=Request(f'http://127.0.0.1:{control}/proxies/VPN',
+                              data=json.dumps({'name':proxies[0]['name']}).encode(),
+                              headers={'Content-Type':'application/json'},method='PUT')
+            with controller.open(selection,timeout=3) as response:
+                self.assertEqual(response.status,204)
+            with controller.open(f'http://127.0.0.1:{control}/proxies/VPN',timeout=3) as response:
+                selected=json.load(response)
+            self.assertEqual(selected['now'],proxies[0]['name'],'Mihomo did not select the imported VLESS Vision profile')
+            imported = subprocess.run(['curl','-fsS','--noproxy','','--socks5-hostname',f'127.0.0.1:{mixed}',
+                '--connect-timeout','5','--max-time','10',f'http://127.0.0.1:{self.origin.server_port}/mihomo-vision'],capture_output=True,text=True,timeout=15)
+            self.assertEqual(imported.returncode,0,imported.stderr); self.assertEqual(imported.stdout,self.marker)
+            stop(mihomo)
+            self.assertFalse(result['subId'] in (self.root/'http-access.log').read_text(), 'Subscription identifier leaked into nginx access log')
+            self.assertFalse(result['subId'] in (self.root/'nginx-error.log').read_text(), 'Subscription identifier leaked into nginx error log')
+            # A failed subscription upstream must not leak the original secret
+            # URI when nginx internally redirects to its generic error page.
+            shared=self.root/'shared.conf'; original=shared.read_text()
+            failed_port=port(self.allocated_ports)
+            shared.write_text(original.replace(f'https://127.0.0.1:{self.backends["sub"]}',f'https://127.0.0.1:{failed_port}'))
+            reload=[self.nginx,'-p',str(self.root)+'/', '-c',self.root/'nginx.conf','-s','reload']
+            subprocess.run(reload,check=True,capture_output=True,timeout=15)
+            time.sleep(.2)
+            try:
+                with self.assertRaises(ValueError): client.fetch(api,result['url'])
+                self.assertFalse(result['subId'] in (self.root/'http-access.log').read_text(),'Failed subscription leaked into access log')
+                self.assertFalse(result['subId'] in (self.root/'nginx-error.log').read_text(),'Failed subscription leaked into error log')
+            finally:
+                shared.write_text(original); subprocess.run(reload,check=True,capture_output=True,timeout=15)
+            # Official JSON changes neither XHTTP flow nor TLS verification.
+            client.validate_credentials(client.active_inbounds(api),result['email'])
+        browser=['curl','-q','-fsS','--noproxy','*','--http1.1','--cacert',str(vision_cert),
+                 '--resolve',f'vision.example:{self.public}:127.0.0.1','--max-time','10']
+        self.assertEqual(subprocess.check_output(browser+[f'https://vision.example:{self.public}/'],timeout=15),b'vision-cover')
+        self.assertEqual(subprocess.check_output(browser+['--interface','127.0.0.2',f'https://vision.example:{self.public}/'],timeout=15),b'vision-cover')
+        self.assertIn('127.0.0.2 - ',(self.root/'vision-access.log').read_text(), 'Source IP lost in nginx / Xray / fallback PROXY chain')
+        untrusted = subprocess.run([a for a in browser if a not in ('--cacert',str(vision_cert))]+[f'https://vision.example:{self.public}/'],capture_output=True,timeout=15)
+        self.assertNotEqual(untrusted.returncode,0)
+        wrong_sni = subprocess.run(browser+['--resolve',f'wrong.example:{self.public}:127.0.0.1',f'https://wrong.example:{self.public}/'],capture_output=True,timeout=15)
+        self.assertNotEqual(wrong_sni.returncode,0)
+        tls = ssl.create_default_context(cafile=str(vision_cert)); tls.set_alpn_protocols(['h2'])
+        try:
+            with socket.create_connection(('127.0.0.1',self.public),timeout=5) as plain:
+                with tls.wrap_socket(plain,server_hostname='vision.example') as encrypted:
+                    self.assertNotEqual(encrypted.selected_alpn_protocol(),'h2')
+        except ssl.SSLError:
+            pass  # A rejected, unsupported ALPN handshake is also a safe outcome.
+        for path in ('panel/', 'subscription/fixture', 'dns-query', '__clash_api'):
+            response=subprocess.run(browser+[f'https://vision.example:{self.public}/{path}'],capture_output=True,timeout=15)
+            self.assertNotEqual(response.returncode,0); self.assertNotIn(self.auth.encode(),response.stdout)
+        # Certbot renewal is exercised with Pebble in services. Here verify the
+        # pinned native x-ui/Xray restart actually consumes a replaced Vision cert.
+        from cryptography import x509
+        old_cert = vision_cert.read_bytes()
+        serial = x509.load_pem_x509_certificate(old_cert).serial_number + 1
+        subprocess.run(['openssl','req','-x509','-new','-key',vision_key,'-days','1','-set_serial',str(serial),
+            '-subj','/CN=vision.example','-addext','subjectAltName=DNS:vision.example','-out',vision_cert],
+            check=True,capture_output=True,timeout=20)
+        previous_trust = self.root/'vision-previous-trust.pem'; previous_trust.write_bytes(old_cert)
+        def served_serial(trust):
+            ctx = ssl.create_default_context(cafile=str(trust)); ctx.set_alpn_protocols(['http/1.1'])
+            with socket.create_connection(('127.0.0.1',self.public),timeout=5) as plain:
+                with ctx.wrap_socket(plain,server_hostname='vision.example') as connection:
+                    return x509.load_der_x509_certificate(connection.getpeercert(binary_form=True)).serial_number
+        self.assertNotEqual(served_serial(previous_trust),serial)
+        stop(server)
+        server=self.launch([self.xui], 'vision-panel-restarted', env)
+        self.ready(server,('127.0.0.1',self.vision_port))
+        self.assertEqual(subprocess.check_output(browser+[f'https://vision.example:{self.public}/'],timeout=15),b'vision-cover')
+        self.assertEqual(served_serial(vision_cert),serial)
+        for name in ('reality','xhttp','hysteria2'): self.client(name,server_log='vision-panel-restarted.log')
+        self.passed.extend(['RAW TLS Vision + fallback','Initial client API / CSRF / subscriptions'])
     def test_xhttp(self): self.transport('xhttp')
     def test_websocket(self): self.transport('ws')
     def test_trojan_grpc(self): self.transport('trojan-grpc')
@@ -478,6 +833,17 @@ http {{ access_log off; {temp} {maps} {main} {cover} }}
         server = self.launch([self.xui],'awg-panel-active',env)
         self.ready(server,udp_port=awg_port,udp_address="0.0.0.0")
         self.ready(server,('127.0.0.1',self.backends['sub']))
+        # The installer's owner check uses actual native AWG /proc ownership
+        # and ss sockets; only systemd control, unit path and port are mapped.
+        unit=self.root/'x-ui.service'; unit.write_text('[Service]\nExecStart='+str(self.xui)+'\n')
+        controls=self.root/'owner-controls'; controls.mkdir()
+        control=controls/'systemctl'
+        control.write_text(f'#!/bin/sh\ncase "$*" in "is-active --quiet x-ui") kill -0 {server.pid};; "show x-ui -p MainPID --value") echo {server.pid};; *) exit 1;; esac\n'); control.chmod(0o755)
+        owner=installer_function('check_awg_reinstall_owner').replace('/etc/systemd/system/x-ui.service',str(unit)).replace(
+            '/usr/local/x-ui/bin',str(self.root/'bin')).replace('/usr/local/x-ui/x-ui',str(self.xui)).replace('8443',str(awg_port))
+        verified=subprocess.run(['bash','-eu','-c',owner+'\ncheck_awg_reinstall_owner'],
+            env={**os.environ,'PATH':str(controls)+':'+os.environ['PATH'],'XUIDB':str(self.root/'db/x-ui.db')},capture_output=True,text=True,timeout=10)
+        self.assertEqual(verified.returncode,0,'Native managed AWG owner check failed')
         # Verify the real upstream export, including the public share host and 3.1 parameters.
         import configparser
         raw = subprocess.check_output(['curl','-fsS','--noproxy','*','--cacert',str(self.cert),

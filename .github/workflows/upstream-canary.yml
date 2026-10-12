@@ -10,6 +10,9 @@ on:
       - 'tests/release_contract.py'
       - 'tests/test_real_integration.py'
       - 'tests/test_verified_release.py'
+      - 'assets/vision/managed.py'
+      - 'assets/client/managed.py'
+      - 'assets/amneziawg/managed.py'
   schedule:
     - cron: '37 5 * * *'
   workflow_dispatch:

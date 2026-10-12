@@ -12,6 +12,7 @@ from pathlib import Path
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import tarfile
@@ -29,6 +30,9 @@ def run(tools):
     t=RealServices('runTest');f=PersonalBackup('runTest')
     try:
         t.setUp();f.setUp()
+        f.seed_vision(); awg_columns, awg_row = f.seed_amneziawg()
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            db.execute("UPDATE inbounds SET remark='🇫🇮 XTLS' WHERE tag='inbound-12000'")
         t.domain='example.com';t.reality='reality.example.com'
         shutil.copytree(t.work,f.path('/opt/AdGuardHome'))
         t.work=f.path('/opt/AdGuardHome');t.config=t.work/'AdGuardHome.yaml'
@@ -50,6 +54,7 @@ def run(tools):
         snippet=t.shell('source "$1"; AGH_WEB_PORT="$2"; AGH_PATH="$3"; agh_snippet',HELPER,t.web,t.prefix)
         f.write('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf',snippet,0o600)
         config=f.path('/etc/nginx/nginx.conf')
+        config.write_text(config.read_text().replace('error_log stderr;', 'error_log /dev/null crit;'))
         config.write_text(config.read_text().replace('location /panel/',f'include {f.path("/etc/nginx/snippets/x-ui-auto-optional/adguard.conf")}; location /panel/'))
         t.start_nginx()
         original=f.bin/'systemctl-fixture';(f.bin/'systemctl').rename(original)
@@ -123,6 +128,9 @@ os.execv({str(old_curl)!r},['curl',*args])
             t.assertEqual((t.work/'data/querylog.json').read_bytes()[:len(queries)],queries)
             t.assertEqual(state.read_bytes(),b'archived-data');t.assertEqual(f.path('/etc/letsencrypt/live/example.com/fullchain.pem').read_bytes(),saved_cert)
             t.assertEqual(hashlib.sha256(archive.read_bytes()).digest(),digest);healthy()
+            with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                t.assertEqual(db.execute("SELECT remark FROM inbounds WHERE tag='inbound-12000'").fetchone()[0],'🇫🇮 XTLS')
+                t.assertEqual(dict(zip(awg_columns,db.execute("SELECT * FROM inbounds WHERE tag='inbound-8443-udp'").fetchone())),awg_row)
         bad=t.root/'corrupt.tar.gz'
         with tarfile.open(archive) as src,tarfile.open(bad,'w:gz') as dst:
             for entry in src:
@@ -143,7 +151,7 @@ os.execv({str(old_curl)!r},['curl',*args])
         t.assertTrue(any(c[:2]==['cp','-aT'] and any('.rollback-' in a for a in c) for c in f.commands()))
         t.assertEqual(state.read_bytes(),b'target-before-failed-restore');healthy()
         t.assertEqual(hashlib.sha256(archive.read_bytes()).digest(),digest)
-        print('PRIVATE RESTORE: files/AGH/DNS/DoH/admin/TLS/rollback PASS; systemd/Xray/UFW FIXTURE',flush=True)
+        print('PRIVATE RESTORE: files/AGH/AWG/XTLS/DNS/DoH/admin/TLS/rollback PASS; systemd/Xray/UFW FIXTURE',flush=True)
     finally:
         signal.alarm(0)
         if not t.doCleanups():raise RuntimeError('Real service fixture cleanup failed')
