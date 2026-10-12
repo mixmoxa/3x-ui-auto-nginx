@@ -487,7 +487,7 @@ main
         self.assert_core_credentials(r)
         self.assertIn('[✓] AdGuard Home           Running (v0.107.79)', r.stdout)
         self.assertIn('[✓] DNS-over-HTTPS         Ready', r.stdout)
-        self.assertIn('AdGuard Home: https://example.com/adg-'+'A'*12+'/', r.stdout)
+        self.assertIn('AdGuard Home:\n https://example.com/adg-'+'A'*12+'/', r.stdout)
         self.assertEqual(r.stdout.count('Password: '+'A'*32), 1)
         self.assertNotIn('A'*32, self.calls.read_text())
 
