@@ -115,7 +115,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 > [!IMPORTANT]
 > **Для XTLS Vision требуется третий домен**, отличный от доменов панели и REALITY. Его DNS-запись должна указывать на IP-адрес VPS. HTTPS-сертификат и маршрутизация nginx настраиваются автоматически.
 >
-> После выбора `Y` установщик дополнительно запросит домен: `${extra}`.
+> После выбора `Y` установщик дополнительно запросит домен: `Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains):`.
 
 ---
 
