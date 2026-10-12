@@ -1082,16 +1082,16 @@ _panel_initial_config() {
 verified_panel_release() {
     cat <<'VERIFIED_RELEASE_JSON'
 {
-  "version": "v3.9.0",
-  "xray": "26.9.30",
+  "version": "v3.10.0",
+  "xray": "26.10.10",
   "archives": {
-    "386": "437d08e5257e97fed1ffd24ea0119cb330c0f0ed68155f95dd65bb12e09ccefc",
-    "amd64": "d7cbe0bf6358ee0d2117c24fd2efb483502e411d38e2ea59bd0bf5e7a3e39390",
-    "arm64": "9a2e43c976a2e71618a30d8f38b52476b25ed363c6989599e2f625cc52f51a81",
-    "armv5": "98ba6467bfaaddb9fe443e6d73fafdf939e34fbe38a596f2b77aa3aa80f91eac",
-    "armv6": "e7ea6299c6c3b0dfa15b2fb85e77e27fa551d855e2329fd9094ae70f94c93ffc",
-    "armv7": "01502a20b2e6a312e796e5ca025071562bb56aadb318b451bc7c8d3f505a0c04",
-    "s390x": "b58c3298fe591d2195869dd5f6a5d1f6a2a4e7ab4193c653749ab50daf206cc9"
+    "386": "514f7376806ed30b3b8166f36256b47e6101994ccb2e3eebd07f408ce542903b",
+    "amd64": "b647a3e7d6695600bdd18cbfd34959991be09d4b1ad1e05efa790c0cf69ca40d",
+    "arm64": "a0bb393989b96833c84460dff21c968a6263f4e09b7ceff93e0f92975aeadc16",
+    "armv5": "e6787c78c68260320016739a87f35513acf344ee11b23d48a476ef834c15ede6",
+    "armv6": "2dd4d186f5cb22d4afeceaf7bfdf255a825afdfbb4f3e284128dfac2011c612d",
+    "armv7": "f6d331215584c788f77943d7a5a9301d22a64d41f0bf8fac74956a550839a2ab",
+    "s390x": "769f11d45eb567a1f2f669b12bfeed445e07a038686b9f965ff2121306467203"
   },
   "integration_architectures": [
     "amd64"
@@ -1246,18 +1246,26 @@ install_panel() {
     cd x-ui || return 1
     chmod +x x-ui x-ui.sh
 
-    if [[ $(_arch) == "armv5" || $(_arch) == "armv6" || $(_arch) == "armv7" ]]; then
-        mv bin/xray-linux-$(_arch) bin/xray-linux-arm
-        chmod +x bin/xray-linux-arm
-    fi
-    chmod +x bin/xray-linux-$(_arch)
+    local xray_name="xray-linux-$(_arch)"
+    case "$(_arch)" in
+        armv5|armv6|armv7)
+            mv "bin/$xray_name" bin/xray-linux-arm32 || return 1
+            xray_name=xray-linux-arm32 ;;
+    esac
+    chmod +x "bin/$xray_name" || return 1
+    [[ -f "bin/$xray_name" && -x "bin/$xray_name" ]] || return 1
 
     install -m 0755 x-ui.sh /usr/bin/x-ui || return 1
 
     _panel_initial_config || return 1
 
-    cp -f x-ui.service.debian /etc/systemd/system/x-ui.service
-    systemctl daemon-reload
+    cp -f x-ui.service.debian /etc/systemd/system/x-ui.service || return 1
+    if [[ "$tag_version" == v3.10.0 ]]; then
+        # Supported OSes have systemd >=239. Keep upstream's seccomp policy in
+        # the already-owned unit so uninstall and Backup v3 need no new paths.
+        sed -i '/^\[Service\]$/a SystemCallFilter=@system-service\nSystemCallErrorNumber=EPERM' /etc/systemd/system/x-ui.service || return 1
+    fi
+    systemctl daemon-reload || return 1
 
     msg_ok "3X-UI ${tag_version} installed."
 }
@@ -1291,10 +1299,11 @@ configure_xui_db() {
     x-ui stop 2>/dev/null || true
 
     local output private_key public_key trojan_pass xray_bin
-    # install_panel renames armv5/6/7 binaries to xray-linux-arm
+    # install_panel renames armv5/6/7 binaries to xray-linux-arm32
     xray_bin="/usr/local/x-ui/bin/xray-linux-$(_arch)"
-    [[ -f "$xray_bin" ]] || xray_bin="/usr/local/x-ui/bin/xray-linux-arm"
-    output=$("$xray_bin" x25519)
+    [[ -f "$xray_bin" ]] || xray_bin="/usr/local/x-ui/bin/xray-linux-arm32"
+    [[ -x "$xray_bin" ]] || { msg_err "Xray executable unavailable."; return 1; }
+    output=$("$xray_bin" x25519) || return 1
     private_key=$(echo "$output" | grep "^PrivateKey:" | awk '{print $2}')
     public_key=$(echo "$output"  | grep "^Password"   | awk '{print $3}')
     trojan_pass=$(gen_random_string 10)
@@ -2067,7 +2076,7 @@ prepare_awg_reinstall() {
 preflight_amneziawg() {
     AWG_REINSTALL=n
     [[ "${INSTALL_AWG:-n}" == y ]] || return 0
-    [[ "${PANEL_TAG:-}" == v3.9.0 ]] || { msg_err "AmneziaWG 3.1 integration requires verified 3X-UI v3.9.0."; return 1; }
+    [[ "${PANEL_TAG:-}" == v3.9.0 || "${PANEL_TAG:-}" == v3.10.0 ]] || { msg_err "AmneziaWG 3.1 integration requires verified 3X-UI v3.9.0 or v3.10.0."; return 1; }
     local port_result=0
     awg_port_available || port_result=$?
     if (( port_result != 0 )); then
@@ -2536,8 +2545,8 @@ preflight_vision_artifacts() {
 
 preflight_integrated_features() {
     if [[ "${INSTALL_VISION:-n}" == y || "${CREATE_CLIENT:-n}" == y ]]; then
-        [[ "$PANEL_TAG" == v3.9.0 ]] || {
-            msg_err 'Vision and initial client require verified 3X-UI v3.9.0; select N with other versions.'; return 1;
+        [[ "$PANEL_TAG" == v3.9.0 || "$PANEL_TAG" == v3.10.0 ]] || {
+            msg_err 'Vision and initial client require verified 3X-UI v3.9.0 or v3.10.0; select N with other versions.'; return 1;
         }
         # Reuse the existing authenticated local HTTPS/CSRF implementation.
         AWG_HELPER="$PANEL_STAGE/managed-amneziawg.py"

@@ -58,7 +58,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' || steps.previous.outputs.cache-matched-key == ''
         run: |
           timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends nginx libnginx-mod-stream sqlite3 openssl curl ca-certificates python3 python3-configobj python3-cryptography iproute2 tar gzip
+          timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends nginx libnginx-mod-stream sqlite3 openssl curl ca-certificates python3 python3-configobj python3-cryptography iproute2 qemu-user tar gzip
       - name: Test candidate's own x-ui and bundled Xray
         id: integration
         if: github.event_name == 'workflow_dispatch' || steps.previous.outputs.cache-matched-key == ''

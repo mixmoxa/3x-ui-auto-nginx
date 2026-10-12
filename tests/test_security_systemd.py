@@ -42,6 +42,59 @@ def nightly_after_cold_boot():
 
 
 class SecuritySystemd(unittest.TestCase):
+    def test_verified_panel_native_sandbox_and_initial_configuration(self):
+        if Path('/proc/1/comm').read_text().strip() != 'systemd':
+            self.fail('Requires the existing disposable systemd VM')
+        import stat
+        from test_personal_xhttp import function, FIXTURE
+        from test_integrated_features import helper
+        from release_contract import baseline
+        run=lambda *args: subprocess.check_output(args,text=True,stderr=subprocess.STDOUT,timeout=90)
+        certdir=Path('/root/cert/deploy.example'); certdir.mkdir(parents=True)
+        cert,key=certdir/'fullchain.pem',certdir/'privkey.pem'
+        run('openssl','req','-x509','-newkey','ec','-pkeyopt','ec_paramgen_curve:prime256v1','-nodes','-days','1',
+            '-subj','/CN=deploy.example','-addext','subjectAltName=DNS:deploy.example,IP:127.0.0.1',
+            '-out',str(cert),'-keyout',str(key))
+        Path('/etc/x-ui').mkdir(exist_ok=True); Path('/var/log/x-ui').mkdir(exist_ok=True)
+        env={**os.environ,**FIXTURE,'PANEL_TAG':baseline()['version'],'PANEL_ARCHIVE':'/opt/xui-ci/panel.tar.gz',
+             'XUIDB':'/etc/x-ui/x-ui.db','config_username':'integration','config_password':'temporary-fixture-password'}
+        code='msg_ok() { :; }; msg_err() { echo "$*" >&2; }; _arch() { echo amd64; }; country_flag() { echo 🌐; }; x-ui() { :; };\n'
+        code+='\n'.join(function(n) for n in ('gen_random_string','gen_group_id','_panel_initial_config','install_panel','configure_xui_db'))
+        subprocess.run(['bash','-eu','-c',code+'\ninstall_panel && configure_xui_db'],env=env,check=True,capture_output=True,text=True,timeout=90)
+        run('systemd-analyze','verify','/etc/systemd/system/x-ui.service')
+        self.addCleanup(lambda: subprocess.run(['systemctl','stop','x-ui'],check=False))
+        run('systemctl','start','x-ui')
+        deadline=time.monotonic()+45
+        while time.monotonic()<deadline:
+            try:
+                response=run('curl','-q','-fsS','--cacert',str(cert),'--connect-timeout','2','--max-time','3',f'https://127.0.0.1:{FIXTURE["panel_port"]}/{FIXTURE["panel_path"]}/')
+                if response: break
+            except subprocess.CalledProcessError: pass
+            time.sleep(.1)
+        else: self.fail('Sandboxed panel HTTPS not ready: '+run('journalctl','-u','x-ui','--no-pager','-n','40'))
+        run('systemctl','is-active','--quiet','x-ui')
+        props=dict(line.split('=',1) for line in run('systemctl','show','x-ui','-p','ProtectSystem','-p','ProtectHome','-p','NoNewPrivileges','-p','SystemCallFilter','-p','ReadWritePaths','-p','CapabilityBoundingSet').splitlines())
+        self.assertEqual(props['ProtectSystem'],'full'); self.assertEqual(props['ProtectHome'],'read-only')
+        self.assertEqual(props['NoNewPrivileges'],'yes'); self.assertIn('@system-service',props['SystemCallFilter'])
+        self.assertTrue(all(p in props['ReadWritePaths'].split() for p in ('/etc/x-ui','/usr/local/x-ui','/var/log/x-ui')))
+        self.assertTrue(set(props['ReadWritePaths'].split()).isdisjoint({'/usr','/etc','/root'}))
+        self.assertEqual(set(props['CapabilityBoundingSet'].lower().split()),{'cap_dac_override','cap_net_admin','cap_net_bind_service','cap_net_raw'})
+        with tempfile.TemporaryDirectory() as directory:
+            panel=helper('amneziawg').Panel(f'https://127.0.0.1:{FIXTURE["panel_port"]}/{FIXTURE["panel_path"]}/','integration','temporary-fixture-password',directory,('--cacert',str(cert)))
+            panel.create('deploy.example')
+        for restarted in (False,True):
+            if restarted: run('systemctl','restart','x-ui')
+            deadline=time.monotonic()+45
+            while time.monotonic()<deadline:
+                sock=Path('/dev/shm/uds2023.sock')
+                listeners=run('ss','-H','-lntup')
+                if sock.exists() and stat.S_ISSOCK(sock.stat().st_mode) and 'uds2023.sock' in run('ss','-H','-lxnp') and 'xray' in listeners and any(':443 ' in line and line.startswith('udp') for line in listeners.splitlines()) and any(':8443 ' in line and line.startswith('udp') and 'x-ui' in line for line in listeners.splitlines()):
+                    break
+                time.sleep(.1)
+            else: self.fail('Sandboxed Xray/UDS/Hysteria2/AWG not ready: '+run('journalctl','-u','x-ui','--no-pager','-n','40'))
+        self.assertEqual(run('sqlite3','/etc/x-ui/x-ui.db','PRAGMA quick_check;').strip(),'ok')
+        print('REAL baseline CLI → production SQL/cert → sandboxed HTTPS/Xray/UDS/Hysteria2/AWG/restart: PASS',flush=True)
+
     def test_real_security_strict_tls_and_rollback(self):
         if Path('/proc/1/comm').read_text().strip() != 'systemd':
             self.fail('Requires real systemd PID 1 in a disposable VM; never mocked PASS')

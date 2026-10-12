@@ -29,3 +29,15 @@ RUN --mount=type=secret,id=proxy_ca,target=/run/proxy-ca.pem \
     fi
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]
+
+# Authenticate the same baseline before its real systemd/initial-install test.
+COPY x-ui-latest.sh /opt/xui-ci/x-ui-latest.sh
+COPY tests/release_contract.py /opt/xui-ci/tests/release_contract.py
+RUN --mount=type=secret,id=proxy_ca,target=/run/proxy-ca.pem \
+    if test -f /run/proxy-ca.pem; then export CURL_CA_BUNDLE=/run/proxy-ca.pem; fi; \
+    cd /opt/xui-ci && \
+    metadata=$(PYTHONPATH=tests python3 -c 'from release_contract import baseline; b=baseline(); print(b["version"],b["archives"]["amd64"])') && \
+    set -- $metadata && \
+    curl -fLsS --retry 3 --connect-timeout 15 --max-time 180 "https://github.com/MHSanaei/3x-ui/releases/download/$1/x-ui-linux-amd64.tar.gz" -o panel.tar.gz && \
+    curl -fLsS --retry 3 --connect-timeout 15 --max-time 120 "https://github.com/MHSanaei/3x-ui/releases/download/$1/x-ui-linux-amd64.tar.gz.sha256" -o panel.sha256 && \
+    PYTHONPATH=tests python3 -c 'import sys; from release_contract import verify,validate_layout; verify("panel.tar.gz","panel.sha256",sys.argv[1]); validate_layout("panel.tar.gz","amd64")' "$2"

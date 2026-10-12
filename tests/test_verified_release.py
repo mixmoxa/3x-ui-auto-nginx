@@ -65,6 +65,51 @@ cp() { command cp "$@"; }
             self.assertIn('/v3.9.0/x-ui-linux-amd64.tar.gz',(root/'calls').read_text())
             self.assertNotIn('v9.9.9',(root/'calls').read_text())
 
+    def test_arm32_install_final_name_and_missing_binary_fail_closed(self):
+        source=(ROOT/'x-ui-latest.sh').read_text()
+        for arch in ('armv5','armv6','armv7'):
+            for present in (True,False):
+                with self.subTest(arch=arch,present=present), tempfile.TemporaryDirectory() as directory:
+                    root=Path(directory); local=root/'local'; local.mkdir(); stage=root/'stage'; (stage/'x-ui/bin').mkdir(parents=True)
+                    for name in ('x-ui','x-ui.sh'): (stage/'x-ui'/name).write_text('#!/bin/bash\nexit 0\n')
+                    (stage/'x-ui/x-ui.service.debian').write_text('[Service]\nExecStart=/fixture\n[Install]\n')
+                    if present: (stage/'x-ui/bin'/('xray-linux-'+arch)).write_text('#!/bin/bash\necho fixture\n')
+                    archive=root/'archive.tar.gz'
+                    with tarfile.open(archive,'w:gz') as bundle: bundle.add(stage/'x-ui',arcname='x-ui')
+                    body=function(source,'install_panel').replace('/usr/local',str(local)).replace('/etc/systemd/system/x-ui.service',str(root/'unit'))
+                    script='msg_err() { echo "$*" >&2; }; msg_ok() { echo "$*"; }; _arch() { echo '+arch+'; }; systemctl() { :; }; install() { :; }; _panel_initial_config() { :; };\n'+body+'\ninstall_panel'
+                    result=subprocess.run(['bash','-u','-c',script],env={**os.environ,'PANEL_TAG':'v3.10.0','PANEL_ARCHIVE':str(archive)},capture_output=True,text=True)
+                    target=local/'x-ui/bin/xray-linux-arm32'
+                    if present:
+                        self.assertEqual(result.returncode,0,result.stderr); self.assertTrue(os.access(target,os.X_OK))
+                    else:
+                        self.assertNotEqual(result.returncode,0); self.assertNotIn('installed.',result.stdout)
+
+    def test_installed_310_unit_keeps_upstream_sandbox_and_seccomp(self):
+        source=(ROOT/'x-ui-latest.sh').read_text()
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); local=root/'local'; local.mkdir(); stage=root/'stage'; (stage/'x-ui/bin').mkdir(parents=True)
+            for name in ('x-ui','x-ui.sh','bin/xray-linux-amd64'): (stage/'x-ui'/name).write_text('#!/bin/bash\nexit 0\n')
+            original='[Service]\nProtectSystem=full\nProtectHome=read-only\nNoNewPrivileges=yes\nReadWritePaths=-/etc/x-ui -/usr/local/x-ui -/var/log/x-ui\n[Install]\n'
+            (stage/'x-ui/x-ui.service.debian').write_text(original)
+            archive=root/'archive.tar.gz'
+            with tarfile.open(archive,'w:gz') as bundle: bundle.add(stage/'x-ui',arcname='x-ui')
+            body=function(source,'install_panel').replace('/usr/local',str(local)).replace('/etc/systemd/system/x-ui.service',str(root/'unit'))
+            script='msg_ok() { :; }; _arch() { echo amd64; }; systemctl() { :; }; install() { :; }; _panel_initial_config() { :; };\n'+body+'\ninstall_panel'
+            result=subprocess.run(['bash','-u','-c',script],env={**os.environ,'PANEL_TAG':'v3.10.0','PANEL_ARCHIVE':str(archive)},capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            unit=(root/'unit').read_text()
+            for directive in ('ProtectSystem=full','ProtectHome=read-only','NoNewPrivileges=yes','SystemCallFilter=@system-service','SystemCallErrorNumber=EPERM'):
+                self.assertIn(directive,unit)
+            self.assertIn('ReadWritePaths=-/etc/x-ui -/usr/local/x-ui -/var/log/x-ui',unit)
+        # Only explicitly tested versions pass optional component preflights.
+        for tag,allowed in (('v3.9.0',True),('v3.10.0',True),('v3.11.0',False)):
+            for name in ('preflight_amneziawg','preflight_integrated_features'):
+                stubs='msg_err() { :; }; awg_port_available() { :; }; curl() { :; }; python3() { :; }; preflight_vision_artifacts() { :; };\n'
+                result=subprocess.run(['bash','-eu','-c',stubs+function(source,name)+'\n'+name],env={**os.environ,'PANEL_TAG':tag,'INSTALL_AWG':'y','CREATE_CLIENT':'y','INSTALL_SECURITY':'n','INSTALL_VISION':'n','PANEL_STAGE':'/fixture','GITHUB_RAW':'https://example.invalid'},capture_output=True,text=True)
+                self.assertEqual(result.returncode==0,allowed,(name,tag,result.stderr))
+
+
     def test_preflight_failure_preserves_existing_managed_state(self):
         source = (ROOT/'x-ui-latest.sh').read_text()
         names = re.findall(r'^\s*([a-z_]+)(?:\s|$)',function(source,'main'),re.M)
