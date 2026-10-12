@@ -81,7 +81,7 @@ Sustituye `panel.example.com` y `reality.example.com` por tus propios dominios. 
 
 *Recomendado para usuarios con poca experiencia · Activado por defecto (`Y`)*
 
-El instalador ofrece protección adicional para el servidor: Fail2ban para SSH, DNS del sistema cifrado y actualizaciones de seguridad automáticas.
+El instalador configura automáticamente protección adicional para el servidor: Fail2ban contra ataques de fuerza bruta a las contraseñas de SSH, DNS del sistema cifrado (DoT), actualizaciones de seguridad automáticas del sistema y los paquetes, y un archivo swap de 1 GiB para mejorar la estabilidad cuando falta memoria.
 
 **Lee los detalles siguientes antes de activar esta opción**, especialmente el horario de reinicios automáticos.
 
@@ -90,6 +90,7 @@ El instalador ofrece protección adicional para el servidor: Fail2ban para SSH, 
 
 Al elegir `Y`, el instalador configura:
 
+- **Swap de 1 GiB.** Si no hay swap activo, el sistema de archivos es compatible y hay al menos 4 GiB libres, el instalador crea y activa un archivo swap. Los ajustes de swap existentes no cambian. Si no se cumplen estas condiciones, se omite este paso sin detener la instalación.
 - **Protección SSH — Fail2ban.** Limita los intentos de acceso fallidos en los puertos SSH reales. No modifica los ajustes existentes de autenticación SSH.
 - **DNS cifrado (DoT).** El DNS del sistema usa `systemd-resolved` con DNS-over-TLS obligatorio y resolutores de Cloudflare y Google. Si estos no están disponibles, no recurre a consultas sin cifrar.
 - **Actualizaciones de seguridad automáticas.** Las listas de paquetes se actualizan a las 02:30 y las actualizaciones se instalan a las 02:50.

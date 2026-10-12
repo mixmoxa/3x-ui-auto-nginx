@@ -81,7 +81,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 *建议经验较少的用户启用 · 默认启用（`Y`）*
 
-安装程序可以为 VPS 配置额外防护：使用 Fail2ban 保护 SSH、加密系统 DNS，以及自动安装安全更新。
+安装程序会自动配置额外的服务器防护：使用 Fail2ban 防止 SSH 密码暴力破解、加密系统 DNS（DoT）、自动安装系统及软件包安全更新，并创建 1 GiB 的 swap 文件，以提高内存不足时的系统稳定性。
 
 **启用前请先阅读以下设置说明**，尤其要了解自动重启计划。
 
@@ -90,6 +90,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 选择 `Y` 后会配置以下内容：
 
+- **1 GiB swap。** 如果没有启用的 swap、文件系统受支持且至少有 4 GiB 可用空间，安装程序会创建并启用 swap 文件。现有 swap 设置不会被修改。如果不满足条件，将跳过此步骤而不中断安装。
 - **SSH 防护 — Fail2ban。** 根据实际 SSH 监听端口限制反复失败的登录尝试，不修改现有的 SSH 身份验证设置。
 - **加密 DNS（DoT）。** 系统 DNS 通过 `systemd-resolved` 使用强制 DNS-over-TLS，解析服务器为 Cloudflare 和 Google。加密 DNS 不可用时不会自动退回明文查询。
 - **自动安全更新。** 02:30 更新软件包列表，02:50 安装安全更新。

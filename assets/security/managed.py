@@ -37,13 +37,14 @@ SERVICES = ('fail2ban.service', 'apt-daily.timer', 'apt-daily-upgrade.timer', 's
 
 
 def command(*args, check=True):
-    result = subprocess.run(args, capture_output=True, text=True, timeout=1800 if args[0]=='apt-get' else 90,
+    output = {'stdout': sys.stderr, 'stderr': sys.stderr} if args[0] == 'apt-get' else {'capture_output': True}
+    result = subprocess.run(args, **output, text=True, timeout=1800 if args[0]=='apt-get' else 90,
                             env={**os.environ, 'LC_ALL': 'C', 'DEBIAN_FRONTEND': 'noninteractive',
                                  'NEEDRESTART_MODE': 'l', 'UCF_FORCE_CONFFOLD': '1'})
     if check and result.returncode:
         detail = ': ' + result.stderr.strip()[:400] if args[0] == 'resolvectl' else ''
         raise ValueError('Command failed (exit '+str(result.returncode)+'): ' + ' '.join(args) + detail)
-    return result.stdout.strip()
+    return (result.stdout or '').strip()
 
 
 def ssh_ports(effective, socket_listen=''):

@@ -82,15 +82,103 @@ python3() { if [[ "$*" == *--render-acme* ]]; then echo '# ACME fixture'; else p
             finally:
                 release.touch()
                 _,errors=process.communicate(timeout=5)
-            self.assertIn('APT: working',early,'No progress before the APT command finished')
-            self.assertNotIn('package-output-fixture',early,'Raw package output must stay private until completion')
+            self.assertIn('package-output-fixture',early,'Real APT output must arrive before completion')
+            self.assertNotIn('APT: working',early)
             self.assertTrue(running)
             self.assertEqual(process.returncode,100,errors)
-            self.assertIn('package-output-fixture',errors)
+            self.assertNotIn('package-output-fixture',errors)
             broken_capture='apt-get() { echo package-output-fixture; }; tee() { cat >/dev/null; return 73; };\n'
             result=subprocess.run(['bash','-eu','-c',broken_capture+function('apt_system')+'\napt_system -y dist-upgrade'],capture_output=True,text=True)
             self.assertEqual(result.returncode,1,'An output-capture error must not become successful APT')
             self.assertNotIn('package-output-fixture',result.stdout)
+            success=subprocess.run(['bash','-eu','-c','apt-get() { echo successful-package-output; };\n'+function('apt_system')+'\napt_system -y dist-upgrade'],capture_output=True,text=True)
+            self.assertEqual(success.returncode,0,success.stderr)
+            self.assertEqual(success.stdout.count('successful-package-output'),1)
+            self.assertNotIn('APT: working',success.stdout)
+
+    def test_security_apt_stream_keeps_json_stdout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); release=root/'release'; apt=root/'apt-get'
+            apt.write_text('#!/bin/bash\necho security-package-output\nwhile [[ ! -e "$RELEASE" ]]; do sleep .05; done\n')
+            apt.chmod(0o755)
+            code="import importlib.util,json; s=importlib.util.spec_from_file_location('security',"+repr(str(ROOT/'assets/security/managed.py'))+"); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); m.command('apt-get'); print(json.dumps({'status':'configured'}))"
+            process=subprocess.Popen(['python3','-c',code],env={**os.environ,'PATH':str(root)+os.pathsep+os.environ['PATH'],'RELEASE':str(release)},stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+            try:
+                ready=select.select([process.stderr],[],[],2)[0]
+                early=process.stderr.readline() if ready else ''
+                running=process.poll() is None
+            finally:
+                release.touch(); output,errors=process.communicate(timeout=5)
+            self.assertIn('security-package-output',early)
+            self.assertTrue(running)
+            self.assertEqual(process.returncode,0,errors)
+            self.assertEqual(json.loads(output),{'status':'configured'})
+            self.assertNotIn('security-package-output',output)
+
+    def test_optional_swap_ownership_failures_and_idempotency(self):
+        cases=('declined','existing','file','directory','symlink','low-space','unsupported','missing-tool',
+               'fallocate','mkswap','swapon','unconfirmed','fstab','fstab-write','fstab-existing','success','xfs','boundary')
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory); (root/'etc').mkdir(); fstab=root/'etc/fstab'
+                original='# administrator entry\nUUID=fixture / ext4 defaults 0 1\n'; fstab.write_text(original)
+                swap=root/'swapfile'; active=root/'active'; calls=root/'calls'
+                if case=='fstab-existing':
+                    original+=str(swap)+' none swap sw 0 0\n'; fstab.write_text(original)
+                if case=='existing': active.write_text('/administrator-swap\n')
+                if case=='file': swap.write_text('administrator data')
+                if case=='directory': swap.mkdir()
+                if case=='symlink': swap.symlink_to(root/'absent')
+                source=function('setup_swap').replace('/etc/fstab',str(fstab)).replace('/etc/.3x-ui-fstab.',str(root/'etc/.3x-ui-fstab.')).replace('/swapfile',str(swap))
+                stubs=r'''
+command() { if [[ "$CASE" == missing-tool && "$2" == fallocate ]]; then return 1; fi; builtin command "$@"; }
+swapon() { echo "swapon $*" >> "$CALLS"; if [[ "$1" == --show=NAME ]]; then cat "$ACTIVE" 2>/dev/null || :; else [[ "$CASE" != unconfirmed ]] && echo "$1" > "$ACTIVE"; [[ "$CASE" != swapon ]]; fi; }
+swapoff() { echo swapoff >> "$CALLS"; rm -f "$ACTIVE"; }
+findmnt() { echo findmnt >> "$CALLS"; if [[ "$CASE" == unsupported ]]; then echo btrfs; elif [[ "$CASE" == xfs ]]; then echo xfs; else echo ext4; fi; }
+df() { echo df >> "$CALLS"; if [[ "$CASE" == low-space ]]; then echo 'disk 8000000 5000000 3000000 70% /'; elif [[ "$CASE" == boundary ]]; then echo 'disk 8000000 3805696 4194304 40% /'; else echo 'disk 8000000 3000000 5000000 40% /'; fi; }
+fallocate() { echo "fallocate $*" >> "$CALLS"; [[ "$CASE" != fallocate ]] || return 1; truncate -s 1G "${@: -1}"; }
+mkswap() { echo mkswap >> "$CALLS"; [[ "$CASE" != mkswap ]]; }
+printf() { if [[ "$CASE" == fstab-write && "$1" == *' none swap sw 0 0'* ]]; then builtin printf partial; return 1; fi; builtin printf "$@"; }
+mv() { echo mv >> "$CALLS"; [[ "$CASE" != fstab ]] || return 1; command mv "$@"; }
+'''
+                script=stubs+source+'\nINSTALL_SECURITY='+('n' if case=='declined' else 'y')+'; setup_swap; echo RESULT=${SWAP_RESULT:-not_requested}; echo CONTINUED;'
+                env={**os.environ,'CASE':case,'ACTIVE':str(active),'CALLS':str(calls)}
+                result=subprocess.run(['bash','-eu','-c',script],env=env,capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stderr); self.assertIn('CONTINUED',result.stdout)
+                log=calls.read_text() if calls.exists() else ''
+                if case=='declined': self.assertEqual(log,''); self.assertIn('not_requested',result.stdout)
+                elif case=='existing': self.assertIn('RESULT=existing',result.stdout); self.assertNotIn('fallocate',log)
+                elif case in ('success','xfs','boundary'):
+                    self.assertIn('RESULT=created',result.stdout); self.assertEqual(swap.stat().st_size,1073741824)
+                    self.assertEqual(swap.stat().st_mode & 0o777,0o600)
+                    self.assertEqual(active.read_text().strip(),str(swap))
+                    self.assertEqual(fstab.read_text().count(str(swap)+' none swap sw 0 0'),1)
+                    again=subprocess.run(['bash','-eu','-c',script],env=env,capture_output=True,text=True)
+                    self.assertEqual(again.returncode,0,again.stderr); self.assertIn('RESULT=existing',again.stdout)
+                    self.assertEqual(fstab.read_text().count(str(swap)+' none swap sw 0 0'),1)
+                else:
+                    self.assertIn('RESULT=skipped',result.stdout)
+                    if case not in ('file','directory','symlink'): self.assertFalse(swap.exists())
+                    if case=='file': self.assertEqual(swap.read_text(),'administrator data')
+                    if case=='directory': self.assertTrue(swap.is_dir())
+                    if case=='symlink': self.assertTrue(swap.is_symlink())
+                    if case in ('swapon','fstab','fstab-write'): self.assertIn('swapoff',log)
+                    self.assertFalse(active.exists())
+                if case not in ('success','xfs','boundary'): self.assertEqual(fstab.read_text(),original)
+                self.assertEqual(list((root/'etc').glob('.3x-ui-fstab.*')),[])
+        main=function('main')
+        self.assertLess(main.index('preflight_integrated_features'),main.index('setup_swap'))
+        self.assertLess(main.index('setup_swap'),main.index('prepare_base_os'))
+        self.assertLess(main.index('setup_swap'),main.index('cleanup_adguard'))
+
+    def test_swap_final_status_is_truthful_and_optional(self):
+        stubs='msg_inf() { echo "$*"; }; msg_ok() { echo "$*"; }; msg_warn() { echo "$*"; }; timedatectl() { :; }; ufw() { :; };\n'
+        for state,text in (('not_requested',None),('created','Created and enabled'),('existing','Already configured'),('skipped','Skipped (insufficient space)')):
+            result=subprocess.run(['bash','-eu','-c',stubs+function('show_results')+'\ndomain=panel.example; reality_domain=cover.example; panel_path=panel; config_username=user; config_password=password; show_results'],env={**os.environ,'SWAP_RESULT':state,'SWAP_REASON':'insufficient space'},capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            if text: self.assertIn(text,result.stdout)
+            else: self.assertNotIn('SWAP',result.stdout)
+            if state!='created': self.assertNotIn('Created and enabled',result.stdout)
 
     def test_minimal_image_security_preflight_and_dns_rollback(self):
         security=helper('security')
@@ -209,13 +297,16 @@ python3() { if [[ "$*" == *--render-acme* ]]; then echo '# ACME fixture'; else p
     def test_preparation_errors_preserve_deployment_and_initial_reboot_is_manual(self):
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
                'select_adguard','select_client','preflight_base_os','preflight_panel_release','preflight_amneziawg',
-               'preflight_integrated_features','prepare_base_os','prepare_system_dns')
+               'preflight_integrated_features','setup_swap','prepare_base_os','prepare_system_dns')
         base='\n'.join(n+'() { echo '+n+'; };' for n in names)
         base+='\nmsg_err() { echo "$*" >&2; }; msg_warn() { :; }; cleanup_adguard() { echo CLEANUP; exit 19; };\n'
         for failure in ('preflight_base_os','preflight_integrated_features','prepare_base_os','prepare_system_dns'):
             result=subprocess.run(['bash','-eu','-c',base+function('main')+'\n'+failure+'() { return 1; }; main'],capture_output=True,text=True)
             self.assertEqual(result.returncode,1,result.stderr)
             self.assertNotIn('CLEANUP',result.stdout)
+        swap_failure=subprocess.run(['bash','-eu','-c',base+function('main')+'\nsetup_swap() { return 1; }; main'],capture_output=True,text=True)
+        self.assertEqual(swap_failure.returncode,19,swap_failure.stderr)
+        self.assertIn('CLEANUP',swap_failure.stdout)
         with tempfile.TemporaryDirectory() as directory:
             flag=Path(directory)/'reboot-required'; log=Path(directory)/'calls'
             # Lists-lock errors retry; an ordinary update error fails once.
@@ -259,7 +350,7 @@ python3() { if [[ "$*" == *--render-acme* ]]; then echo '# ACME fixture'; else p
                 prefix, cli=source.split("if __name__ == '__main__':",1)
                 (root/'helper.py').write_text(prefix.replace("root=Path('/')", 'root=Path('+repr(str(root))+')')+override+"if __name__ == '__main__':"+cli)
                 names=('confirm_destructive_reinstall','validate_domains','select_vision','select_amneziawg','select_adguard','select_client',
-                       'preflight_panel_release','preflight_amneziawg','preflight_vision_artifacts','preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot')
+                       'preflight_panel_release','preflight_amneziawg','preflight_vision_artifacts','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot')
                 stubs='\n'.join(name+'() { :; }' for name in names)
                 stubs+='\nselect_security() { INSTALL_SECURITY='+('n' if case=='declined' else 'y')+'; }; msg_err() { echo "$*" >&2; }; msg_warn() { :; };\n'
                 stubs+='curl() { cp "$FIXTURE_HELPER" "${@: -1}"; }; cleanup_adguard() { echo CLEANUP; exit 19; }; clean_previous_install() { echo DESTRUCTION; };\n'
@@ -320,7 +411,7 @@ python3() { if [[ "$*" == *--render-acme* ]]; then echo '# ACME fixture'; else p
     def test_main_stops_after_mandatory_setup_failure(self):
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
                'select_adguard','select_client','preflight_base_os','preflight_panel_release','preflight_amneziawg',
-               'preflight_integrated_features','prepare_base_os','prepare_system_dns','cleanup_adguard','clean_previous_install',
+               'preflight_integrated_features','setup_swap','prepare_base_os','prepare_system_dns','cleanup_adguard','clean_previous_install',
                'install_packages','setup_firewall','get_server_ip','setup_acme_http','get_ssl_certs','install_panel',
                'configure_nginx','configure_xui_db','install_clash_sub','install_fake_site','install_diagnostics','tune_system',
                'install_backup_tool','setup_certificate_renewal','check_installation','show_results','finish_initial_reboot')
@@ -773,7 +864,7 @@ python3() { if [[ "$*" == *--render-acme* ]]; then echo '# ACME fixture'; else p
                  'preflight_panel_release', 'preflight_amneziawg', 'cleanup_adguard', 'clean_previous_install',
                  'install_packages', 'setup_firewall', 'get_server_ip', 'setup_acme_http', 'get_ssl_certs',
                  'install_panel', 'configure_nginx', 'configure_xui_db', 'install_clash_sub', 'install_fake_site',
-                 'install_diagnostics', 'tune_system', 'install_backup_tool', 'setup_certificate_renewal', 'check_installation', 'show_results', 'preflight_vision_artifacts','preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot')
+                 'install_diagnostics', 'tune_system', 'install_backup_tool', 'setup_certificate_renewal', 'check_installation', 'show_results', 'preflight_vision_artifacts','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot')
         stubs = '\n'.join(name + '() { :; }' for name in names)
         stubs += '\nmsg_warn() { :; }; select_security() { INSTALL_SECURITY=n; }; select_vision() { INSTALL_VISION=n; }; select_client() { CREATE_CLIENT=n; }; systemctl() { :; }; x-ui() { :; }\n'
         for name in ('install_security', 'install_vision', 'install_initial_client'):
@@ -834,7 +925,7 @@ python3() { if [[ "$*" == *--render-acme* ]]; then echo '# ACME fixture'; else p
                'select_adguard','select_client','preflight_panel_release','preflight_amneziawg','preflight_integrated_features',
                'cleanup_adguard','clean_previous_install','install_packages','setup_firewall','get_server_ip','setup_acme_http',
                'get_ssl_certs','install_panel','configure_nginx','configure_xui_db','install_clash_sub','install_fake_site',
-               'install_diagnostics','tune_system','install_backup_tool','setup_certificate_renewal','check_installation','show_results','preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot')
+               'install_diagnostics','tune_system','install_backup_tool','setup_certificate_renewal','check_installation','show_results','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot')
         stubs='\n'.join(name+'() { :; }' for name in names)+'\nmsg_warn() { :; }; systemctl() { :; }; x-ui() { :; }\n'
         for name in ('install_security','install_vision','install_amneziawg','install_adguard','install_initial_client'):
             stubs+=name+'() { echo '+name+'; };\n'
