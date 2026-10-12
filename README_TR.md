@@ -15,7 +15,7 @@
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 
-[Sürümler](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Telegram Web Proxy Manager](#telemt-web-manager) · [Sorun bildirimleri](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
+[📦 Sürümler](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [🐛 Sorun bildir](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 İletişim](https://t.me/promsdev)
 
 </div>
 
@@ -27,7 +27,7 @@
 
 | | |
 | --- | --- |
-| **Hazır bağlantı profilleri**<br>REALITY, XHTTP, Hysteria2, WebSocket ve Trojan gRPC önceden yapılandırılmıştır. | **Dışarıya kapalı dahili hizmetler**<br>Panelin ve abonelik hizmetinin dahili portları doğrudan internete açılmaz. |
+| **Hazır bağlantı profilleri**<br>REALITY, XHTTP, Hysteria2, Amnezia WG, VLESS XTLS Vision, WebSocket TLS ve Trojan gRPC. | **Dışarıya kapalı dahili hizmetler**<br>Panelin ve abonelik hizmetinin dahili portları doğrudan internete açılmaz. |
 | **Kısıtlı nginx yönlendirmesi**<br>İstekler rastgele yerel portlara yönlendirilemez. | **Backup / Restore v3**<br>Mevcut VPS'i önceki durumuna döndürün veya farklı bir sağlayıcıdaki yeni sunucuya geri yükleyin. |
 | **Otomatik sertifikalar**<br>Let's Encrypt sertifikaları elle yapılandırma gerektirmeden alınır ve yenilenir. | **AdGuard Home + DoH**<br>Kurulumda isteğe bağlıdır; üçüncü bir alan adı gerekmez. |
 
@@ -41,15 +41,164 @@
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-Kurulum aracı iki alan adını sorar ve isteğe bağlı AmneziaWG ile AdGuard Home kurulumu sunar. Alan adlarını doğrudan da belirtebilirsiniz:
+
+Kurulum aracı başlatıldığında aşağıdaki adımları sırayla sunar. Terminalde göreceğiniz sorular, karşılaştırabilmeniz için özgün İngilizce biçimleriyle verilmiştir:
+
+---
+
+### 1. 🌐 3X-UI panel alan adı
+
+> `Enter the domain for your 3X-UI panel:`
+
+Yönetim paneline, aboneliklere ve ek web hizmetlerine erişmek için kullanacağınız alan adını girin.
+
+---
+
+### 2. 🛰️ VLESS REALITY alan adı
+
+> `Enter the domain for VLESS REALITY:`
+
+REALITY için ikinci bir alan adı girin. Her iki alan adının DNS kayıtları da VPS'inizin IP adresine işaret etmelidir.
+
+<details>
+<summary>ℹ️ Ek çalıştırma parametreleri</summary>
+
+Her iki alan adını etkileşimli olarak girmek yerine komut satırından belirtebilirsiniz:
 
 ```bash
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
 ```
 
-> **⚠️ Yalnızca temiz kurulum veya tamamen yeniden kurulum içindir.** `x-ui-latest.sh` mevcut 3x-ui veritabanını ve nginx yapılandırmasını siler. **Çalışan bir VPS'i güncellemek için kullanmayın.** Önce yedeğinizi sunucu dışında saklayın. Mevcut bir kurulum algılanırsa yeniden kurma veya kaldırma işlemi için büyük harflerle tam olarak `YES` yazılması gerekir.
+`panel.example.com` ve `reality.example.com` değerlerini kendi alan adlarınızla değiştirin. İsteğe bağlı özellikler kurulum sırasında yine sorulur.
 
-Kurulum sonunda **panel adresi, rastgele oluşturulmuş giriş bilgileri ve tanılama adresi** (3x-ui üzerinden kimlik doğrulamalı MTR/LibreSpeed) gösterilir. AdGuard Home seçildiyse yönetim adresi, parola ve DoH adresi de verilir.
+</details>
+
+---
+
+### 3. 🔐 Gelişmiş VPS güvenliği
+
+> `Enhance VPS security? [Y/n]:`
+
+*Deneyimsiz kullanıcılara önerilir · Varsayılan olarak açık (`Y`)*
+
+Kurulum aracı SSH için Fail2ban, şifreli sistem DNS'i ve otomatik güvenlik güncellemeleriyle sunucunuza ek koruma sağlayabilir.
+
+**Bu seçeneği etkinleştirmeden önce aşağıdaki ayrıntıları**, özellikle otomatik yeniden başlatma takvimini okuyun.
+
+<details>
+<summary>🔐 Güvenlik ayarlarının ayrıntıları</summary>
+
+`Y` seçildiğinde şu ayarlar uygulanır:
+
+- **SSH koruması — Fail2ban.** Gerçek SSH dinleme portlarına göre tekrarlanan başarısız giriş denemelerini sınırlar. Mevcut SSH kimlik doğrulama ayarlarını değiştirmez.
+- **Şifreli DNS (DoT).** Sistem DNS'i `systemd-resolved` üzerinden zorunlu DNS-over-TLS ile çalışır; Cloudflare ve Google sunucuları kullanılır. Şifreli sunucular kullanılamazsa düz metin DNS sorgularına geçilmez.
+- **Otomatik güvenlik güncellemeleri.** Paket listeleri 02:30'da güncellenir, güvenlik güncellemeleri 02:50'de yüklenir.
+- **Otomatik yeniden başlatma — 04:38.** Güncellemeler yeniden başlatma gerektiriyorsa sunucu bu saatte, **aktif kullanıcı oturumları olsa bile** yeniden başlatılır; mevcut bağlantılar kesilebilir.
+
+Saatler VPS'in yerel saat dilimine göredir.
+
+Değişikliklerden önce mevcut ayarların uyumluluğu denetlenir. Güvenlik yapılandırması başarısız olursa kontrollü geri alma uygulanır.
+
+**Önemli:** Bu seçenek SSH parola girişini kapatmaz ve sunucu yönetiminin yerini almaz. Önce SSH anahtarıyla girişi ayarlayın, ardından parola ile kimlik doğrulamayı kendiniz kapatın.
+
+</details>
+
+---
+
+### 4. 🔗 VLESS XTLS Vision
+
+> `Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]:`
+
+*Ek bağlantı · Varsayılan olarak kapalı (`N`)*
+
+REALITY bağlantınız kararsızsa veya ağınızda engelleniyorsa yararlı olabilecek, TLS üzerinden çalışan alternatif bir VLESS bağlantısıdır. 3X-UI panelinde ayrı bir profil olarak oluşturulur.
+
+> [!IMPORTANT]
+> **XTLS Vision üçüncü ve ayrı bir alan adı gerektirir**; bu alan adı panel ve REALITY alan adlarından farklı olmalıdır. DNS kaydı VPS IP adresine yönlendirilmelidir. HTTPS sertifikası ve nginx yönlendirmesi otomatik yapılandırılır.
+>
+> `Y` seçildikten sonra kurulum aracı bu alan adını ayrıca sorar: `Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains):`.
+
+---
+
+### 5. 🔑 Amnezia WG
+
+> `Set up an additional AmneziaWG connection? [y/N]:`
+
+*Ek bağlantı · Varsayılan olarak kapalı (`N`)*
+
+3X-UI panelinde ayrı bir AmneziaWG bağlantısı oluşturulur. Ek alan adı gerekmez.
+
+<details>
+<summary>ℹ️ Amnezia WG hakkında</summary>
+
+Kurulum aracı **UDP/8443** üzerinden AmneziaWG 3.1'i yapılandırır ve gerekli UFW kuralını otomatik ekler.
+
+Kurulumdan sonra 3X-UI panelinden bir istemci oluşturun ve uyumlu bir Amnezia uygulaması için yapılandırmayı veya `vpn://` bağlantısını alın.
+
+Kurulum aracı sunucu bağlantısını oluşturur; AmneziaWG istemcilerini otomatik oluşturmaz.
+
+Yapılandırma ve gerekli güvenlik duvarı kuralı **Backup / Restore v3** kapsamındadır.
+
+</details>
+
+---
+
+### 6. 🛡️ AdGuard Home + DNS-over-HTTPS
+
+> `Install and configure AdGuard Home? [y/N]:`
+
+*İsteğe bağlı DNS sunucusu · Varsayılan olarak kapalı (`N`)*
+
+Reklamları ve izleyicileri engelleyebilen, istemcileri yönetebilen ve şifreli DNS sorguları sunan kişisel DNS sunucusu.
+
+<details>
+<summary>ℹ️ AdGuard Home ve erişim kontrolü</summary>
+
+Ek alan adı gerekmez.
+
+Kurulumdan sonra şu adresler kullanılabilir:
+
+- **AdGuard Home yönetim paneli:** `https://panel.example.com/adg-.../` — rastgele oluşturulan benzersiz yol.
+- **DNS-over-HTTPS:** `https://panel.example.com/dns-query`.
+
+Genel TCP/UDP **53** portları açılmaz. AdGuard Home yapılandırması ve verileri **Backup / Restore v3** kapsamındadır.
+
+**⚠️ Güvenlik önerisi**
+
+Kişisel VPS'inizde her cihaz için ayrı bir [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) oluşturun.
+
+AdGuard Home'da **Ayarlar → DNS ayarları → Erişim ayarları → İzin verilen istemciler** bölümüne gidin ve IP adresleri ya da alt ağlar yerine **yalnızca bu ClientID'leri** ekleyin.
+
+Şu biçimde DoH adresleri kullanın:
+
+`https://panel.example.com/dns-query/<ClientID>`
+
+Yapılandırmadan sonra izin verilen bir ClientID içermeyen sorgular, normal `/dns-query` yoluna yapılanlar da dâhil, reddedilir.
+
+Uzun ve rastgele kimlikler seçin. [Resmî AdGuard Home güvenlik önerilerine](https://adguard-dns.io/kb/adguard-home/running-securely/) bakın.
+
+</details>
+
+---
+
+### 7. 👤 Otomatik istemci ve abonelik oluşturma
+
+> `Create a client in 3X-UI and display a subscription link after installation? [Y/n]:`
+
+*Önerilir · Varsayılan olarak açık (`Y`)*
+
+Kurulum aracı 3X-UI panelinde bir istemci oluşturur ve yapılandırılmış, desteklenen bağlantılar için kişisel bir HTTPS abonelik bağlantısı üretir.
+
+Abonelik bağlantısı kurulum sonu raporunda gösterilir. Bu seçeneği reddederseniz istemcileri daha sonra panel üzerinden elle oluşturabilirsiniz.
+
+---
+
+> [!CAUTION]
+> **Yalnızca temiz kurulum veya tam yeniden kurulum içindir.** `x-ui-latest.sh` önceki 3x-ui veritabanını ve nginx yapılandırmasını siler; **çalışan bir VPS'i güncellemek için kullanılmamalıdır**. Yeniden kurmadan önce Backup kopyasını VPS dışında saklayın. Var olan kurulum algılandığında yeniden kurulum veya kaldırma için tam olarak büyük harflerle `YES` yazmak gerekir.
+
+Kurulum sonunda **panel adresi, kullanıcı adı ve parola, tanılama adresi ve abonelik bağlantısı** (otomatik istemci oluşturulduysa) gösterilir. AdGuard Home seçildiyse yönetim adresi, parolası ve DoH uç noktası da görüntülenir.
+
+İşletim sistemi güncellemesi yeniden başlatma gerektiriyorsa kurulum aracı bunu bildirir. **İlk yeniden başlatma elle yapılır:** `sudo reboot`.
 
 ## 🚀 Bağlantı profilleri
 
@@ -58,38 +207,21 @@ Kurulum sonunda **panel adresi, rastgele oluşturulmuş giriş bilgileri ve tan�
 | VLESS + REALITY | ✅ Kullanıma hazır |
 | VLESS + XHTTP | ✅ Kullanıma hazır |
 | Hysteria2 | ✅ Kullanıma hazır |
-| VLESS + WebSocket | ✅ Kullanıma hazır |
+| VLESS + WebSocket (TLS) | ✅ Kullanıma hazır |
 | Trojan + gRPC | ✅ Kullanıma hazır |
-| AmneziaWG 3.1 | ✅ İsteğe bağlı |
+| VLESS + XTLS Vision | ✅ İsteğe bağlı |
+| Amnezia WG | ✅ İsteğe bağlı |
 
-Beş temel profil önceden yapılandırılmıştır; ihtiyacınız olanları nginx'i değiştirmeden 3x-ui panelinden etkinleştirebilirsiniz. AmneziaWG yalnızca kurulum sırasında seçildiğinde eklenir. **İstemcileri panelde oluşturun**; uyumluluk kullandığınız uygulamaya ve sürümüne bağlıdır.
+Kurulum aracı beş temel profili hazırlar: REALITY, XHTTP ve Hysteria2 baştan etkindir; WebSocket ve Trojan gRPC ise gerektiğinde 3X-UI panelinden etkinleştirilebilir.
+
+XTLS Vision ve Amnezia WG yalnızca kurulumda seçildiklerinde eklenir. **Bağlantıları kullanmak için istemci oluşturmanız gerekir**; istemciler kurulumda otomatik veya panelde elle oluşturulabilir. Amnezia WG istemcileri ayrı oluşturulur.
+
+Uyumluluk kullandığınız istemci uygulamasına ve sürümüne bağlıdır.
 
 ### Abonelikler
 
-Standart abonelikler, JSON ve **Mihomo / Clash** yapılandırmaları nginx ve HTTPS üzerinden sunulur. `provider=1` parametresi, tam Clash yapılandırması yerine proxy sağlayıcıları için özgün aboneliği döndürür.
+Standart abonelikler, JSON ve **Mihomo / Clash** nginx üzerinden HTTPS ile sunulur. `provider=1`, tam Clash yapılandırması yerine proxy provider'lar için özgün aboneliği döndürür.
 
-## 🧩 İsteğe bağlı özellikler
-
-Her iki özellik de kurulum sırasında seçilebilir ve varsayılan olarak kapalıdır.
-
-### AdGuard Home + DoH
-
-`Install AdGuard Home with DNS-over-HTTPS? [y/N]:` sorusuna `y` yanıtını verin. Üçüncü bir alan adı gerekmez: yönetim arayüzü panel alan adınız altında rastgele oluşturulan `/adg-.../` yolunu kullanır; DoH adresi `https://panel.example.com/dns-query` olur. Genel erişime açık TCP/UDP **53** portu açılmaz. Yapılandırma ve veriler **Backup / Restore v3** kapsamındadır.
-
-<details>
-<summary>⚠️ <strong>Güvenlik önerisi</strong></summary>
-
-Kişisel VPS'inizde her cihaz için bir [ClientID](https://adguard-dns.io/kb/tr/adguard-home/clients/#clientid) oluşturun ve **yalnızca bu kimlikleri** **Ayarlar → DNS ayarları → Erişim ayarları → İzin verilen istemciler** bölümüne ekleyin (IP adresi veya CIDR aralığı eklemeyin).
-
-`/dns-query/<ClientID>` biçiminde DoH adresleri kullanın. Standart `/dns-query` yoluna yapılanlar da dahil, izin verilen bir ClientID içermeyen DNS sorguları reddedilir. Uzun ve rastgele kimlikler seçin. [AdGuard Home'un resmî güvenlik önerileri](https://adguard-dns.io/kb/tr/adguard-home/running-securely/).
-
-</details>
-
----
-
-### AmneziaWG 3.1
-
-Kurulum sırasında **UDP/8443 üzerinde AmneziaWG 3.1** yapılandırabilirsiniz (varsayılan olarak kapalıdır). `Install AmneziaWG on UDP port 8443? [y/N]:` sorusuna `y` yanıtını verin. 3x-ui içine gömülüdür ve panel alan adını kullanır. Kurulumdan sonra 3x-ui paneline bir istemci ekleyerek yapılandırmasını veya `vpn://` bağlantısını alın; kurulum aracı kendiliğinden istemci oluşturmaz. UFW, UDP/8443 erişimine otomatik izin verir; **Backup / Restore v3** yapılandırmayı korur ve güvenlik duvarı kuralını geri yükler.
 
 ## 💾 Yedekleme ve geri yükleme
 
@@ -117,6 +249,11 @@ Arşivler `/var/backups/x-ui/` dizinine kaydedilir.
 Hizmet arayüzleri doğrudan internete açılmaz. Panel, abonelikler ve ek hizmetlere nginx ve HTTPS üzerinden erişilir; dahili portlar yalnızca yerel bağlantıları kabul eder.
 
 İstekleri rastgele localhost portlarına ileten genel amaçlı bir proxy yoktur. Kritik hata oluşursa eksik bir yapılandırma başlatılmak yerine kurulum veya geri yükleme durdurulur.
+
+
+**VPS'inizi nasıl güvenceye alacağınızdan emin değil misiniz?** Kurulum sırasında gelişmiş güvenlik seçeneğini etkinleştirerek SSH kaba kuvvet saldırılarına karşı korumayı, şifreli DNS'i ve güvenlik güncellemelerini otomatik ayarlayabilirsiniz. Önce **Hızlı başlangıç** bölümündeki ayrıntıları ve gece yeniden başlatma takvimini okuyun.
+
+**Önemli:** Sunucuya erişimi de koruyun. SSH anahtarları kullanın ve anahtarla girişin çalıştığını doğruladıktan sonra parola ile kimlik doğrulamayı kapatın. Kurulum aracı bunu otomatik yapmaz.
 
 <a id="telemt-web-manager"></a>
 
