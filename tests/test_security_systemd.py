@@ -47,8 +47,6 @@ class SecuritySystemd(unittest.TestCase):
             self.fail('Requires the existing disposable systemd VM')
         import stat
         import re
-        import ctypes
-        import ctypes.util
         from test_personal_xhttp import function, FIXTURE, SOURCE
         from test_integrated_features import helper
         from release_contract import baseline
@@ -84,27 +82,17 @@ class SecuritySystemd(unittest.TestCase):
         props=dict(line.split('=',1) for line in run('systemctl','show','x-ui','-p','ProtectSystem','-p','ProtectHome','-p','NoNewPrivileges','-p','SystemCallFilter','-p','ReadWritePaths','-p','CapabilityBoundingSet').splitlines())
         self.assertEqual(props['ProtectSystem'],'full'); self.assertEqual(props['ProtectHome'],'read-only')
         self.assertEqual(props['NoNewPrivileges'],'yes')
-        groups={}
-        def expand(group):
-            if group not in groups:
-                values=set()
-                for line in run('env','SYSTEMD_COLORS=0','systemd-analyze','--no-pager','syscall-filter',group).splitlines():
-                    name=line.strip()
-                    if not name or name.startswith('#') or name==group: continue
-                    if name.startswith('@'): values.update(expand(name))
-                    else: values.add(name)
-                groups[group]=values
-            return groups[group]
-        self.assertFalse(props['SystemCallFilter'].startswith('~'),'Expected an allowlist')
-        # systemd drops group members unknown to its linked libseccomp (e.g.
-        # new syscall names or aliases). Compare the same compiled allowlist.
-        library=ctypes.util.find_library('seccomp')
-        self.assertIsNotNone(library,'Native systemd seccomp dependency missing')
-        seccomp=ctypes.CDLL(library)
-        resolve=seccomp.seccomp_syscall_resolve_name
-        resolve.argtypes=[ctypes.c_char_p]; resolve.restype=ctypes.c_int
-        expected={name for name in expand('@system-service') if resolve(name.encode()) != -1}
-        self.assertEqual(set(props['SystemCallFilter'].split()),expected)
+        # Compare against PID 1's own compilation of the exact upstream policy;
+        # CLI group dumps vary by systemd version and implicit @default rules.
+        reference='xui-ci-filter-reference.service'
+        run('systemd-run','--quiet','--unit='+reference,'-p','SystemCallFilter=@system-service',
+            '-p','SystemCallArchitectures=native','-p','NoNewPrivileges=yes','/bin/sleep','60')
+        self.addCleanup(lambda: subprocess.run(['systemctl','stop',reference],check=False))
+        expected=run('systemctl','show',reference,'-p','SystemCallFilter','--value').strip()
+        self.assertTrue(expected,'Reference seccomp allowlist missing')
+        self.assertFalse(expected.startswith('~'),'Expected an allowlist')
+        self.assertEqual(set(props['SystemCallFilter'].split()),set(expected.split()))
+        run('systemctl','stop',reference)
         pid=run('systemctl','show','x-ui','-p','MainPID','--value').strip()
         status=Path('/proc/'+pid+'/status').read_text()
         self.assertRegex(status,r'(?m)^Seccomp:\s+2$')
