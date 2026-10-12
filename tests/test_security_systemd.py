@@ -46,7 +46,8 @@ class SecuritySystemd(unittest.TestCase):
         if Path('/proc/1/comm').read_text().strip() != 'systemd':
             self.fail('Requires the existing disposable systemd VM')
         import stat
-        from test_personal_xhttp import function, FIXTURE
+        import re
+        from test_personal_xhttp import function, FIXTURE, SOURCE
         from test_integrated_features import helper
         from release_contract import baseline
         run=lambda *args: subprocess.check_output(args,text=True,stderr=subprocess.STDOUT,timeout=90)
@@ -59,8 +60,13 @@ class SecuritySystemd(unittest.TestCase):
         env={**os.environ,**FIXTURE,'PANEL_TAG':baseline()['version'],'PANEL_ARCHIVE':'/opt/xui-ci/panel.tar.gz',
              'XUIDB':'/etc/x-ui/x-ui.db','config_username':'integration','config_password':'temporary-fixture-password'}
         code='msg_ok() { :; }; msg_err() { echo "$*" >&2; }; _arch() { echo amd64; }; country_flag() { echo 🌐; }; x-ui() { :; };\n'
-        code+='\n'.join(function(n) for n in ('gen_random_string','gen_group_id','_panel_initial_config','install_panel','configure_xui_db'))
-        subprocess.run(['bash','-eu','-c',code+'\ninstall_panel && configure_xui_db'],env=env,check=True,capture_output=True,text=True,timeout=90)
+        code+='\n'.join(function(n) for n in ('gen_random_string','gen_group_id','_panel_initial_config','install_panel'))
+        # JSON closing braces inside SQL heredocs are not Bash function ends.
+        configure=re.search(r'^configure_xui_db\(\).*?^}\n\n#',SOURCE,re.M|re.S).group().removesuffix('\n\n#')
+        code+='\n'+configure
+        subprocess.run(['bash','-n','-c',code],check=True,capture_output=True,text=True)
+        result=subprocess.run(['bash','-eu','-c',code+'\ninstall_panel && configure_xui_db'],env=env,capture_output=True,text=True,timeout=90)
+        self.assertEqual(result.returncode,0,result.stderr)
         run('systemd-analyze','verify','/etc/systemd/system/x-ui.service')
         self.addCleanup(lambda: subprocess.run(['systemctl','stop','x-ui'],check=False))
         run('systemctl','start','x-ui')
