@@ -41,7 +41,7 @@
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-Yeniden kurmadan önce iki alan adı ve VPS Security + DoT, RAW TLS Vision, AmneziaWG, AdGuard Home ile istemci oluşturma seçenekleri sorulur. Üçüncü alan adı yalnızca Vision için gerekir. Ana alan adlarını doğrudan da belirtebilirsiniz:
+Kurulum aracı iki alan adını sorar ve isteğe bağlı AmneziaWG ile AdGuard Home kurulumu sunar. Alan adlarını doğrudan da belirtebilirsiniz:
 
 ```bash
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
@@ -49,7 +49,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 > **⚠️ Yalnızca temiz kurulum veya tamamen yeniden kurulum içindir.** `x-ui-latest.sh` mevcut 3x-ui veritabanını ve nginx yapılandırmasını siler. **Çalışan bir VPS'i güncellemek için kullanmayın.** Önce yedeğinizi sunucu dışında saklayın. Mevcut bir kurulum algılanırsa yeniden kurma veya kaldırma işlemi için büyük harflerle tam olarak `YES` yazılması gerekir.
 
-Kurulum sonunda **panel adresi, rastgele oluşturulmuş giriş bilgileri ve tanılama adresi** (3x-ui üzerinden kimlik doğrulamalı MTR/LibreSpeed) gösterilir. AdGuard Home seçildiyse yönetim adresi, parola ve DoH adresi de verilir. İstemci oluşturma seçilirse doğrulanmış abonelik adresi de gösterilir.
+Kurulum sonunda **panel adresi, rastgele oluşturulmuş giriş bilgileri ve tanılama adresi** (3x-ui üzerinden kimlik doğrulamalı MTR/LibreSpeed) gösterilir. AdGuard Home seçildiyse yönetim adresi, parola ve DoH adresi de verilir.
 
 ## 🚀 Bağlantı profilleri
 
@@ -61,9 +61,8 @@ Kurulum sonunda **panel adresi, rastgele oluşturulmuş giriş bilgileri ve tan�
 | VLESS + WebSocket | ✅ Kullanıma hazır |
 | Trojan + gRPC | ✅ Kullanıma hazır |
 | AmneziaWG 3.1 | ✅ İsteğe bağlı |
-| VLESS + RAW TLS Vision | ✅ İsteğe bağlı |
 
-Beş temel profil önceden yapılandırılmıştır; ihtiyacınız olanları nginx'i değiştirmeden 3x-ui panelinden etkinleştirebilirsiniz. AmneziaWG yalnızca kurulum sırasında seçildiğinde eklenir. İstemci otomatik olarak veya panelde oluşturulabilir; uyumluluk uygulamaya ve sürüme bağlıdır.
+Beş temel profil önceden yapılandırılmıştır; ihtiyacınız olanları nginx'i değiştirmeden 3x-ui panelinden etkinleştirebilirsiniz. AmneziaWG yalnızca kurulum sırasında seçildiğinde eklenir. **İstemcileri panelde oluşturun**; uyumluluk kullandığınız uygulamaya ve sürümüne bağlıdır.
 
 ### Abonelikler
 
@@ -71,26 +70,11 @@ Standart abonelikler, JSON ve **Mihomo / Clash** yapılandırmaları nginx ve HT
 
 ## 🧩 İsteğe bağlı özellikler
 
-Seçimler yeniden kurulumdan önce alınır. Security ve istemci oluşturma varsayılan olarak açıktır; Vision, AWG ve AGH kapalıdır.
-
-### İsteğe bağlı VPS Security + DNS-over-TLS
-
-Önceki kurulumu silmeden önce yükleyici uyumluluğu denetler, zorunlu `apt-get --no-remove -y dist-upgrade` çalıştırır, sistem bağımlılıklarını kurar ve SSH/DNS hazır durumunu yeniden doğrular. Yeniden kurulum onay gerektirir: işletim sistemi güncellemesi hizmetleri yeniden başlatabilir ve geri alınamaz. Gerekli yeniden başlatma yalnızca başarılı kurulum, kontroller ve son rapordan sonra planlanır; sonrasındaki kabulü sunucu sahibi doğrular.
-
-`Enhance VPS security? [Y/n]:` SSH Fail2ban jail, 02:30 APT update, 02:50 unattended upgrade ve kullanıcılar bağlı olsa bile 04:38 otomatik yeniden başlatma ayarlar. Gösterilen yerel VPS saat dilimi korunur; SSH ilkesi ve anahtarları değişmez. Security seçimi önceki sağlayıcıdan veya mevcut DNS yönergelerinden bağımsız olarak projenin DNS ilkesini uygular. Özgün resolver dosyası/bağlantısı, proje drop-in dosyası ve hizmet durumu yedeklenir; systemd-resolved kurulur, katı DoT uygulanıp doğrulanır. Ana resolved.conf ve ağ/VPN dosyaları değişmez. Etkin DNS yolu çatışmaları veya TLS/DNS hataları doğrulanmış geri dönüşe yol açar; eski yapılandırmanın varlığı preflight engeli değildir. Paket değişiklikleri geri alınmaz. Security=N DNS değiştirmez. Sunucuya özel güvenlik/DNS Backup / Restore ile taşınmaz. Security önceden devre dışı bırakılmış dönemsel APT güncellemelerini de etkinleştirip etkili değerleri doğrular; mevcut APT kaynakları korunur.
-
-### İsteğe bağlı VLESS RAW TLS Vision
-
-`Set up an additional VLESS Vision connection? (requires a separate domain) [y/N]:` VPS’ye yönlenen bir ek alan adı veya alt alan adı gerektirir. nginx SNI üzerinden TCP/443 paylaşılır; ayrı sertifika ve HTTPS kamuflaj sitesi kullanılır. Ek genel port açılmaz. Backup / Restore v3 üçüncü sertifikayı ve Vision içermeyen arşivleri destekler.
-
-### Otomatik istemci ve abonelik oluşturma
-
-`Create a client in 3X-UI and display a subscription link after installation? [Y/n]:` resmi 3x-ui v3.9.0 API ile bir istemci oluşturur, desteklenen etkin yerel inbound bağlantılarına ekler ve resmi aboneliği doğrular. Panel alan adı kullanılır; başka bir alan adı gerekmez. N mevcut istemci/abonelik ayarlarını korur. Sonuç, bağlantıyı yalnızca doğrulama sonrasında gösterir. AWG `vpn://` için uyumlu Amnezia uygulaması gerekir.
-
+Her iki özellik de kurulum sırasında seçilebilir ve varsayılan olarak kapalıdır.
 
 ### AdGuard Home + DoH
 
-`Install and configure AdGuard Home? [y/N]:` sorusuna `y` yanıtını verin. Üçüncü bir alan adı gerekmez: yönetim arayüzü panel alan adınız altında rastgele oluşturulan `/adg-.../` yolunu kullanır; DoH adresi `https://panel.example.com/dns-query` olur. Genel erişime açık TCP/UDP **53** portu açılmaz. Yapılandırma ve veriler **Backup / Restore v3** kapsamındadır.
+`Install AdGuard Home with DNS-over-HTTPS? [y/N]:` sorusuna `y` yanıtını verin. Üçüncü bir alan adı gerekmez: yönetim arayüzü panel alan adınız altında rastgele oluşturulan `/adg-.../` yolunu kullanır; DoH adresi `https://panel.example.com/dns-query` olur. Genel erişime açık TCP/UDP **53** portu açılmaz. Yapılandırma ve veriler **Backup / Restore v3** kapsamındadır.
 
 <details>
 <summary>⚠️ <strong>Güvenlik önerisi</strong></summary>
@@ -105,7 +89,7 @@ Kişisel VPS'inizde her cihaz için bir [ClientID](https://adguard-dns.io/kb/tr/
 
 ### AmneziaWG 3.1
 
-Kurulum sırasında **UDP/8443 üzerinde AmneziaWG 3.1** yapılandırabilirsiniz (varsayılan olarak kapalıdır). `Set up an additional AmneziaWG connection? [y/N]:` sorusuna `y` yanıtını verin. 3x-ui içine gömülüdür ve panel alan adını kullanır. Kurulumdan sonra 3x-ui paneline bir istemci ekleyerek yapılandırmasını veya `vpn://` bağlantısını alın; ilk istemci oluşturma seçilirse AWG bağlantısını da kapsar. UFW, UDP/8443 erişimine otomatik izin verir; **Backup / Restore v3** yapılandırmayı korur ve güvenlik duvarı kuralını geri yükler.
+Kurulum sırasında **UDP/8443 üzerinde AmneziaWG 3.1** yapılandırabilirsiniz (varsayılan olarak kapalıdır). `Install AmneziaWG on UDP port 8443? [y/N]:` sorusuna `y` yanıtını verin. 3x-ui içine gömülüdür ve panel alan adını kullanır. Kurulumdan sonra 3x-ui paneline bir istemci ekleyerek yapılandırmasını veya `vpn://` bağlantısını alın; kurulum aracı kendiliğinden istemci oluşturmaz. UFW, UDP/8443 erişimine otomatik izin verir; **Backup / Restore v3** yapılandırmayı korur ve güvenlik duvarı kuralını geri yükler.
 
 ## 💾 Yedekleme ve geri yükleme
 
@@ -173,6 +157,10 @@ Proje [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) temel alınarak gelişti
 Resmî panel [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui) projesinden sağlanır. Üçüncü taraf bileşenlerin sahipleri haklarını ve mevcut lisanslarını korur.
 
 xPROMSx tarafından geliştirilen özgün katkılar ve değişiklikler [GNU GPL-3.0-only](LICENSE) kapsamında sunulur. Copyright (C) 2026 xPROMSx contributors. Bu lisans yalnızca söz konusu materyaller üzerinde sahip olduğumuz hakları kapsar; devralınmış kodu yeniden lisanslamaz veya deponun tamamının GPL kapsamında olduğunu göstermez. Ayrıntılar için [lisans kapsamına ve üçüncü taraf bildirimlerine](THIRD_PARTY_NOTICES.md) bakın.
+
+## ❤️ Geliştirmeyi destekleyin
+
+Bu proje işinize yarıyorsa [geliştirilmesine gönüllü olarak destek olabilirsiniz](docs/SUPPORT_TR.md). Bağış yapıp yapmamanızdan bağımsız olarak proje ve tüm özellikleri ücretsiz ve açık kaynaklı kalır.
 
 <div align="center">
 

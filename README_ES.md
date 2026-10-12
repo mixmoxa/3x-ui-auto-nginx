@@ -41,7 +41,7 @@ Configura los registros DNS de **dos dominios** para que apunten a la IP de tu V
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-Antes de reinstalar, se solicitan ambos dominios y las opciones VPS Security + DoT, RAW TLS Vision, AmneziaWG, AdGuard Home y creación del cliente. El tercer dominio solo es necesario para Vision. Puedes indicar los dominios principales directamente:
+El instalador pide ambos dominios y ofrece AmneziaWG y AdGuard Home como opciones. También puedes indicar los dominios directamente:
 
 ```bash
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
@@ -49,7 +49,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 > **⚠️ Solo para instalaciones nuevas o reinstalaciones completas.** `x-ui-latest.sh` elimina la base de datos anterior de 3x-ui y la configuración de nginx. **No lo utilices para actualizar un VPS en funcionamiento.** Guarda primero una copia de seguridad fuera del servidor. Si detecta una instalación existente, la reinstalación o desinstalación requiere escribir exactamente `YES` en mayúsculas.
 
-Al terminar recibirás la **URL del panel, credenciales aleatorias y la URL de diagnóstico** (MTR/LibreSpeed con autenticación mediante 3x-ui). Si instalas AdGuard Home, también verás su URL de administración, contraseña y dirección DoH. Si eliges crear el cliente, también se muestra la URL de suscripción verificada.
+Al terminar recibirás la **URL del panel, credenciales aleatorias y la URL de diagnóstico** (MTR/LibreSpeed con autenticación mediante 3x-ui). Si instalas AdGuard Home, también verás su URL de administración, contraseña y dirección DoH.
 
 ## 🚀 Perfiles de conexión
 
@@ -61,9 +61,8 @@ Al terminar recibirás la **URL del panel, credenciales aleatorias y la URL de d
 | VLESS + WebSocket | ✅ Listo para usar |
 | Trojan + gRPC | ✅ Listo para usar |
 | AmneziaWG 3.1 | ✅ Opcional |
-| VLESS + RAW TLS Vision | ✅ Opcional |
 
-Los cinco perfiles principales ya están configurados. Activa en 3x-ui los que necesites sin modificar nginx. AmneziaWG solo se añade si lo seleccionas durante la instalación. El cliente puede crearse automáticamente o desde el panel; la compatibilidad depende de la aplicación y su versión.
+Los cinco perfiles principales ya están configurados. Activa en 3x-ui los que necesites sin modificar nginx. AmneziaWG solo se añade si lo seleccionas durante la instalación. **Crea los clientes en el panel**; la compatibilidad depende de la aplicación y su versión.
 
 ### Suscripciones
 
@@ -71,26 +70,11 @@ Las suscripciones estándar, JSON y **Mihomo / Clash** se ofrecen mediante nginx
 
 ## 🧩 Funciones opcionales
 
-Las opciones se eligen antes de reinstalar. Security y la creación del cliente están activadas por defecto; Vision, AWG y AGH están desactivadas.
-
-### VPS Security + DNS-over-TLS opcional
-
-Antes de eliminar un despliegue anterior, el instalador comprueba la compatibilidad, ejecuta obligatoriamente `apt-get --no-remove -y dist-upgrade`, instala dependencias y vuelve a comprobar SSH/DNS. La reinstalación requiere confirmación: la actualización puede reiniciar servicios y no se puede revertir. Si hace falta reiniciar, se programa solo tras la instalación, las comprobaciones y el informe correctos; el propietario verifica el funcionamiento después del reinicio.
-
-`Enhance VPS security? [Y/n]:` configura Fail2ban para SSH, APT update a las 02:30, unattended upgrade a las 02:50 y reinicio automático a las 04:38, incluso con usuarios conectados. Conserva y muestra la zona horaria local; no cambia la política ni las claves SSH. Seleccionar Security aplica la política DNS del proyecto independientemente del proveedor anterior o de las directivas DNS existentes. Guarda el archivo/enlace original del resolver, su drop-in y el estado del servicio, asegura la instalación de systemd-resolved y aplica y verifica DoT estricto. No modifica el resolved.conf principal ni los archivos de red/VPN. Las rutas DNS efectivamente incompatibles o los fallos TLS/DNS provocan una recuperación verificada; la configuración anterior por sí sola no bloquea preflight. No revierte cambios de paquetes. Security=N conserva el DNS. Backup / Restore no transfiere seguridad/DNS específicos del servidor. Security también activa las actualizaciones APT periódicas previamente deshabilitadas y verifica los valores efectivos; conserva los orígenes APT existentes.
-
-### VLESS RAW TLS Vision opcional
-
-`Set up an additional VLESS Vision connection? (requires a separate domain) [y/N]:` requiere un dominio o subdominio adicional apuntando al VPS. Comparte TCP/443 mediante nginx SNI, usa un certificado independiente y ofrece un sitio de camuflaje HTTPS. No abre otro puerto público. Backup / Restore v3 admite el tercer certificado y los archivos sin Vision.
-
-### Creación automática de cliente y suscripción
-
-`Create a client in 3X-UI and display a subscription link after installation? [Y/n]:` crea un cliente mediante la API oficial de 3x-ui v3.9.0, lo vincula a los inbounds locales activos compatibles y verifica la suscripción oficial. Utiliza el dominio del panel, sin otro dominio. N conserva los ajustes actuales de clientes y suscripciones. El resultado muestra la URL solo tras verificarla. AWG `vpn://` requiere una aplicación Amnezia compatible.
-
+Ambas funciones se pueden seleccionar durante la instalación y vienen desactivadas por defecto.
 
 ### AdGuard Home + DoH
 
-Responde `y` a `Install and configure AdGuard Home? [y/N]:`. No hace falta un tercer dominio: la interfaz de administración utiliza una ruta aleatoria `/adg-.../` en el dominio del panel, y DoH está disponible en `https://panel.example.com/dns-query`. No se abre el puerto público TCP/UDP **53**. La configuración y los datos se incluyen en **Backup / Restore v3**.
+Responde `y` a `Install AdGuard Home with DNS-over-HTTPS? [y/N]:`. No hace falta un tercer dominio: la interfaz de administración utiliza una ruta aleatoria `/adg-.../` en el dominio del panel, y DoH está disponible en `https://panel.example.com/dns-query`. No se abre el puerto público TCP/UDP **53**. La configuración y los datos se incluyen en **Backup / Restore v3**.
 
 <details>
 <summary>⚠️ <strong>Recomendación de seguridad</strong></summary>
@@ -105,7 +89,7 @@ Utiliza direcciones DoH como `/dns-query/<ClientID>`. Se rechazarán las consult
 
 ### AmneziaWG 3.1
 
-Durante la instalación puedes configurar **AmneziaWG 3.1 en UDP/8443** (desactivado por defecto). Responde `y` a `Set up an additional AmneziaWG connection? [y/N]:`. Está integrado en 3x-ui y utiliza el dominio del panel. Después, añade un cliente desde 3x-ui para obtener su configuración o enlace `vpn://`; la creación inicial incluye AWG si está seleccionado. UFW permite automáticamente UDP/8443; **Backup / Restore v3** conserva la configuración y restaura la regla.
+Durante la instalación puedes configurar **AmneziaWG 3.1 en UDP/8443** (desactivado por defecto). Responde `y` a `Install AmneziaWG on UDP port 8443? [y/N]:`. Está integrado en 3x-ui y utiliza el dominio del panel. Después, añade un cliente desde 3x-ui para obtener su configuración o enlace `vpn://`; el instalador no crea clientes. UFW permite automáticamente UDP/8443; **Backup / Restore v3** conserva la configuración y restaura la regla.
 
 ## 💾 Copias de seguridad y restauración
 
@@ -173,6 +157,10 @@ Este proyecto se basa en [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro), pero
 El panel oficial procede de [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Los autores de los componentes de terceros conservan sus derechos y licencias.
 
 Las contribuciones originales y modificaciones de xPROMSx se distribuyen bajo [GNU GPL-3.0-only](LICENSE). Copyright (C) 2026 xPROMSx contributors. Esta licencia solo cubre los derechos que nos corresponden sobre esos materiales; no cambia la licencia del código heredado ni significa que todo el repositorio esté sujeto a GPL. Consulta el [alcance de la licencia y los avisos de terceros](THIRD_PARTY_NOTICES.md).
+
+## ❤️ Apoya el desarrollo
+
+Si este proyecto te resulta útil, puedes [apoyar su desarrollo de forma voluntaria](docs/SUPPORT_ES.md). El proyecto y todas sus funciones siguen siendo gratuitos y de código abierto, dones o no.
 
 <div align="center">
 

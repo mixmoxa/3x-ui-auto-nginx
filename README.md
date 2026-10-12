@@ -41,7 +41,7 @@ Configure the DNS records for **two domains** to point to your VPS IP address: o
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-Before rebuilding, the installer asks for both domains and offers VPS Security + DoT, RAW TLS Vision, AmneziaWG, AdGuard Home and initial client creation. A third domain is required only for Vision. You can also supply the core domains directly:
+The installer asks for both domains and offers optional AmneziaWG and AdGuard Home. You can also supply the domains directly:
 
 ```bash
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
@@ -49,7 +49,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 > **⚠️ Clean install or full reinstall only.** `x-ui-latest.sh` removes the 3x-ui database and nginx configuration. **Do not use it to update a working VPS.** Save a Backup off-server first. A detected installation requires exact uppercase `YES` for reinstall or uninstall.
 
-You receive a **panel URL, random credentials, and diagnostics URL** (3x-ui-authenticated MTR/LibreSpeed). With AdGuard Home: admin URL, password, and DoH endpoint. Optional client creation prints a verified subscription URL.
+You receive a **panel URL, random credentials, and diagnostics URL** (3x-ui-authenticated MTR/LibreSpeed). With AdGuard Home: admin URL, password, and DoH endpoint.
 
 ## 🚀 Connection profiles
 
@@ -61,9 +61,8 @@ You receive a **panel URL, random credentials, and diagnostics URL** (3x-ui-auth
 | VLESS + WebSocket | ✅ Ready to use |
 | Trojan + gRPC | ✅ Ready to use |
 | AmneziaWG 3.1 | ✅ Optional |
-| VLESS + RAW TLS Vision | ✅ Optional |
 
-Five standard profiles are preconfigured; enable the ones you need in 3x-ui without editing nginx. AmneziaWG is added only if selected during installation. Client creation can be automatic or manual in the panel; compatibility depends on your app and version.
+Five standard profiles are preconfigured; enable the ones you need in 3x-ui without editing nginx. AmneziaWG is added only if selected during installation. **Create clients in the panel**; compatibility depends on your app and version.
 
 ### Subscriptions
 
@@ -71,26 +70,11 @@ Standard subscriptions, JSON, and **Mihomo / Clash** use nginx and HTTPS. `provi
 
 ## 🧩 Optional features
 
-Choices are collected before the rebuild. Security and initial client creation default to Y; Vision, AWG and AGH default to N.
-
-### Optional VPS Security + DNS-over-TLS
-
-Before removing a previous deployment, the installer checks compatibility, runs mandatory `apt-get --no-remove -y dist-upgrade`, installs system dependencies and rechecks SSH/DNS. Reinstallation requires confirmation: OS upgrades may restart services and cannot be rolled back. A required reboot is scheduled only after successful installation, checks and the final report; the owner verifies post-reboot acceptance.
-
-`Enhance VPS security? [Y/n]:` configures the SSH Fail2ban jail, APT update at 02:30, unattended upgrade at 02:50 and automatic reboot at 04:38, including when users are logged in. The displayed local VPS timezone is preserved; SSH policy and keys remain unchanged. Selecting Security applies the project DNS policy regardless of the previous provider or existing DNS directives. The installer snapshots the original resolver file/link, its own drop-in and service state, ensures systemd-resolved is installed, then applies and verifies strict DoT. The base resolved.conf and network/VPN files remain unchanged. Effective conflicting DNS routes or failed TLS/DNS checks cause verified rollback; old configuration alone does not block preflight. Package changes are not rolled back. Security=N leaves DNS unchanged. Host-specific security/DNS is not transported by Backup / Restore. Security also enables previously disabled periodic APT updates and verifies the effective flags; existing APT origins are preserved.
-
-### Optional VLESS RAW TLS Vision
-
-`Set up an additional VLESS Vision connection? (requires a separate domain) [y/N]:` requires one additional domain or subdomain pointing to this VPS. Vision shares TCP/443 through nginx SNI, uses a separate certificate and provides an HTTPS camouflage site. No extra public port is opened. Backup / Restore v3 supports the third certificate while retaining compatibility with archives without Vision.
-
-### Automatic client and subscription
-
-`Create a client in 3X-UI and display a subscription link after installation? [Y/n]:` creates one client through official 3x-ui v3.9.0 API, attaches it to supported active local inbounds and verifies the official subscription. It uses the panel domain; no subscription domain is required. N leaves client/subscription settings unchanged. The final result prints the subscription only after verification. An AWG `vpn://` export needs a compatible Amnezia application.
-
+Both features can be selected during installation and are disabled by default.
 
 ### AdGuard Home + DoH
 
-Enter `y` when prompted `Install and configure AdGuard Home? [y/N]:`. No third domain is needed: the admin UI uses a random `/adg-.../` path on the panel domain, and DoH is available at `https://panel.example.com/dns-query`. Public TCP/UDP port **53** is not opened. Configuration and data are included in **Backup / Restore v3**.
+Enter `y` when prompted `Install AdGuard Home with DNS-over-HTTPS? [y/N]:`. No third domain is needed: the admin UI uses a random `/adg-.../` path on the panel domain, and DoH is available at `https://panel.example.com/dns-query`. Public TCP/UDP port **53** is not opened. Configuration and data are included in **Backup / Restore v3**.
 
 <details>
 <summary>⚠️ <strong>Security recommendation</strong></summary>
@@ -105,7 +89,7 @@ Use DoH URLs such as `/dns-query/<ClientID>`. DNS queries without an allowed Cli
 
 ### AmneziaWG 3.1
 
-You can configure **AmneziaWG 3.1 on UDP/8443** during installation (disabled by default). Enter `y` when prompted `Set up an additional AmneziaWG connection? [y/N]:`. It runs inside 3x-ui and uses the panel domain. After installation, add a client in the 3x-ui panel to get a configuration or `vpn://` link; initial client creation includes AWG when selected. UFW automatically allows UDP/8443; **Backup / Restore v3** preserves the configuration and restores the rule.
+You can configure **AmneziaWG 3.1 on UDP/8443** during installation (disabled by default). Enter `y` when prompted `Install AmneziaWG on UDP port 8443? [y/N]:`. It runs inside 3x-ui and uses the panel domain. After installation, add a client in the 3x-ui panel to get a configuration or `vpn://` link; the installer does not create clients. UFW automatically allows UDP/8443; **Backup / Restore v3** preserves the configuration and restores the rule.
 
 ## 💾 Backup / Restore
 
@@ -173,6 +157,10 @@ Based on [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro), this project is main
 The panel comes from [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Third-party authors retain their rights and existing licenses.
 
 Original xPROMSx developments and changes are offered under [GNU GPL-3.0-only](LICENSE). Copyright (C) 2026 xPROMSx contributors. The license covers only our rights in those materials; it does not relicense inherited code or establish GPL status for the entire repository. The scope of our license and notices for third-party components are explained in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## ❤️ Support development
+
+If this project is useful to you, you can voluntarily [support its development](docs/SUPPORT.en.md). The project and all its features remain free and open source, whether or not you donate.
 
 <div align="center">
 
