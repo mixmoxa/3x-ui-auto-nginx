@@ -367,13 +367,14 @@ class SecuritySystemd(unittest.TestCase):
                 path=Path(filename); path.parent.mkdir(parents=True,exist_ok=True); path.write_text(text)
             run('systemctl','daemon-reload')
             run('systemctl','enable','--now','apt-daily.timer','apt-daily-upgrade.timer')
-            # Actual systemd shutdown scheduling in this guest, then cancel so
-            # the harness can shut down and cold-boot deterministically.
+            # Initial reboot is manual even after a failed installation. The
+            # harness still cold-boots to verify the independent nightly policy.
             self.assertTrue(Path('/run/reboot-required').exists())
             reboot_shell=function('finish_initial_reboot')
-            run('bash','-eu','-c','msg_warn() { echo "$*"; }; msg_err() { echo "$*" >&2; };\n'+reboot_shell+'\necho INSTALLATION_REPORT; finish_initial_reboot 0')
-            self.assertIn('reboot',run('shutdown','--show').lower())
-            run('shutdown','-c')
+            for code in (0,1):
+                notice=run('bash','-eu','-c','msg_warn() { echo "$*"; }; msg_err() { echo "$*" >&2; };\n'+reboot_shell+f'\necho INSTALLATION_REPORT; finish_initial_reboot {code}')
+                self.assertIn('sudo reboot',notice)
+                self.assertFalse(Path('/run/systemd/shutdown/scheduled').exists(),'Initial installation scheduled a reboot')
             run('modprobe','9pnet_virtio'); Path('/mnt/xui-ci').mkdir(exist_ok=True)
             run('mount','-t','9p','-o','trans=virtio,version=9p2000.L','xui-ci','/mnt/xui-ci')
             Path('/mnt/xui-ci/pre-boot-id').write_text(Path('/proc/sys/kernel/random/boot_id').read_text())
