@@ -74,7 +74,7 @@ cp() { command cp "$@"; }
             root = Path(tmp)
             target = root/'managed-state'
             target.write_bytes(b'previous healthy installation')
-            mock = '\n'.join(f'{n}() {{ :; }}' for n in set(names) if n not in ('main','local','if','else','return','fi'))
+            mock = '\n'.join(f'{n}() {{ :; }}' for n in set(names) if n not in ('main','local','if','else','return','fi','exit'))
             mock += r'''
 msg_err() { echo "$*" >&2; }
 preflight_panel_release() { echo verification-failed >> "$LOG"; return 1; }

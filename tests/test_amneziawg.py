@@ -6,6 +6,72 @@ import unittest
 from test_personal_xhttp import function, SOURCE
 
 class AmneziaWG(unittest.TestCase):
+    def test_adguard_cleanup_failure_recovers_only_early_stopped_xui(self):
+        import tempfile
+        names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
+               'select_adguard','select_client','preflight_base_os','preflight_panel_release','preflight_amneziawg',
+               'preflight_integrated_features','prepare_base_os','prepare_system_dns','install_packages','setup_firewall',
+               'get_server_ip','setup_acme_http','get_ssl_certs','install_panel','configure_nginx','configure_xui_db',
+               'install_clash_sub','install_fake_site','install_diagnostics','tune_system','install_backup_tool',
+               'setup_certificate_renewal','check_installation','install_amneziawg','finish_initial_reboot')
+        stubs='\n'.join(name+'() { :; }' for name in names)
+        stubs+='''
+msg_err() { echo "$*" >&2; }
+msg_warn() { echo "$*" >&2; }
+check_awg_reinstall_owner() { echo owner >> "$CALLS"; }
+awg_port_available() { echo port-free >> "$CALLS"; }
+systemctl() {
+    echo "systemctl $*" >> "$CALLS"
+    case "$*" in
+        'stop x-ui') echo stopped > "$STATE";;
+        'start x-ui')
+            [[ "$FAULT" != start-failed ]] || return 1
+            [[ "$FAULT" == inactive ]] || echo active > "$STATE";;
+        'is-active --quiet x-ui') [[ "$(cat "$STATE")" == active ]];;
+        'is-enabled --quiet x-ui') return 0;;
+        *) return 1;;
+    esac
+}
+cleanup_adguard() { echo cleanup_adguard >> "$CALLS"; [[ "$FAULT" == success ]]; }
+clean_previous_install() { echo clean_previous_install >> "$CALLS"; }
+x-ui() { echo "x-ui $*" >> "$CALLS"; }
+show_results() { echo INSTALLATION_SUCCESS; }
+'''
+        for fault, awg, reinstall in (('restored','y','y'),('start-failed','y','y'),('inactive','y','y'),
+                                       ('declined','n','n'),('not-stopped','y','n'),('success','y','y')):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory); root.chmod(0o700)
+                config=root/'x-ui.db'; unit=root/'x-ui.service'
+                config.write_bytes(b'private previous configuration'); unit.write_bytes(b'previous unit')
+                state=root/'state'; state.write_text('active\n'); calls=root/'calls'
+                result=subprocess.run(['bash','-eu','-c',stubs+'\n'+function('prepare_awg_reinstall')+'\n'+function('main')+'\nmain'],
+                    env={**os.environ,'CALLS':str(calls),'STATE':str(state),'FAULT':fault,'INSTALL_AWG':awg,
+                         'AWG_REINSTALL':reinstall,'INSTALL_SECURITY':'n','INSTALL_VISION':'n','INSTALL_AGH':'n','CREATE_CLIENT':'n'},
+                    capture_output=True,text=True,timeout=5)
+                actions=calls.read_text().splitlines()
+                self.assertEqual(config.read_bytes(),b'private previous configuration')
+                self.assertEqual(unit.read_bytes(),b'previous unit')
+                self.assertEqual(result.returncode,0 if fault=='success' else 1,result.stderr)
+                self.assertEqual('clean_previous_install' in actions,fault=='success')
+                self.assertEqual('INSTALLATION_SUCCESS' in result.stdout,fault=='success')
+                stopped=reinstall=='y'
+                self.assertEqual('systemctl stop x-ui' in actions,stopped)
+                self.assertEqual('systemctl start x-ui' in actions,stopped and fault!='success')
+                self.assertEqual('systemctl is-active --quiet x-ui' in actions,fault in ('restored','inactive'))
+                if stopped:
+                    self.assertEqual(actions[:4],['owner','systemctl stop x-ui','port-free','cleanup_adguard'])
+                if fault=='restored':
+                    self.assertEqual(state.read_text(),'active\n')
+                    self.assertIn('previous x-ui is active',result.stderr)
+                    self.assertIn('AdGuard Home may require inspection',result.stderr)
+                elif fault in ('start-failed','inactive'):
+                    self.assertEqual(state.read_text(),'stopped\n')
+                    self.assertIn('sudo systemctl start x-ui',result.stderr)
+                elif fault in ('declined','not-stopped'):
+                    self.assertEqual(state.read_text(),'active\n')
+                else:
+                    self.assertEqual(actions[4:6],['clean_previous_install','systemctl is-enabled --quiet x-ui'])
+
     def test_owned_awg_reinstall_and_foreign_or_uncertain_listener_refusal(self):
         import shutil, signal, sqlite3, sys, tempfile, time
         for fault in ('owned','foreign','unknown','database','stuck','stuck_ipv6'):

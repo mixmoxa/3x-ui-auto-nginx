@@ -2638,10 +2638,22 @@ main() {
     preflight_integrated_features || { msg_err 'Optional feature preflight failed; existing deployment was not removed.'; exit 1; }
     prepare_base_os || { msg_err 'OS preparation failed; deployment was not removed, package changes may remain.'; exit 1; }
     prepare_system_dns || { msg_err 'DNS preparation failed; existing deployment was not removed.'; exit 1; }
+    local awg_xui_stopped=n
     if [[ "${AWG_REINSTALL:-n}" == y ]]; then
         prepare_awg_reinstall || { msg_err 'AWG reinstall preparation failed; deployment was not removed.'; exit 1; }
+        awg_xui_stopped=y
     fi
-    cleanup_adguard || { msg_err "Cannot clean AdGuard Home; core deployment was not removed."; exit 1; }
+    cleanup_adguard || {
+        msg_err "Cannot clean AdGuard Home; core deployment was not removed."
+        if [[ "$awg_xui_stopped" == y ]]; then
+            if systemctl start x-ui && systemctl is-active --quiet x-ui; then
+                msg_warn 'Reinstall aborted; previous x-ui is active and its configuration retained. AdGuard Home may require inspection.'
+            else
+                msg_warn 'Reinstall aborted; previous x-ui could not be confirmed active. Configuration retained; recover manually with sudo systemctl start x-ui. AdGuard Home may require inspection.'
+            fi
+        fi
+        exit 1
+    }
     clean_previous_install || { msg_err "Previous deployment cleanup failed (exit $?). See the cause above; installation stopped."; exit 1; }
     install_packages || { msg_err "Dependency setup failed."; exit 1; }
     setup_firewall || { msg_err "Firewall setup failed."; exit 1; }
