@@ -833,6 +833,17 @@ rules:
         server = self.launch([self.xui],'awg-panel-active',env)
         self.ready(server,udp_port=awg_port,udp_address="0.0.0.0")
         self.ready(server,('127.0.0.1',self.backends['sub']))
+        # The installer's owner check uses actual native AWG /proc ownership
+        # and ss sockets; only systemd control, unit path and port are mapped.
+        unit=self.root/'x-ui.service'; unit.write_text('[Service]\nExecStart='+str(self.xui)+'\n')
+        controls=self.root/'owner-controls'; controls.mkdir()
+        control=controls/'systemctl'
+        control.write_text(f'#!/bin/sh\ncase "$*" in "is-active --quiet x-ui") kill -0 {server.pid};; "show x-ui -p MainPID --value") echo {server.pid};; *) exit 1;; esac\n'); control.chmod(0o755)
+        owner=installer_function('check_awg_reinstall_owner').replace('/etc/systemd/system/x-ui.service',str(unit)).replace(
+            '/usr/local/x-ui/bin',str(self.root/'bin')).replace('/usr/local/x-ui/x-ui',str(self.xui)).replace('8443',str(awg_port))
+        verified=subprocess.run(['bash','-eu','-c',owner+'\ncheck_awg_reinstall_owner'],
+            env={**os.environ,'PATH':str(controls)+':'+os.environ['PATH'],'XUIDB':str(self.root/'db/x-ui.db')},capture_output=True,text=True,timeout=10)
+        self.assertEqual(verified.returncode,0,'Native managed AWG owner check failed')
         # Verify the real upstream export, including the public share host and 3.1 parameters.
         import configparser
         raw = subprocess.check_output(['curl','-fsS','--noproxy','*','--cacert',str(self.cert),

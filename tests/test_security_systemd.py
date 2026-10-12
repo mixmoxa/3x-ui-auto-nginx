@@ -330,6 +330,15 @@ class SecuritySystemd(unittest.TestCase):
                 self.assertEqual(security.ssh_ports(effective,run('systemctl','show','ssh.socket','-p','Listen','--value')),[2222])
                 self.assertIn('2222',run('fail2ban-client','-d'))
                 self.assertEqual(run('/usr/sbin/sshd','-T'),effective)
+                # Real socket state, private UFW recorder: never enable the
+                # guest's firewall or modify its SSH policy for this regression.
+                firewall=root/'firewall-calls'
+                mock='ufw() { echo "$*" >> "$FIREWALL_LOG"; [[ "$*" != status ]] || echo "Status: inactive"; }; msg_err() { echo "$*" >&2; };\n'
+                subprocess.run(['bash','-eu','-c',mock+function('setup_firewall')+'\nsetup_firewall'],check=True,capture_output=True,text=True,timeout=15,
+                    env={**os.environ,'SSH_CONNECTION':'','INSTALL_SECURITY':'n','FIREWALL_LOG':str(firewall)})
+                calls=firewall.read_text().splitlines()
+                self.assertIn('allow 2222/tcp',calls); self.assertNotIn('allow 22/tcp',calls)
+                self.assertLess(calls.index('allow 2222/tcp'),calls.index('--force enable'))
                 # No silent downgrade when authenticated TLS endpoints become unavailable.
                 stop.set()
                 for listener in servers: listener.close()

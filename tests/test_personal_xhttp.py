@@ -347,7 +347,7 @@ echo 'x-ui 3.9.0'
                     if label == "TLS certificates":
                         self.assertIn("Check certificate files" if warning else "Ready", line)
 
-    def firewall(self, status, connection="", sshd="", fail="", sshd_exit="0"):
+    def firewall(self, status, connection="", sshd="", fail="", sshd_exit="0", socket_state="inactive", socket_listen="", socket_exit="0"):
         # Run only setup_firewall; mock all UFW/sshd operations on private files.
         mock = '''ufw() {
     printf '%s\\n' "$*" >> "$FIREWALL_TEST_ROOT/calls"
@@ -368,6 +368,13 @@ sshd() {
     return "$SSHD_EXIT"
 }
 msg_err() { echo "$1" >&2; }
+systemctl() {
+    case "$*" in
+        'is-active ssh.socket') printf '%s' "$SOCKET_STATE"; [[ "$SOCKET_STATE" == active ]] ;;
+        'show ssh.socket -p Listen --value') printf '%s' "$SOCKET_LISTEN"; return "$SOCKET_EXIT" ;;
+        *) return 1 ;;
+    esac
+}
 '''
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -378,9 +385,29 @@ msg_err() { echo "$1" >&2; }
                 text=True, capture_output=True, env={
                     **os.environ, "FIREWALL_TEST_ROOT": tmp, "SSH_CONNECTION": connection,
                     "SSHD_OUTPUT": sshd, "SSHD_EXIT": sshd_exit, "FAIL_UFW": fail, "panel_port": FIXTURE["panel_port"],
+                    "SOCKET_STATE": socket_state, "SOCKET_LISTEN": socket_listen, "SOCKET_EXIT": socket_exit, "INSTALL_SECURITY": "n",
                 },
             )
             return result, (root / "calls").read_text().splitlines(), (root / "rules").read_text().splitlines(), (root / "status").read_text().strip()
+
+    def test_firewall_socket_activation_preserves_all_confirmed_ssh_ports(self):
+        cases = [('', '127.0.0.1:2222 (Stream)', {2222}),
+                 ('', '0.0.0.0:2222 (Stream) [2001:db8::22]:2200 (Stream) 2223 (Stream)', {2222,2200,2223}),
+                 ('198.51.100.10 54321 203.0.113.5 2224', '[::]:2222 (Stream)', {2222,2224})]
+        for connection, listen, expected in cases:
+            with self.subTest(listen=listen):
+                result,calls,_,state=self.firewall('inactive',connection,'port 22',socket_state='active',socket_listen=listen)
+                self.assertEqual(result.returncode,0,result.stderr)
+                ssh={int(call.split()[1].split('/')[0]) for call in calls if call.startswith('allow ') and call.endswith('/tcp') and call not in ('allow 80/tcp','allow 443/tcp')}
+                self.assertEqual(ssh,expected)
+                self.assertEqual(state,'active')
+        for listen in ('','[2001:db8::2222] (Stream)','0.0.0.0:2222 (Stream) unparsed','/run/ssh.sock (Stream)','[::]:65536 (Stream)'):
+            result,calls,_,state=self.firewall('inactive','198.51.100.10 54321 203.0.113.5 22','port 22',socket_state='active',socket_listen=listen)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(state,'inactive'); self.assertNotIn('--force enable',calls)
+            self.assertIn('WARNING',result.stderr)
+        result,calls,_,state=self.firewall('inactive',sshd='port 22',socket_state='active',socket_listen='[::]:2222 (Stream)',socket_exit='1')
+        self.assertEqual(state,'inactive'); self.assertNotIn('--force enable',calls)
 
     def test_firewall_active_preserves_existing_policy(self):
         result, calls, rules, status = self.firewall("active", sshd="port 22")
@@ -394,7 +421,7 @@ msg_err() { echo "$1" >&2; }
             with self.subTest(port=port):
                 result, calls, _, status = self.firewall("inactive", f"198.51.100.10 54321 203.0.113.5 {port}", "port 9999")
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(calls, ["status", "allow 80/tcp", "allow 443/tcp", "allow 443/udp", f"allow {int(port)}/tcp", "--force enable"])
+                self.assertEqual(calls, ["status", "allow 80/tcp", "allow 443/tcp", "allow 443/udp", "sshd -T"] + [f"allow {value}/tcp" for value in sorted({int(port),9999})] + ["--force enable"])
                 self.assertEqual(status, "active")
 
     def test_firewall_inactive_falls_back_to_effective_sshd_ports(self):
@@ -418,10 +445,11 @@ msg_err() { echo "$1" >&2; }
                 self.assertIn("UFW was not enabled automatically", result.stderr)
 
     def test_firewall_required_operation_failures_are_fatal(self):
-        commands = ["status", "allow 80/tcp", "allow 443/tcp", "allow 443/udp", "allow 2200/tcp", "--force enable"]
-        for index, command in enumerate(commands):
+        commands = ["status", "allow 80/tcp", "allow 443/tcp", "allow 443/udp", "sshd -T", "allow 2200/tcp", "--force enable"]
+        for command in ("status", "allow 80/tcp", "allow 443/tcp", "allow 443/udp", "allow 2200/tcp", "--force enable"):
+            index = commands.index(command)
             with self.subTest(command=command):
-                result, calls, _, _ = self.firewall("inactive", "a b c 2200", fail=command)
+                result, calls, _, _ = self.firewall("inactive", "198.51.100.10 54321 203.0.113.5 2200", sshd="port 2200", fail=command)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(calls, commands[:index + 1])
         result, calls, _, _ = self.firewall("unexpected")

@@ -1872,40 +1872,70 @@ check_installation() {
 # FIREWALL
 # ─────────────────────────────────────────────────────────────────────────────
 setup_firewall() {
-    local status port client_ip client_port server_ip extra ssh_config
+    local status port socket_state socket_listen='' ssh_config='' detected
     local -a ssh_ports=()
     status=$(LC_ALL=C ufw status) || return 1
     case "$status" in
         "Status: active"*|"Status: inactive"*) ;;
         *) msg_err "Cannot determine UFW status." >&2; return 1 ;;
     esac
-
     for port in 80/tcp 443/tcp 443/udp; do
         ufw allow "$port" || return 1
     done
     [[ "$status" == "Status: active"* ]] && return 0
 
-    read -r client_ip client_port server_ip port extra <<< "${SSH_CONNECTION:-}"
-    if [[ -n "$client_ip" && -n "$client_port" && -n "$server_ip" && -z "$extra" && "$port" =~ ^[0-9]{1,5}$ ]] \
-       && (( 10#$port >= 1 && 10#$port <= 65535 )); then
-        ssh_ports=("$port")
-    else
-        ssh_config=$(sshd -T 2>/dev/null) || ssh_config=""
-        mapfile -t ssh_ports < <(awk '$1 == "port" {print $2}' <<< "$ssh_config" | sort -u)
-    fi
-
-    local ssh_allowed=false
+    socket_state=$(systemctl is-active ssh.socket 2>/dev/null) || :
+    case "$socket_state" in
+        active) socket_listen=$(systemctl show ssh.socket -p Listen --value 2>/dev/null) || socket_listen='' ;;
+        inactive|failed) ssh_config=$(sshd -T 2>/dev/null) || ssh_config='' ;;
+        *) echo 'WARNING: Cannot determine ssh.socket state; UFW was not enabled automatically.' >&2; return 0 ;;
+    esac
+    detected=$(python3 - "${SSH_CONNECTION:-}" "$socket_state" "$socket_listen" "$ssh_config" <<'PYSSH'
+import ipaddress, re, sys
+connection, state, listen, effective = sys.argv[1:]
+def port(value):
+    if not re.fullmatch(r'[0-9]{1,5}', value) or not 1 <= int(value) <= 65535:
+        raise ValueError('Invalid SSH port')
+    return int(value)
+ports = set()
+try:
+    fields = connection.split()
+    if len(fields) == 4:
+        ipaddress.ip_address(fields[0]); ipaddress.ip_address(fields[2]); port(fields[1])
+        ports.add(port(fields[3]))
+except ValueError:
+    pass
+try:
+    if state == 'active':
+        endpoints = re.findall(r'(\S+)\s+\(Stream\)', listen)
+        if not endpoints or re.sub(r'\S+\s+\(Stream\)', '', listen).strip():
+            raise ValueError('Unrecognized ssh.socket Listen')
+        for endpoint in endpoints:
+            match = re.fullmatch(r'\[([^\]]+)\]:([0-9]+)|([^:\s]+):([0-9]+)|([0-9]+)', endpoint)
+            if not match: raise ValueError('Unrecognized SSH endpoint')
+            if match[1]:
+                if ipaddress.ip_address(match[1]).version != 6: raise ValueError('Invalid IPv6 endpoint')
+            elif match[3] and match[3] != '*':
+                if ipaddress.ip_address(match[3]).version != 4: raise ValueError('Invalid IPv4 endpoint')
+            ports.add(port(match[2] or match[4] or match[5]))
+    else:
+        for value in re.findall(r'^port (\S+)$', effective, re.M):
+            try: ports.add(port(value))
+            except ValueError: pass
+    if not ports: raise ValueError('No confirmed SSH port')
+except ValueError:
+    sys.exit(1)
+print('\n'.join(map(str, sorted(ports))))
+PYSSH
+    ) || {
+        echo 'WARNING: SSH port could not be detected reliably (including active ssh.socket). Application rules were added, but UFW was not enabled automatically.' >&2
+        return 0
+    }
+    mapfile -t ssh_ports <<< "$detected"
     for port in "${ssh_ports[@]}"; do
-        if [[ "$port" =~ ^[0-9]{1,5}$ ]] && (( 10#$port >= 1 && 10#$port <= 65535 )); then
-            ufw allow "$((10#$port))/tcp" || return 1
-            ssh_allowed=true
-        fi
+        ufw allow "$port/tcp" || return 1
     done
-    if [[ "$ssh_allowed" == true ]]; then
-        ufw --force enable || return 1
-    else
-        echo "WARNING: UFW is inactive and the SSH port could not be detected. Application rules were added, but UFW was not enabled automatically." >&2
-    fi
+    ufw --force enable || return 1
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1925,15 +1955,78 @@ select_amneziawg() {
     done
 }
 
+awg_port_available() {
+    python3 - <<'PYPORT'
+import errno, socket, sys
+for family, address in ((socket.AF_INET,'0.0.0.0'), (socket.AF_INET6,'::')):
+    try:
+        with socket.socket(family, socket.SOCK_DGRAM) as listener:
+            if family == socket.AF_INET6: listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            listener.bind((address,8443))
+    except OSError as error:
+        if family == socket.AF_INET6 and error.errno in (errno.EAFNOSUPPORT, errno.EADDRNOTAVAIL): continue
+        sys.exit(1 if error.errno == errno.EADDRINUSE else 2)
+PYPORT
+}
+
+check_awg_reinstall_owner() {
+    systemctl is-active --quiet x-ui || return 1
+    python3 - "${XUIDB:-/etc/x-ui/x-ui.db}" <<'PYOWNER'
+import os, pathlib, re, sqlite3, subprocess, sys
+try:
+    unit = pathlib.Path('/etc/systemd/system/x-ui.service')
+    if not unit.is_file() or unit.is_symlink(): sys.exit(1)
+    with sqlite3.connect(pathlib.Path(sys.argv[1]).as_uri()+'?mode=ro', uri=True) as db:
+        rows = db.execute("SELECT protocol,listen,port,tag,enable FROM inbounds WHERE protocol='amneziawg' OR tag='inbound-8443-udp'").fetchall()
+    if rows != [('amneziawg','0.0.0.0',8443,'inbound-8443-udp',1)]: sys.exit(1)
+    main = int(subprocess.check_output(['systemctl','show','x-ui','-p','MainPID','--value'], text=True).strip())
+    if main <= 1 or os.readlink(f'/proc/{main}/exe') != '/usr/local/x-ui/x-ui': sys.exit(1)
+    listing = subprocess.check_output(['ss','-H','-lntup'], text=True)
+    owners = set()
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) < 6 or fields[:2] != ['udp','UNCONN'] or fields[4].rsplit(':',1)[-1] != '8443': continue
+        pids = set(map(int, re.findall(r'pid=(\d+)',line)))
+        if fields[4] not in ('*:8443','0.0.0.0:8443','[::]:8443',':::8443') or len(pids) != 1: sys.exit(1)
+        owners.update(pids)
+    if len(owners) != 1: sys.exit(1)
+    pid = owners.pop()
+    # Official 3X-UI v3.9.0 embeds AWG in the panel process. A managed
+    # Xray child is also accepted; neither case admits a foreign owner.
+    if pid == main: sys.exit(0)
+    executable = pathlib.Path(os.readlink(f'/proc/{pid}/exe'))
+    parent = int(pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(')',1)[1].split()[1])
+    if (parent != main or executable.parent != pathlib.Path('/usr/local/x-ui/bin')
+            or not re.fullmatch(r'xray-linux-[A-Za-z0-9_-]+',executable.name) or not executable.is_file()): sys.exit(1)
+except (OSError, ValueError, sqlite3.Error, subprocess.CalledProcessError):
+    sys.exit(1)
+PYOWNER
+}
+
+prepare_awg_reinstall() {
+    [[ "${AWG_REINSTALL:-n}" == y ]] || return 0
+    check_awg_reinstall_owner || { msg_err 'AWG ownership changed before cleanup; existing deployment preserved.'; return 1; }
+    systemctl stop x-ui || { msg_err 'Cannot stop owned 3X-UI before AWG reinstall; configuration preserved.'; return 1; }
+    if ! awg_port_available; then
+        systemctl start x-ui || msg_warn 'Previous 3X-UI restart failed; inspect services. Configuration retained.'
+        msg_err 'UDP/8443 did not become available after stopping owned 3X-UI/Xray; reinstall stopped before cleanup.'
+        return 1
+    fi
+}
+
 preflight_amneziawg() {
+    AWG_REINSTALL=n
     [[ "${INSTALL_AWG:-n}" == y ]] || return 0
     [[ "${PANEL_TAG:-}" == v3.9.0 ]] || { msg_err "AmneziaWG 3.1 integration requires verified 3X-UI v3.9.0."; return 1; }
-    # Python is guaranteed by release preflight even on a clean OS.
-    python3 - <<'PYPORT' || return 1
-import socket
-with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as listener:
-    listener.bind(('0.0.0.0',8443))
-PYPORT
+    local port_result=0
+    awg_port_available || port_result=$?
+    if (( port_result != 0 )); then
+        (( port_result == 1 )) && check_awg_reinstall_owner || {
+            msg_err 'UDP/8443 is unavailable and a unique owned AWG listener could not be confirmed; existing deployment preserved.'
+            return 1
+        }
+        AWG_REINSTALL=y
+    fi
     AWG_HELPER="${PANEL_STAGE:?Release preflight is required}/managed-amneziawg.py"
     curl -fsSL --connect-timeout 15 --max-time 60 "${GITHUB_RAW}/assets/amneziawg/managed.py" -o "$AWG_HELPER" || return 1
 }
@@ -2545,6 +2638,9 @@ main() {
     preflight_integrated_features || { msg_err 'Optional feature preflight failed; existing deployment was not removed.'; exit 1; }
     prepare_base_os || { msg_err 'OS preparation failed; deployment was not removed, package changes may remain.'; exit 1; }
     prepare_system_dns || { msg_err 'DNS preparation failed; existing deployment was not removed.'; exit 1; }
+    if [[ "${AWG_REINSTALL:-n}" == y ]]; then
+        prepare_awg_reinstall || { msg_err 'AWG reinstall preparation failed; deployment was not removed.'; exit 1; }
+    fi
     cleanup_adguard || { msg_err "Cannot clean AdGuard Home; core deployment was not removed."; exit 1; }
     clean_previous_install || { msg_err "Previous deployment cleanup failed (exit $?). See the cause above; installation stopped."; exit 1; }
     install_packages || { msg_err "Dependency setup failed."; exit 1; }
