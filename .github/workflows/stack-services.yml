@@ -24,7 +24,7 @@ jobs:
       - name: Install explicit service test dependencies
         run: |
           timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends nginx libnginx-mod-stream certbot sqlite3 openssl curl python3 python3-configobj python3-cryptography apache2-utils iproute2 tar gzip sudo
+          timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends nginx libnginx-mod-stream certbot sqlite3 openssl curl python3 python3-configobj python3-cryptography apache2-utils iproute2 qemu-user tar gzip sudo
       - name: Canonical completeness
         run: python3 tests/run_ci.py --check-completeness
       - name: Real AGH, HTTP-01 renewal and private Restore

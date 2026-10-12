@@ -7,6 +7,7 @@ RUN --mount=type=secret,id=proxy_ca,target=/run/proxy-ca.pem \
     apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv systemd-resolved dbus \
     openssh-server fail2ban unattended-upgrades nftables kmod nginx libnginx-mod-stream certbot sqlite3 \
     python3 python3-systemd python3-cryptography python3-configobj openssl ca-certificates iproute2 curl wget jq procps iptables dpkg-dev tcpdump tar gzip && \
+    if test "$MINIMAL_DNS" = 0; then apt-get install -y --no-install-recommends qemu-user; fi && \
     rm -f /etc/apt/apt.conf.d/99test-proxy && mkdir -p /run/sshd && ssh-keygen -A
 RUN --mount=type=secret,id=proxy_ca,target=/run/proxy-ca.pem \
     mkdir -p /opt/xui-ci && \

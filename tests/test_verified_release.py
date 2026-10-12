@@ -406,7 +406,7 @@ msg_err() { echo "$*" >&2; }
                     selected = {'version':'v3.10.0','sha256':digest,'xray':'27.1.1','candidate':False}
                     def version(argv,**kwargs):
                         return 'Xray 27.1.1 fixture\n' if 'version' in argv else ('3.10.0' if '-v' in argv and str(argv[0]).endswith('/x-ui') else 'Mihomo fixture')
-                    with patch.dict(os.environ,{'INTEGRATION_ARTIFACTS':str(root),'NGINX_BIN':'/fixture/nginx'},clear=True), patch.object(integration,'selection',return_value=selected), patch.object(integration,'MIHOMO_SHA256',hashlib.sha256(mihomo).hexdigest()), patch.object(integration.subprocess,'check_output',side_effect=version) as execute, patch.object(integration.subprocess,'run',side_effect=run):
+                    with patch.dict(os.environ,{'INTEGRATION_ARTIFACTS':str(root),'NGINX_BIN':'/fixture/nginx'},clear=True), patch.object(integration,'selection',return_value=selected), patch.object(integration,'MIHOMO_SHA256',hashlib.sha256(mihomo).hexdigest()), patch.object(integration.subprocess,'check_output',side_effect=version) as execute, patch.object(integration.subprocess,'run',side_effect=run), patch.object(integration.RealIntegration,'_prepare_arm32') as arm_prepare:
                         try:
                             if missing:
                                 with self.assertRaises((ValueError,subprocess.CalledProcessError)):
@@ -415,6 +415,12 @@ msg_err() { echo "$*" >&2; }
                             else:
                                 integration.RealIntegration.setUpClass()
                                 self.assertGreater(execute.call_count,0)
+                                arm_prepare.assert_called_once()
+                                report=root/'readiness.json'
+                                with patch.dict(os.environ,{'UPSTREAM_REPORT':str(report)}), patch.object(integration.RealIntegration,'_prepare_arm32',side_effect=ValueError('ARM preparation unavailable')):
+                                    with self.assertRaisesRegex(ValueError,'ARM preparation unavailable'):
+                                        integration.RealIntegration.setUpClass()
+                                self.assertFalse(report.exists(),'Preparation failure must not publish a cacheable compatibility result')
                         finally:
                             integration.RealIntegration.doClassCleanups()
 

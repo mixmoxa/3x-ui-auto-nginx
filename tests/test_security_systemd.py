@@ -47,6 +47,8 @@ class SecuritySystemd(unittest.TestCase):
             self.fail('Requires the existing disposable systemd VM')
         import stat
         import re
+        import ctypes
+        import ctypes.util
         from test_personal_xhttp import function, FIXTURE, SOURCE
         from test_integrated_features import helper
         from release_contract import baseline
@@ -94,7 +96,15 @@ class SecuritySystemd(unittest.TestCase):
                 groups[group]=values
             return groups[group]
         self.assertFalse(props['SystemCallFilter'].startswith('~'),'Expected an allowlist')
-        self.assertEqual(set(props['SystemCallFilter'].split()),expand('@system-service'))
+        # systemd drops group members unknown to its linked libseccomp (e.g.
+        # new syscall names or aliases). Compare the same compiled allowlist.
+        library=ctypes.util.find_library('seccomp')
+        self.assertIsNotNone(library,'Native systemd seccomp dependency missing')
+        seccomp=ctypes.CDLL(library)
+        resolve=seccomp.seccomp_syscall_resolve_name
+        resolve.argtypes=[ctypes.c_char_p]; resolve.restype=ctypes.c_int
+        expected={name for name in expand('@system-service') if resolve(name.encode()) != -1}
+        self.assertEqual(set(props['SystemCallFilter'].split()),expected)
         pid=run('systemctl','show','x-ui','-p','MainPID','--value').strip()
         status=Path('/proc/'+pid+'/status').read_text()
         self.assertRegex(status,r'(?m)^Seccomp:\s+2$')

@@ -124,10 +124,19 @@ class RealIntegration(unittest.TestCase):
               '\nArchive SHA-256:',digest, '\n'+xray_version.splitlines()[0])
         print(subprocess.check_output([cls.mihomo,'-v'],text=True,timeout=20).strip())
         print(subprocess.run([cls.nginx,'-v'],capture_output=True,text=True,check=True,timeout=20).stderr.strip(),flush=True)
+        cls.expected_xray=xray_version.split()[1]
+        cls._prepare_arm32()
+        cls.passed = []
+        # Publish readiness only after every required artifact/tool is prepared.
+        if os.environ.get('UPSTREAM_REPORT'):
+            Path(os.environ['UPSTREAM_REPORT']).write_text(json.dumps({**versions,'preparation_complete':True})+'\n')
+
+    @classmethod
+    def _prepare_arm32(cls):
+        version=cls.release['version']
         # All required downloads finish before the Canary preparation marker.
         cls.qemu_arm=shutil.which('qemu-arm')
         if not cls.qemu_arm: raise RuntimeError('Explicit integration dependency qemu-user is missing')
-        cls.expected_xray=xray_version.split()[1]
         cls.arm_tools={}
         from release_contract import baseline
         manifest=baseline()
@@ -155,10 +164,6 @@ class RealIntegration(unittest.TestCase):
                 panel.write_bytes(bundle.extractfile('x-ui/x-ui').read()); panel.chmod(0o755)
                 binary.write_bytes(bundle.extractfile('x-ui/bin/xray-linux-'+arch).read()); binary.chmod(0o755)
             cls.arm_tools[arch]=(panel,binary)
-        cls.passed = []
-        # Publish readiness only after every required artifact/tool is prepared.
-        if os.environ.get('UPSTREAM_REPORT'):
-            Path(os.environ['UPSTREAM_REPORT']).write_text(json.dumps({**versions,'preparation_complete':True})+'\n')
 
     @classmethod
     def tearDownClass(cls):
