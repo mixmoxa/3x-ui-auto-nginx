@@ -12,6 +12,7 @@ import unittest
 SUITES = {
     'systemd': ('test_security_systemd.SecuritySystemd',),
     'nonroot': (
+        'test_git_identity.GitIdentity',
         'test_integrated_features.IntegratedFeatures',
         'test_personal_xhttp.PersonalXHTTP',
         'test_amneziawg.AmneziaWG',
