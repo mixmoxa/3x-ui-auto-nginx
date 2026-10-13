@@ -82,10 +82,12 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 ---
 
 <a id="usdt-ton"></a>
-### ₮ USDT · TON (Jetton)
+### GRAM / USDT · TON
 
-**دارایی:** Tether USD (USDT)\
-**شبکه:** TON (Jetton)
+**دارایی‌ها:** Gram (GRAM), Tether USD (USDT)\
+**شبکه:** TON
+
+GRAM ارز بومی شبکهٔ TON است (که پیش‌تر Toncoin نام داشت)، اما USDT توکنی از استاندارد Jetton است. برای دریافت هر دو از یک آدرس استفاده می‌شود.
 
 ```text
 UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
@@ -94,7 +96,7 @@ UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
 <details>
 <summary>نمایش کد QR برای TON</summary>
 
-<img src="../assets/support/usdt-ton.svg" width="184" alt="کد QR دریافت Tether USD (USDT) · TON (Jetton)">
+<img src="../assets/support/usdt-ton.svg" width="184" alt="کد QR دریافت GRAM / USDT · TON">
 
 </details>
 
@@ -119,4 +121,4 @@ bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 
 ---
 
-> **مهم:** فقط دارایی‌های مشخص‌شده را در شبکهٔ مربوط به آن‌ها ارسال کنید: USDT در Tron (TRC20)، BNB Smart Chain (BEP20)، Solana (SPL) یا TON (Jetton)؛ USDC فقط در Solana (SPL)؛ و BTC فقط در شبکهٔ Bitcoin. یک دارایی در شبکه‌های مختلف قابل انتقال مستقیم به یکدیگر نیست. پیش از ارسال، شبکه و آدرس کامل گیرنده را بررسی کنید. تراکنش‌های بلاک‌چین معمولاً برگشت‌ناپذیرند.
+> **مهم:** فقط دارایی‌های مشخص‌شده را در شبکهٔ مربوط به آن‌ها ارسال کنید: USDT در Tron (TRC20)، BNB Smart Chain (BEP20)، Solana (SPL) یا TON (Jetton)؛ USDC فقط در Solana (SPL)؛ و BTC فقط در شبکهٔ Bitcoin. یک دارایی در شبکه‌های مختلف قابل انتقال مستقیم به یکدیگر نیست. پیش از ارسال، شبکه و آدرس کامل گیرنده را بررسی کنید. تراکنش‌های بلاک‌چین معمولاً برگشت‌ناپذیرند. GRAM را فقط در شبکهٔ TON ارسال کنید.

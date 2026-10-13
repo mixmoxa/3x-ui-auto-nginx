@@ -82,10 +82,12 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 ---
 
 <a id="usdt-ton"></a>
-### ₮ USDT · TON (Jetton)
+### GRAM / USDT · TON
 
-**الأصل:** Tether USD (USDT)\
-**الشبكة:** TON (Jetton)
+**الأصول:** Gram (GRAM), Tether USD (USDT)\
+**الشبكة:** TON
+
+GRAM هي العملة الأصلية لشبكة TON (وكانت تُعرف سابقًا باسم Toncoin)، بينما USDT رمز من معيار Jetton. يستخدم الأصلان عنوان الاستلام نفسه.
 
 ```text
 UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
@@ -94,7 +96,7 @@ UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
 <details>
 <summary>عرض رمز QR لشبكة TON</summary>
 
-<img src="../assets/support/usdt-ton.svg" width="184" alt="رمز QR لاستلام Tether USD (USDT) · TON (Jetton)">
+<img src="../assets/support/usdt-ton.svg" width="184" alt="رمز QR لاستلام GRAM / USDT · TON">
 
 </details>
 
@@ -119,4 +121,4 @@ bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 
 ---
 
-> **مهم:** أرسل العملات المحددة عبر الشبكات الصحيحة فقط: USDT عبر Tron (TRC20) أو BNB Smart Chain (BEP20) أو Solana (SPL) أو TON (Jetton)؛ وUSDC عبر Solana (SPL) فقط؛ وBTC عبر شبكة Bitcoin فقط. لا يمكن استخدام الرصيد نفسه مباشرةً عبر شبكات مختلفة. تحقّق من عنوان الاستلام كاملًا ومن الشبكة قبل الإرسال. معاملات البلوكشين غير قابلة للإلغاء عادةً.
+> **مهم:** أرسل العملات المحددة عبر الشبكات الصحيحة فقط: USDT عبر Tron (TRC20) أو BNB Smart Chain (BEP20) أو Solana (SPL) أو TON (Jetton)؛ وUSDC عبر Solana (SPL) فقط؛ وBTC عبر شبكة Bitcoin فقط. لا يمكن استخدام الرصيد نفسه مباشرةً عبر شبكات مختلفة. تحقّق من عنوان الاستلام كاملًا ومن الشبكة قبل الإرسال. معاملات البلوكشين غير قابلة للإلغاء عادةً. أرسل GRAM عبر شبكة TON فقط.

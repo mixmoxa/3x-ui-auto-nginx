@@ -82,10 +82,12 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 ---
 
 <a id="usdt-ton"></a>
-### ₮ USDT · TON (Jetton)
+### GRAM / USDT · TON
 
-**Varlık:** Tether USD (USDT)\
-**Ağ:** TON (Jetton)
+**Varlıklar:** Gram (GRAM), Tether USD (USDT)\
+**Ağ:** TON
+
+GRAM, TON ağının yerel kripto parasıdır (önceki adı Toncoin); USDT ise Jetton standardında bir tokendir. Her ikisi de aynı adresten alınabilir.
 
 ```text
 UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
@@ -94,7 +96,7 @@ UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
 <details>
 <summary>QR kodunu göster: TON</summary>
 
-<img src="../assets/support/usdt-ton.svg" width="184" alt="Alıcı QR kodu: Tether USD (USDT) · TON (Jetton)">
+<img src="../assets/support/usdt-ton.svg" width="184" alt="Alıcı QR kodu: GRAM / USDT · TON">
 
 </details>
 
@@ -119,4 +121,4 @@ bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 
 ---
 
-> **Önemli:** Yalnızca belirtilen varlıkları uygun ağlarda gönderin: USDT için Tron (TRC20), BNB Smart Chain (BEP20), Solana (SPL) veya TON (Jetton); USDC için yalnızca Solana (SPL); BTC için yalnızca Bitcoin. Aynı varlık farklı ağlar arasında doğrudan aktarılamaz. Göndermeden önce alıcı adresinin tamamını ve ağı kontrol edin. Blok zinciri işlemleri genellikle geri alınamaz.
+> **Önemli:** Yalnızca belirtilen varlıkları uygun ağlarda gönderin: USDT için Tron (TRC20), BNB Smart Chain (BEP20), Solana (SPL) veya TON (Jetton); USDC için yalnızca Solana (SPL); BTC için yalnızca Bitcoin. Aynı varlık farklı ağlar arasında doğrudan aktarılamaz. Göndermeden önce alıcı adresinin tamamını ve ağı kontrol edin. Blok zinciri işlemleri genellikle geri alınamaz. GRAM yalnızca TON ağı üzerinden gönderilmelidir.

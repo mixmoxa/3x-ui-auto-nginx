@@ -82,10 +82,12 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 ---
 
 <a id="usdt-ton"></a>
-### ₮ USDT · TON (Jetton)
+### GRAM / USDT · TON
 
-**Валюта:** Tether USD (USDT)\
-**Сеть:** TON (Jetton)
+**Валюты:** Gram (GRAM), Tether USD (USDT)\
+**Сеть:** TON
+
+GRAM — нативная монета сети TON (ранее Toncoin), USDT — токен стандарта Jetton. Для обоих активов используется один адрес.
 
 ```text
 UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
@@ -94,7 +96,7 @@ UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
 <details>
 <summary>Показать QR-код TON</summary>
 
-<img src="../assets/support/usdt-ton.svg" width="184" alt="QR-код для Tether USD (USDT) · TON (Jetton)">
+<img src="../assets/support/usdt-ton.svg" width="184" alt="QR-код для GRAM / USDT · TON">
 
 </details>
 
@@ -119,4 +121,4 @@ bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 
 ---
 
-> **Важно:** отправляйте только указанные валюты в соответствующих сетях: USDT в Tron (TRC20), BNB Smart Chain (BEP20), Solana (SPL) или TON (Jetton); USDC — только в Solana (SPL); BTC — только в Bitcoin. Один и тот же актив в разных сетях не взаимозаменяем. Перед переводом проверьте сеть и полный адрес получателя. Криптовалютные переводы, как правило, необратимы.
+> **Важно:** отправляйте только указанные валюты в соответствующих сетях: USDT в Tron (TRC20), BNB Smart Chain (BEP20), Solana (SPL) или TON (Jetton); USDC — только в Solana (SPL); BTC — только в Bitcoin. Один и тот же актив в разных сетях не взаимозаменяем. Перед переводом проверьте сеть и полный адрес получателя. Криптовалютные переводы, как правило, необратимы. GRAM можно отправлять только через сеть TON.
