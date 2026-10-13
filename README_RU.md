@@ -23,6 +23,8 @@
 
 <a id="2--домен-vless-reality"></a>
 
+<a id="2-️-домен-vless-reality"></a>
+
 [ 2. 🛰️ Домен VLESS REALITY ](README.md#2--домен-vless-reality)
 
 <a id="3--расширенная-безопасность-vps"></a>
@@ -38,6 +40,8 @@
 [ 5. 🔑 Amnezia WG ](README.md#5--amnezia-wg)
 
 <a id="6--adguard-home--dns-over-https"></a>
+
+<a id="6-️-adguard-home--dns-over-https"></a>
 
 [ 6. 🛡️ AdGuard Home + DNS-over-HTTPS ](README.md#6--adguard-home--dns-over-https)
 
@@ -64,10 +68,14 @@
 <a id="telemt-web-manager"></a>
 <a id="-telegram-web-proxy-manager"></a>
 
+<a id="️-telegram-web-proxy-manager"></a>
+
 [ ✈️ Telegram Web Proxy Manager ](README.md#telemt-web-manager)
 
 <a id="technical-details"></a>
 <a id="-технические-подробности-и-совместимость"></a>
+
+<a id="️-технические-подробности-и-совместимость"></a>
 
 [ ⚙️ Технические подробности и совместимость ](README.md#technical-details)
 
@@ -81,5 +89,7 @@
 [ 🤝 Происхождение и авторы ](README.md#-происхождение-и-авторы)
 
 <a id="-поддержать-разработку"></a>
+
+<a id="️-поддержать-разработку"></a>
 
 [ ❤️ Поддержать разработку ](README.md#-поддержать-разработку)
