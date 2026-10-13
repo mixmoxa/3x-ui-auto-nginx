@@ -27,7 +27,7 @@ Bir kripto para seçin ve **ağın tam olarak eşleştiğinden emin olun**. Alı
 <a id="usdt-tron"></a>
 ### ₮ USDT · Tron (TRC20)
 
-**Varlık:** Tether USD (USDT)  
+**Varlık:** Tether USD (USDT)\
 **Ağ:** Tron (TRC20)
 
 ```text
@@ -46,7 +46,7 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 <a id="usdt-bsc"></a>
 ### ₮ USDT · BNB Smart Chain (BEP20)
 
-**Varlık:** Tether USD (USDT)  
+**Varlık:** Tether USD (USDT)\
 **Ağ:** BNB Smart Chain (BEP20)
 
 ```text
@@ -65,7 +65,7 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 <a id="usdt-solana"></a>
 ### ₮ USDT / USDC · Solana (SPL)
 
-**Varlıklar:** Tether USD (USDT), USD Coin (USDC)  
+**Varlıklar:** Tether USD (USDT), USD Coin (USDC)\
 **Ağ:** Solana (SPL)
 
 ```text
@@ -84,7 +84,7 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 <a id="usdt-ton"></a>
 ### ₮ USDT · TON (Jetton)
 
-**Varlık:** Tether USD (USDT)  
+**Varlık:** Tether USD (USDT)\
 **Ağ:** TON (Jetton)
 
 ```text
@@ -103,7 +103,7 @@ UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
 <a id="bitcoin"></a>
 ### ₿ Bitcoin (BTC)
 
-**Varlık:** Bitcoin (BTC)  
+**Varlık:** Bitcoin (BTC)\
 **Ağ:** Bitcoin (native SegWit)
 
 ```text

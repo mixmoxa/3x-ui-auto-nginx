@@ -27,7 +27,7 @@
 <a id="usdt-tron"></a>
 ### ₮ USDT · Tron (TRC20)
 
-**دارایی:** Tether USD (USDT)  
+**دارایی:** Tether USD (USDT)\
 **شبکه:** Tron (TRC20)
 
 ```text
@@ -46,7 +46,7 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 <a id="usdt-bsc"></a>
 ### ₮ USDT · BNB Smart Chain (BEP20)
 
-**دارایی:** Tether USD (USDT)  
+**دارایی:** Tether USD (USDT)\
 **شبکه:** BNB Smart Chain (BEP20)
 
 ```text
@@ -65,7 +65,7 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 <a id="usdt-solana"></a>
 ### ₮ USDT / USDC · Solana (SPL)
 
-**دارایی‌ها:** Tether USD (USDT), USD Coin (USDC)  
+**دارایی‌ها:** Tether USD (USDT), USD Coin (USDC)\
 **شبکه:** Solana (SPL)
 
 ```text
@@ -84,7 +84,7 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 <a id="usdt-ton"></a>
 ### ₮ USDT · TON (Jetton)
 
-**دارایی:** Tether USD (USDT)  
+**دارایی:** Tether USD (USDT)\
 **شبکه:** TON (Jetton)
 
 ```text
@@ -103,7 +103,7 @@ UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
 <a id="bitcoin"></a>
 ### ₿ Bitcoin (BTC)
 
-**دارایی:** Bitcoin (BTC)  
+**دارایی:** Bitcoin (BTC)\
 **شبکه:** Bitcoin (native SegWit)
 
 ```text

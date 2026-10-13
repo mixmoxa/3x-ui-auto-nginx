@@ -27,7 +27,7 @@
 <a id="usdt-tron"></a>
 ### ₮ USDT · Tron (TRC20)
 
-**Валюта:** Tether USD (USDT)  
+**Валюта:** Tether USD (USDT)\
 **Сеть:** Tron (TRC20)
 
 ```text
@@ -46,7 +46,7 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 <a id="usdt-bsc"></a>
 ### ₮ USDT · BNB Smart Chain (BEP20)
 
-**Валюта:** Tether USD (USDT)  
+**Валюта:** Tether USD (USDT)\
 **Сеть:** BNB Smart Chain (BEP20)
 
 ```text
@@ -65,7 +65,7 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 <a id="usdt-solana"></a>
 ### ₮ USDT / USDC · Solana (SPL)
 
-**Валюты:** Tether USD (USDT), USD Coin (USDC)  
+**Валюты:** Tether USD (USDT), USD Coin (USDC)\
 **Сеть:** Solana (SPL)
 
 ```text
@@ -84,7 +84,7 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 <a id="usdt-ton"></a>
 ### ₮ USDT · TON (Jetton)
 
-**Валюта:** Tether USD (USDT)  
+**Валюта:** Tether USD (USDT)\
 **Сеть:** TON (Jetton)
 
 ```text
@@ -103,7 +103,7 @@ UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
 <a id="bitcoin"></a>
 ### ₿ Bitcoin (BTC)
 
-**Валюта:** Bitcoin (BTC)  
+**Валюта:** Bitcoin (BTC)\
 **Сеть:** Bitcoin (native SegWit)
 
 ```text

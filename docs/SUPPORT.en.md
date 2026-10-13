@@ -27,7 +27,7 @@ Choose a cryptocurrency and **match the network exactly**. Copy the address or s
 <a id="usdt-tron"></a>
 ### ₮ USDT · Tron (TRC20)
 
-**Asset:** Tether USD (USDT)  
+**Asset:** Tether USD (USDT)\
 **Network:** Tron (TRC20)
 
 ```text
@@ -46,7 +46,7 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 <a id="usdt-bsc"></a>
 ### ₮ USDT · BNB Smart Chain (BEP20)
 
-**Asset:** Tether USD (USDT)  
+**Asset:** Tether USD (USDT)\
 **Network:** BNB Smart Chain (BEP20)
 
 ```text
@@ -65,7 +65,7 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 <a id="usdt-solana"></a>
 ### ₮ USDT / USDC · Solana (SPL)
 
-**Assets:** Tether USD (USDT), USD Coin (USDC)  
+**Assets:** Tether USD (USDT), USD Coin (USDC)\
 **Network:** Solana (SPL)
 
 ```text
@@ -84,7 +84,7 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 <a id="usdt-ton"></a>
 ### ₮ USDT · TON (Jetton)
 
-**Asset:** Tether USD (USDT)  
+**Asset:** Tether USD (USDT)\
 **Network:** TON (Jetton)
 
 ```text
@@ -103,7 +103,7 @@ UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
 <a id="bitcoin"></a>
 ### ₿ Bitcoin (BTC)
 
-**Asset:** Bitcoin (BTC)  
+**Asset:** Bitcoin (BTC)\
 **Network:** Bitcoin (native SegWit)
 
 ```text
