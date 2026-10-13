@@ -121,8 +121,6 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ---
 
-<a id="4--vless-xtls-vision"></a>
-
 ### 4. 🔗 VLESS XTLS Vision
 
 > `Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]:`
@@ -137,8 +135,6 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 > После выбора `Y` установщик дополнительно запросит домен: `Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains):`.
 
 ---
-
-<a id="5--amnezia-wg"></a>
 
 ### 5. 🔑 Amnezia WG
 
@@ -162,8 +158,6 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 </details>
 
 ---
-
-<a id="6-️-adguard-home--dns-over-https"></a>
 
 ### 6. 🛡️ AdGuard Home + DNS-over-HTTPS
 
@@ -253,8 +247,6 @@ XTLS Vision и Amnezia WG добавляются по выбору при уст
 
 <a id="backup--restore"></a>
 
-<a id="-backup--restore"></a>
-
 ## 💾 Backup / Restore
 
 Backup / Restore **v3** позволяет откатить текущий VPS или восстановить совместимый сервер после переустановки. Утилита устанавливается вместе с сервером; выполняйте от root:
@@ -292,8 +284,6 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 <a id="telemt-web-manager"></a>
 
 <a id="telegram-web-proxy-manager"></a>
-
-<a id="️-telegram-web-proxy-manager"></a>
 
 ## ✈️ Telegram Web Proxy Manager
 
