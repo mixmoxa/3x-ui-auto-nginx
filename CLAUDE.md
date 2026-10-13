@@ -12,7 +12,7 @@ Maintained deployment stack derived from [mozaroc/3x-ui-pro](https://github.com/
 - `assets/fake-sites/`: cover pages.
 - `tests/run_ci.py`: canonical runner for nonroot, root, integration and services suites; see CONTRIBUTING.md for privilege contexts and commands.
 - `.github/workflows/stack-xhttp.yml`, `stack-backup.yml` and `stack-services.yml`: PR/push validation on `main`; manual dispatch available.
-- `README_RU.md`: maintainer-reviewed Russian documentation; `README.md`: default English documentation. `README_EN.md` is a compatibility link to the English README. Arabic, Persian, Simplified Chinese, Spanish and Turkish have dedicated README translations.
+- `README.md`: default, maintainer-reviewed Russian documentation; `README_EN.md`: full English documentation. `README_RU.md` is a compatibility pointer for older Russian links. Arabic, Persian, Simplified Chinese, Spanish and Turkish have dedicated README translations.
 - `CONTRIBUTING.md`: development, checks, protection and emergency recovery.
 
 ## Runtime sources and compatibility
