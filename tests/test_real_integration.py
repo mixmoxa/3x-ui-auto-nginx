@@ -124,14 +124,69 @@ class RealIntegration(unittest.TestCase):
               '\nArchive SHA-256:',digest, '\n'+xray_version.splitlines()[0])
         print(subprocess.check_output([cls.mihomo,'-v'],text=True,timeout=20).strip())
         print(subprocess.run([cls.nginx,'-v'],capture_output=True,text=True,check=True,timeout=20).stderr.strip(),flush=True)
+        cls.expected_xray=xray_version.split()[1]
+        cls._prepare_arm32()
         cls.passed = []
         # Publish readiness only after every required artifact/tool is prepared.
         if os.environ.get('UPSTREAM_REPORT'):
             Path(os.environ['UPSTREAM_REPORT']).write_text(json.dumps({**versions,'preparation_complete':True})+'\n')
 
     @classmethod
+    def _prepare_arm32(cls):
+        version=cls.release['version']
+        # All required downloads finish before the Canary preparation marker.
+        cls.qemu_arm=shutil.which('qemu-arm')
+        if not cls.qemu_arm: raise RuntimeError('Explicit integration dependency qemu-user is missing')
+        cls.arm_tools={}
+        from release_contract import baseline
+        manifest=baseline()
+        if cls.release['candidate']:
+            metadata=cls.tools/'arm-release.json'
+            download(f'https://api.github.com/repos/MHSanaei/3x-ui/releases/tags/{version}',metadata)
+            release=json.loads(metadata.read_text())
+            if release['tag_name']!=version or release['draft'] or release['prerelease']:
+                raise ValueError('Not the selected official stable ARM release')
+        for arch in ('armv5','armv6','armv7'):
+            name=f'x-ui-linux-{arch}.tar.gz'; archive=cls.tools/name; sidecar=cls.tools/(name+'.sha256')
+            if cls.release['candidate']:
+                assets=[a for a in release['assets'] if a['name']==name]
+                if len(assets)!=1: raise ValueError('Missing/ambiguous ARM asset: '+name)
+                digest=assets[0]['digest'].removeprefix('sha256:')
+            else: digest=manifest['archives'][arch]
+            cached=os.environ.get('INTEGRATION_ARTIFACTS')
+            if cached and not cls.release['candidate']:
+                shutil.copyfile(Path(cached)/name,archive)
+                shutil.copyfile(Path(cached)/(name+'.sha256'),sidecar)
+            else:
+                download(f'https://github.com/MHSanaei/3x-ui/releases/download/{version}/{name}',archive)
+                download(f'https://github.com/MHSanaei/3x-ui/releases/download/{version}/{name}.sha256',sidecar)
+            if hashlib.sha256(archive.read_bytes()).hexdigest()!=digest or sidecar.read_text().split()!=[digest,name]:
+                raise ValueError('Official ARM archive/sidecar mismatch: '+arch)
+            validate_layout(archive,arch)
+            folder=cls.tools/arch; folder.mkdir()
+            with tarfile.open(archive) as bundle:
+                panel,binary=folder/'x-ui',folder/'xray-linux-arm32'
+                panel.write_bytes(bundle.extractfile('x-ui/x-ui').read()); panel.chmod(0o755)
+                binary.write_bytes(bundle.extractfile('x-ui/bin/xray-linux-'+arch).read()); binary.chmod(0o755)
+            cls.arm_tools[arch]=(panel,binary)
+
+    @classmethod
     def tearDownClass(cls):
         print('\nREAL XRAY INTEGRATION\n'+'\n'.join(f'{name:24} PASS' for name in cls.passed),flush=True)
+
+    def test_official_arm32_runtime_binary_contract(self):
+        config=self.root/'arm-config.json'
+        config.write_text(json.dumps({'inbounds':[],'outbounds':[{'protocol':'freedom'}]}))
+        for arch,(panel,binary) in self.arm_tools.items():
+            panel_version=subprocess.check_output([self.qemu_arm,str(panel),'-v'],text=True,timeout=45).strip()
+            self.assertEqual(panel_version,self.release['version'].removeprefix('v'))
+            output=subprocess.check_output([self.qemu_arm,str(binary),'version'],text=True,timeout=45)
+            self.assertTrue(output.startswith('Xray '+self.expected_xray+' '))
+            keys=subprocess.check_output([self.qemu_arm,str(binary),'x25519'],text=True,timeout=45)
+            self.assertTrue('PrivateKey:' in keys and 'Password' in keys,'X25519 output contract mismatch')
+            subprocess.run([self.qemu_arm,str(binary),'run','-test','-config',str(config)],check=True,capture_output=True,timeout=45)
+            print(arch+': authenticated ARM32 version / X25519 / real config validation PASS',flush=True)
+        self.passed.append('ARM32 runtime contract')
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='real-core-')

@@ -22,7 +22,7 @@ jobs:
       - name: Install test dependencies
         run: |
           timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends nginx libnginx-mod-stream certbot sqlite3 openssl curl python3 python3-configobj python3-cryptography tar gzip shellcheck iproute2
+          timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends nginx libnginx-mod-stream certbot sqlite3 openssl curl python3 python3-configobj python3-cryptography tar gzip shellcheck iproute2 qemu-user
       - name: All tracked shell scripts (syntax and ShellCheck errors)
         run: |
           mapfile -d '' -t scripts < <(git ls-files -z -- '*.sh')
