@@ -1,106 +1,119 @@
 <div align="center">
 
-[🇷🇺 Русский](README_RU.md) · 🇬🇧 **English** · [🇪🇬 العربية](README_AR.md) · [🇮🇷 فارسی](README_FA.md) · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · [🇹🇷 Türkçe](README_TR.md)
+🇷🇺 **Русский** · [🇬🇧 English](README_EN.md) · [🇪🇬 العربية](README_AR.md) · [🇮🇷 فارسی](README_FA.md) · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · [🇹🇷 Türkçe](README_TR.md)
 
 <h1 align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="560"></h1>
 
-### Automated deployment of 3X-UI / XRAY-CORE on your own VPS
+<a id="automated-deployment-of-3x-ui--xray-core-on-your-own-vps"></a>
+
+### Автоматическое развёртывание 3X-UI / XRAY-CORE на собственном VPS
 
 **REALITY · XHTTP · HYSTERIA2 · WebSocket · gRPC · NGINX · HTTPS · BACKUP / RESTORE**
 
-Two domains, a clean VPS, and a few minutes to install.
+Два домена, чистый VPS и несколько минут на установку.
 
 [![Security](https://img.shields.io/github/actions/workflow/status/xPROMSx/3x-ui-auto-nginx/stack-xhttp.yml?branch=main&label=Security)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-xhttp.yml)
 [![Backup](https://img.shields.io/github/actions/workflow/status/xPROMSx/3x-ui-auto-nginx/stack-backup.yml?branch=main&label=Backup)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-backup.yml)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 
-[📦 Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [🐛 Report an issue](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 Feedback](https://t.me/promsdev)
+[📦 Релизы](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [🐛 Сообщить о проблеме](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 Обратная связь](https://t.me/promsdev)
 
 </div>
 
-**3X-UI AUTO NGINX** installs [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray with nginx, HTTPS, connection profiles, subscriptions, diagnostics, and Backup / Restore. AmneziaWG 3.1 and AdGuard Home with DoH are optional.
+**3X-UI AUTO NGINX** устанавливает [3x-ui](https://github.com/MHSanaei/3x-ui) и Xray, настраивает nginx, HTTPS, подключения, подписки, диагностику и Backup / Restore. AmneziaWG 3.1 и AdGuard Home с DoH — по желанию.
 
-Bring two domains and a clean VPS. A cover website is selected and deployed automatically.
+Нужны два домена и чистый VPS. Сайт-прикрытие установщик выбирает и разворачивает автоматически.
 
-## ✨ Why this project
+<a id="-why-this-project"></a>
+<a id="why-this-project"></a>
+
+## ✨ Почему этот проект?
 
 | | |
 | --- | --- |
-| **Preconfigured connections**<br>REALITY, XHTTP, Hysteria2, Amnezia WG, VLESS XTLS Vision, WebSocket TLS, and Trojan gRPC. | **Private internal services**<br>The panel and subscription service don't expose their internal ports to the internet. |
-| **Restricted nginx routing**<br>Requests cannot be forwarded to arbitrary local ports. | **Backup / Restore v3**<br>Roll back your VPS or restore to a new server, including one from another hosting provider. |
-| **Automatic certificates**<br>Let's Encrypt issuance and renewal need no manual configuration. | **AdGuard Home + DoH**<br>Opt in during setup; no third domain needed. |
+| **Готовые профили подключения**<br>REALITY, XHTTP, Hysteria2, Amnezia WG, VLESS XTLS Vision, WebSocket TLS и Trojan gRPC. | **Закрытые внутренние сервисы**<br>Панель и подписки не публикуют свои служебные порты напрямую в интернет. |
+| **Безопасная схема nginx**<br>Нет проксирования запросов на произвольные локальные порты. | **Backup / Restore v3**<br>Откат текущего VPS или восстановление на новом сервере, в том числе у другого хостера. |
+| **Автоматические сертификаты**<br>Let's Encrypt выпускается и продлевается без ручной настройки. | **AdGuard Home + DoH**<br>Устанавливается по желанию и не требует третьего домена. |
 
 <a id="installation"></a>
 
-## 🚀 Quick start
+<a id="-quick-start"></a>
+<a id="quick-start"></a>
 
-Configure the DNS records for **two domains** to point to your VPS IP address: one for the panel, one for REALITY. Connect via SSH as **root** and allow TCP **80/443**, UDP **443**. [Supported systems](#technical-details).
+## 🚀 Быстрый старт
+
+Настройте DNS-записи **двух доменов**, указав IP-адрес вашего VPS: один для панели, другой для REALITY. Подключитесь по SSH под **root** и разрешите входящие TCP **80/443** и UDP **443**. [Поддерживаемые ОС](#technical-details).
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-
-Once started, the installer walks you through the following steps. The prompts below are shown exactly as they appear in the terminal:
+После запуска установщик последовательно предложит настроить следующие компоненты. Ниже приведены точные формулировки вопросов, которые вы увидите в терминале:
 
 ---
 
-### 1. 🌐 3X-UI panel domain
+<a id="1--3x-ui-panel-domain"></a>
+
+### 1. 🌐 Домен панели 3X-UI
 
 > `Enter the domain for your 3X-UI panel:`
 
-Enter the domain used for the administration panel, subscriptions, and additional web services.
+Укажите домен, через который будут доступны панель управления, подписки и дополнительные веб-сервисы.
 
 ---
 
-### 2. 🛰️ VLESS REALITY domain
+<a id="2--vless-reality-domain"></a>
+
+### 2. 🛰️ Домен VLESS REALITY
 
 > `Enter the domain for VLESS REALITY:`
 
-Enter a second domain for REALITY. Both domains must point to your VPS IP address.
+Укажите второй домен для подключения REALITY. Оба домена должны указывать на IP-адрес вашего VPS.
 
 <details>
-<summary>ℹ️ Additional startup parameters</summary>
+<summary>ℹ️ <strong>Дополнительные параметры запуска</strong></summary>
 
-You can supply both domains on the command line instead of entering them interactively:
+Оба домена можно передать установщику заранее, без интерактивного ввода:
 
 ```bash
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
 ```
 
-Replace `panel.example.com` and `reality.example.com` with your own domains. Optional features are still selected interactively.
+Замените `panel.example.com` и `reality.example.com` своими доменами. Дополнительные функции при этом по-прежнему выбираются интерактивно.
 
 </details>
 
 ---
 
-### 3. 🔐 Enhanced VPS security
+<a id="3--enhanced-vps-security"></a>
+
+### 3. 🔐 Расширенная безопасность VPS
 
 > `Enhance VPS security? [Y/n]:`
 
-*Recommended for less experienced users · Enabled by default (`Y`)*
+*Рекомендуется неопытным пользователям · Включена по умолчанию (`Y`)*
 
-The installer automatically configures additional server protection: Fail2ban against SSH password brute-force attacks, encrypted system DNS (DoT), automatic security updates for the system and packages, and a 1 GiB swap file to improve resilience when memory runs low.
+Установщик автоматически настроит дополнительную защиту сервера: Fail2ban для защиты SSH от перебора паролей, зашифрованный системный DNS (DoT), автоматические обновления безопасности системы и пакетов, а также создаст swap-файл размером 1 ГиБ для повышения устойчивости системы при нехватке оперативной памяти.
 
-**Read the settings below before enabling this option**, particularly the automatic reboot schedule.
+**Перед включением ознакомьтесь с параметрами ниже**, особенно с расписанием автоматических перезагрузок.
 
 <details>
-<summary>🔐 Detailed security settings</summary>
+<summary>🔐 <strong>Подробное описание настроек безопасности</strong></summary>
 
-Choosing `Y` enables:
+При выборе `Y` установщик выполнит следующие настройки:
 
-- **1 GiB swap.** If no swap is active, the filesystem is supported and at least 4 GiB is free, the installer creates and enables a swap file. Existing swap settings remain unchanged. If these conditions are not met, this step is skipped without stopping installation.
-- **SSH protection — Fail2ban.** Limits repeated unsuccessful logins using the actual SSH ports. Existing SSH authentication settings are not changed.
-- **Encrypted DNS (DoT).** System DNS uses `systemd-resolved` and strict DNS-over-TLS with Cloudflare and Google resolvers. It never silently falls back to unencrypted queries if those resolvers are unavailable.
-- **Automatic security updates.** Package lists are updated at 02:30, with security updates installed at 02:50.
-- **Automatic reboot — 04:38.** If updates require a reboot, it occurs at the scheduled time, **even when users are connected**. This may interrupt active connections.
+- **Swap 1 ГиБ.** Если swap отсутствует, файловая система поддерживается и свободно не менее 4 ГиБ, установщик создаст и активирует swap-файл. Существующие настройки swap не изменяются. Если условия не выполнены, этот этап будет пропущен без остановки установки.
+- **Защита SSH — Fail2ban.** Ограничение повторных неудачных попыток входа с учётом фактических SSH-портов. Существующие параметры SSH-аутентификации не изменяются.
+- **Шифрованный DNS (DoT).** Системный DNS настраивается через `systemd-resolved` с обязательным DNS-over-TLS. Используются серверы Cloudflare и Google. При недоступности защищённых DNS-серверов обычные незашифрованные запросы не используются.
+- **Автоматические обновления безопасности.** Обновление списков пакетов — в 02:30, установка обновлений — в 02:50.
+- **Автоматическая перезагрузка — 04:38.** Если после обновлений системе потребуется перезагрузка, она выполняется в указанное время, **в том числе при активных пользовательских сеансах**. Это может прервать действующие подключения.
 
-Times are in the VPS's local time zone.
+Время указано по локальному часовому поясу VPS.
 
-Existing settings are checked for compatibility before changes. If security configuration fails, a controlled rollback is provided.
+Перед изменениями выполняются проверки совместимости существующих настроек. При ошибках конфигурации безопасности предусмотрен контролируемый откат.
 
-**Important:** This does not disable SSH password login or replace proper server administration. Configure SSH key access first, then disable password authentication yourself.
+**Важно:** установщик не отключает SSH-вход по паролю и не заменяет полноценное администрирование сервера. Рекомендуется настроить вход по SSH-ключам и затем самостоятельно отключить парольную аутентификацию.
 
 </details>
 
@@ -110,14 +123,14 @@ Existing settings are checked for compatibility before changes. If security conf
 
 > `Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]:`
 
-*Additional connection · Disabled by default (`N`)*
+*Дополнительное подключение · По умолчанию отключено (`N`)*
 
-An alternative VLESS connection over TLS that may help when REALITY is unstable or blocked on your network. It is created as a separate profile in 3X-UI.
+Альтернативное VLESS-подключение с TLS, которое может быть полезно, если REALITY работает нестабильно или блокируется в вашей сети. Устанавливается как отдельный профиль в панели 3X-UI.
 
 > [!IMPORTANT]
-> **XTLS Vision requires a third domain**, distinct from the panel and REALITY domains. Its DNS record must point to your VPS IP. HTTPS certificates and nginx routing are configured automatically.
+> **Для XTLS Vision требуется третий домен**, отличный от доменов панели и REALITY. Его DNS-запись должна указывать на IP-адрес VPS. HTTPS-сертификат и маршрутизация nginx настраиваются автоматически.
 >
-> After you choose `Y`, the installer asks for this domain: `Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains):`.
+> После выбора `Y` установщик дополнительно запросит домен: `Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains):`.
 
 ---
 
@@ -125,20 +138,20 @@ An alternative VLESS connection over TLS that may help when REALITY is unstable 
 
 > `Set up an additional AmneziaWG connection? [y/N]:`
 
-*Additional connection · Disabled by default (`N`)*
+*Дополнительное подключение · По умолчанию отключено (`N`)*
 
-A separate AmneziaWG connection is created in the 3X-UI panel. No additional domain is required.
+Создаётся отдельное подключение AmneziaWG в панели 3X-UI. Дополнительный домен не нужен.
 
 <details>
-<summary>ℹ️ About Amnezia WG</summary>
+<summary>ℹ️ <strong>Подробнее об Amnezia WG</strong></summary>
 
-The installer configures AmneziaWG 3.1 on **UDP/8443** and automatically allows the required UFW rule.
+Устанавливается AmneziaWG 3.1 с использованием **UDP/8443**. Необходимое правило UFW добавляется автоматически.
 
-After installation, create a client in the 3X-UI panel to obtain a configuration or a `vpn://` link for a compatible Amnezia app.
+После установки создайте клиента в панели 3X-UI и получите конфигурацию или ссылку `vpn://` для совместимого приложения Amnezia.
 
-The installer creates the server connection but does not automatically generate AmneziaWG clients.
+Установщик создаёт серверное подключение, но не генерирует клиентов AmneziaWG автоматически.
 
-The configuration and necessary firewall rule are included in **Backup / Restore v3**.
+Конфигурация включается в **Backup / Restore v3** вместе с необходимыми настройками firewall.
 
 </details>
 
@@ -148,136 +161,153 @@ The configuration and necessary firewall rule are included in **Backup / Restore
 
 > `Install and configure AdGuard Home? [y/N]:`
 
-*Optional DNS server · Disabled by default (`N`)*
+*Дополнительный DNS-сервер · По умолчанию отключён (`N`)*
 
-A personal DNS server for blocking ads and trackers, managing clients, and making encrypted DNS requests.
+Персональный DNS-сервер с блокировкой рекламы и отслеживания, управлением клиентами и защищёнными DNS-запросами.
 
 <details>
-<summary>ℹ️ About AdGuard Home and access control</summary>
+<summary>ℹ️ <strong>Подробнее об AdGuard Home и настройке доступа</strong></summary>
 
-No additional domain is needed.
+Дополнительный домен не требуется.
 
-After installation, the following are available:
+После установки будут доступны:
 
-- **AdGuard Home admin panel:** `https://panel.example.com/adg-.../` — a unique random path.
+- **Панель AdGuard Home:** `https://panel.example.com/adg-.../` — индивидуальный случайный путь.
 - **DNS-over-HTTPS:** `https://panel.example.com/dns-query`.
 
-Public TCP/UDP port **53** is not opened. The AdGuard Home configuration and data are included in **Backup / Restore v3**.
+Публичные TCP/UDP-порты **53** не открываются. Конфигурация и данные AdGuard Home сохраняются в **Backup / Restore v3**.
 
-**⚠️ Security recommendation**
+**⚠️ Рекомендация по безопасности**
 
-For a personal VPS, create a separate [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) for each device.
+Для личного VPS рекомендуется использовать отдельный [ClientID](https://adguard-dns.io/kb/ru/adguard-home/clients/#clientid) для каждого устройства.
 
-In AdGuard Home, go to **Settings → DNS settings → Access settings → Allowed clients** and enter **only those ClientIDs**, not IP addresses or subnets.
+В интерфейсе AdGuard Home откройте **Настройки → Настройки DNS → Настройки доступа → Разрешённые клиенты** и укажите только созданные ClientID, без IP-адресов и подсетей.
 
-Use DoH URLs such as:
+Используйте DoH-адреса вида:
 
 `https://panel.example.com/dns-query/<ClientID>`
 
-Once configured, requests without an allowed ClientID, including requests to `/dns-query`, are rejected.
+После настройки запросы без разрешённого ClientID, в том числе на обычный `/dns-query`, будут отклоняться.
 
-Choose long, random identifiers. See the [official AdGuard Home security guidance](https://adguard-dns.io/kb/adguard-home/running-securely/).
+Используйте длинные случайные идентификаторы. Подробнее — в [официальных рекомендациях AdGuard Home](https://adguard-dns.io/kb/ru/adguard-home/running-securely/).
 
 </details>
 
 ---
 
-### 7. 👤 Automatic client and subscription
+<a id="7--automatic-client-and-subscription"></a>
+
+### 7. 👤 Автоматическое создание клиента и подписки
 
 > `Create a client in 3X-UI and display a subscription link after installation? [Y/n]:`
 
-*Recommended · Enabled by default (`Y`)*
+*Рекомендуется · Включено по умолчанию (`Y`)*
 
-The installer creates a 3X-UI client and generates a personal HTTPS subscription URL for the configured, supported connections.
+Установщик создаст клиента в панели 3X-UI и сформирует персональную HTTPS-ссылку подписки для настроенных поддерживаемых подключений.
 
-The link appears in the final installation report. If you decline, you can create clients manually through the panel.
+Ссылка будет отображена в итоговом отчёте. Если отказаться от этой функции, клиентов можно создать самостоятельно через панель управления.
 
 ---
 
 > [!CAUTION]
-> **Clean install or full reinstall only.** `x-ui-latest.sh` removes the previous 3x-ui database and nginx configuration — **it is not an update command for an existing VPS**. Keep a Backup off-server before reinstalling. Reinstalling or uninstalling a detected deployment requires typing exactly `YES` in uppercase.
+> **Чистая установка или полная переустановка.** `x-ui-latest.sh` удаляет прежнюю базу 3x-ui и конфигурацию nginx — **это не команда обновления рабочего VPS**. Перед переустановкой сохраните Backup вне сервера. Переустановка обнаруженной установки и удаление проекта требуют точного `YES` в верхнем регистре, чтобы избежать ошибок при случайном запуске скрипта.
 
-The installation report displays the **panel URL, username and password, diagnostics address, and subscription link** (if you chose to create a client). For AdGuard Home, it also includes the admin address, password, and DoH endpoint.
+По завершении установки будут показаны **адрес панели, логин и пароль, диагностика и ссылка подписки** (если выбрано создание клиента). Для AdGuard Home дополнительно выводятся адрес панели управления, пароль и DoH.
 
-If an OS update requires a reboot, the installer will notify you. **The initial reboot is manual**: run `sudo reboot`.
+Если после обновления ОС требуется перезагрузка, установщик сообщит об этом. **Первоначальная перезагрузка выполняется вручную** командой `sudo reboot`.
 
-## 🚀 Connection profiles
+<a id="-connection-profiles"></a>
+<a id="connection-profiles"></a>
 
-| Connection | Status |
+## 🚀 Профили подключения
+
+| Подключение | Статус |
 | --- | :---: |
-| VLESS + REALITY | ✅ Ready to use |
-| VLESS + XHTTP | ✅ Ready to use |
-| Hysteria2 | ✅ Ready to use |
-| VLESS + WebSocket (TLS) | ✅ Ready to use |
-| Trojan + gRPC | ✅ Ready to use |
-| VLESS + XTLS Vision | ✅ Optional |
-| Amnezia WG | ✅ Optional |
+| VLESS + REALITY | ✅ Готов к работе |
+| VLESS + XHTTP | ✅ Готов к работе |
+| Hysteria2 | ✅ Готов к работе |
+| VLESS + WebSocket (TLS) | ✅ Готов к работе |
+| Trojan + gRPC | ✅ Готов к работе |
+| VLESS + XTLS Vision | ✅ Опционально |
+| Amnezia WG | ✅ Опционально |
 
-Five standard profiles are configured: REALITY, XHTTP, and Hysteria2 are enabled immediately, while WebSocket and Trojan gRPC can be enabled in 3X-UI as needed.
+Пять основных профилей настраиваются установщиком: REALITY, XHTTP и Hysteria2 включены сразу, а WebSocket и Trojan gRPC можно включить в панели 3X-UI при необходимости.
 
-XTLS Vision and Amnezia WG are added only when selected during setup. **You need to create clients** to use the connections, automatically during installation or manually in the panel. Amnezia WG clients are created separately.
+XTLS Vision и Amnezia WG добавляются по выбору при установке. **Для использования подключений необходимо создать клиентов** — автоматически при установке либо вручную в панели. Для Amnezia WG клиент создаётся отдельно.
 
-Compatibility depends on your client app and its version.
+Совместимость зависит от используемого приложения и его версии.
 
-### Subscriptions
+<a id="subscriptions"></a>
 
-Standard subscriptions, JSON, and **Mihomo / Clash** are served via nginx and HTTPS. `provider=1` returns the original subscription for proxy providers rather than a complete Clash configuration.
+### Подписки
 
+Обычная подписка, JSON и **Mihomo / Clash** — через nginx и HTTPS. `provider=1` возвращает исходную подписку для proxy providers вместо полной конфигурации Clash.
+
+<a id="backup--restore"></a>
 
 ## 💾 Backup / Restore
 
-Backup / Restore **v3** lets you roll back your VPS or recover a compatible server after an OS reinstall. The utility is installed with the server; run as root:
+Backup / Restore **v3** позволяет откатить текущий VPS или восстановить совместимый сервер после переустановки. Утилита устанавливается вместе с сервером; выполняйте от root:
 
 ```bash
-# Create a new backup
+# Создать новую резервную копию
 x-ui-backup backup
 
-# List available backups
+# Показать доступные копии
 x-ui-backup list
 
-# Restore a selected backup
+# Восстановить выбранную копию
 x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 ```
 
-Archives are saved in `/var/backups/x-ui/`.
+Архивы сохраняются в `/var/backups/x-ui/`.
 
-> **Backups contain sensitive data:** the client database, passwords, and certificate private keys. Keep a copy **off the VPS** and restore only trusted archives.
+> **Backup содержит чувствительные данные:** базу клиентов, пароли и приватные ключи сертификатов. Храните копию **вне VPS** и восстанавливайте только доверенные архивы.
 
-[Recovery on a new VPS](#restore-on-new-vps).
+[Восстановление на новом VPS](#restore-on-new-vps).
 
-## 🔐 Security
+<a id="-security"></a>
+<a id="security"></a>
 
-Service interfaces are not exposed directly to the internet. The panel, subscriptions, and additional services are accessible through nginx and HTTPS, while internal ports remain local.
+## 🔐 Безопасность
 
-There is no generic proxy to arbitrary localhost ports. Critical errors stop installation or restore rather than starting an incomplete configuration.
+Служебные интерфейсы не открываются напрямую в интернет: панель, подписки и дополнительные сервисы доступны через nginx и HTTPS, а внутренние порты остаются локальными.
 
+Нет универсального proxy на произвольные localhost-порты. Критическая ошибка останавливает установку или восстановление вместо запуска неполной конфигурации.
 
-**Not sure how to secure your VPS?** Enable enhanced security during installation to configure protection against SSH brute-force attempts, encrypted DNS, and automatic security updates. Read the detailed settings and the scheduled nighttime reboot policy in **Quick start** first.
+**Не уверены, как самостоятельно защитить VPS?** При установке можно включить расширенную настройку безопасности. Установщик автоматически настроит защиту SSH от перебора паролей, шифрованный DNS и обновления безопасности. Перед включением ознакомьтесь с подробным описанием и расписанием ночных перезагрузок в разделе «Быстрый старт».
 
-**Important:** Secure access to the server itself. Use SSH keys, verify key-based login works, and only then disable password authentication. The installer does not disable it automatically.
+**Важно:** не забывайте защищать сам доступ к серверу. Используйте SSH-ключи, а после проверки входа по ключу отключите аутентификацию по паролю. Установщик не отключает её автоматически.
 
 <a id="telemt-web-manager"></a>
 
+<a id="telegram-web-proxy-manager"></a>
+
 ## ✈️ Telegram Web Proxy Manager
 
-[A companion project](https://github.com/xPROMSx/telegram-web-proxy-manager) for your own Telegram WEB Proxy: HTTPS, a cover site, and updates with rollback.
+[Мой дополнительный проект](https://github.com/xPROMSx/telegram-web-proxy-manager) для собственного Telegram WEB Proxy: HTTPS, сайт-прикрытие и обновления с аварийным откатом.
 
-The projects are independent; **this installer does not install Telegram Web Proxy Manager**.
+Проекты независимы; **этот установщик 3X-UI не устанавливает Telegram Web Proxy Manager**.
 
 <a id="technical-details"></a>
 
-## ⚙️ Technical details and compatibility
+<a id="-technical-details-and-compatibility"></a>
+<a id="technical-details-and-compatibility"></a>
 
-- **Systems:** Ubuntu 24.04, Ubuntu 26.04, and Debian 13.
-- **UFW:** allows 80/tcp, 443/tcp, and 443/udp (8443/udp optionally, when AmneziaWG is selected). Inactive UFW is enabled only after the SSH port is detected and allowed; otherwise it remains inactive with a warning. **⚠️ Restore never enables UFW.**
-- **Certificates:** Let's Encrypt webroot and `certbot.timer` renew certificates automatically without stopping nginx.
-- **3x-ui version:** by default, the installer uses the latest version thoroughly tested for compatibility with 3X-UI AUTO NGINX, which may not be the latest upstream release. After installation, you can update 3x-ui using its built-in update mechanism, but the new version may not yet be verified against this configuration. You can also explicitly select another stable release with `-version <tag>` (minimum supported version: v3.8.0); the installer will warn that compatibility has not been verified.
+## ⚙️ Технические подробности и совместимость
+
+- **ОС:** Ubuntu 24.04, Ubuntu 26.04 и Debian 13.
+- **UFW:** разрешаются 80/tcp, 443/tcp и 443/udp (8443/udp — при выборе AmneziaWG). Неактивный UFW включается только после определения и разрешения SSH-порта; иначе остаётся неактивным с предупреждением. **⚠️ Restore никогда не включает UFW.**
+- **Сертификаты:** Let's Encrypt webroot и `certbot.timer` продлевают сертификаты автоматически, без остановки nginx.
+- **Версия 3x-ui:** по умолчанию устанавливается последняя версия, тщательно протестированная на совместимость с 3X-UI AUTO NGINX. После установки вы можете самостоятельно обновить 3x-ui штатными средствами панели, но совместимость новой версии с нашей конфигурацией может быть ещё не подтверждена. Другой стабильный релиз можно явно выбрать через `-version <tag>` (минимальная поддерживаемая версия — v3.8.0); установщик предупредит о неподтверждённой совместимости.
 
 <a id="restore-on-new-vps"></a>
 
-### Recovery on a new VPS
+<a id="recovery-on-a-new-vps"></a>
 
-Match the backup's OS, OS version, and architecture. If the VPS IP address changes, update the DNS records for your domains. Do not run `x-ui-latest.sh` — install only the utility, then restore a trusted archive:
+### Восстановление на новом VPS
+
+Нужны те же ОС, версия и архитектура, что у копии. При смене IP VPS обновите DNS-записи доменов. Не запускайте `x-ui-latest.sh` — установите только утилиту и восстановите доверенный архив:
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/assets/backup/x-ui-backup.sh -o /tmp/x-ui-backup
@@ -286,26 +316,32 @@ rm -f /tmp/x-ui-backup
 x-ui-backup restore /root/<archive>.tar.gz
 ```
 
-SSH, OS configuration, and the base firewall remain the administrator's responsibility. For v2 archives, use the utility from the matching older release.
+SSH, настройки ОС и базовый firewall остаются ответственностью администратора. Для архивов v2 нужна утилита из соответствующего старого релиза.
 
-## 🤝 Credits / Origins
+<a id="-credits--origins"></a>
+<a id="credits--origins"></a>
 
-Based on [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro), this project is maintained independently. Since the fork, nginx/SNI routing and XHTTP configuration have been substantially reworked, TLS certificate issuance and automatic renewal redesigned, and Backup / Restore v3 introduced with recovery and rollback capabilities. Hysteria2 on UDP/443 was added, and identified security issues were fixed.
+## 🤝 Происхождение и авторы
 
-The panel comes from [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Third-party authors retain their rights and existing licenses.
+Проект основан на [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro), но развивается независимо. После создания форка существенно переработаны маршрутизация nginx/SNI и конфигурация XHTTP, механизм выпуска и автоматического продления TLS-сертификатов, а также Backup / Restore v3 с восстановлением и откатом. Добавлен Hysteria2 на UDP/443 и устранены выявленные проблемы безопасности.
 
-Original xPROMSx developments and changes are offered under [GNU GPL-3.0-only](LICENSE). Copyright (C) 2026 xPROMSx contributors. The license covers only our rights in those materials; it does not relicense inherited code or establish GPL status for the entire repository. The scope of our license and notices for third-party components are explained in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Панель предоставляет [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Права авторов сторонних компонентов и существующие лицензии сохраняются.
 
-## ❤️ Support development
+Собственные разработки и изменения xPROMSx распространяются под [GNU GPL-3.0-only](LICENSE). Copyright (C) 2026 xPROMSx contributors. Лицензия охватывает только наши права на эти материалы; она не перелицензирует унаследованный код и не подтверждает GPL-статус всего репозитория. Область действия нашей лицензии и сведения о сторонних компонентах приведены в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-If this project is useful to you, you can voluntarily [support its development](docs/SUPPORT.en.md). The project and all its features remain free and open source, whether or not you donate.
+<a id="-support-development"></a>
+<a id="support-development"></a>
+
+## ❤️ Поддержать разработку
+
+Если проект оказался полезен, вы можете добровольно [поддержать его разработку](docs/SUPPORT.md). Проект и все его функции остаются бесплатными и открытыми независимо от пожертвований.
 
 <div align="center">
 
-**Two domains. A few minutes. Your own 3x-ui / Xray server.**
+**Два домена. Несколько минут. Собственный 3x-ui / Xray сервер.**
 
-⭐ If this installer helped you, consider giving it a [Star on GitHub](https://github.com/xPROMSx/3x-ui-auto-nginx). It helps others discover the project.
+⭐ Если установщик оказался полезен, [поставьте Star](https://github.com/xPROMSx/3x-ui-auto-nginx). Это поможет другим найти проект.
 
-[Install](#installation) · [Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Issues](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
+[Установка](#installation) · [Релизы](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Ошибки](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
 
 </div>
