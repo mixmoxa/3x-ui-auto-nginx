@@ -79,6 +79,35 @@ python3 tests/upstream_canary.py report --directory /tmp/xui-canary
 
 Promote upstream only in a separate reviewed PR: independently confirm all official archive pins, update the single baseline, run all four required jobs, and record full installer/live acceptance. Canary **integration PASS is not full installer acceptance**: systemd lifecycle, public ACME/DNS, kernel UFW, reboot/recovery and non-amd64 behavior still require their own acceptance. Canary failures must be investigated, not hidden by changing assertions or silently substituting baseline binaries.
 
+## Public Git metadata
+
+Before committing, set repository-local `git config user.name Proms` and
+`git config user.email 102687702+xPROMSx@users.noreply.github.com` (never global).
+Verify both author and committer in `git log --format=fuller <base>..HEAD`.
+The maintainer's public `xPROMSx` alias with the same email is also approved.
+
+The existing XHTTP job checks only commits introduced by a PR: head reachable
+commits excluding everything reachable from the actual event base. Historical
+identities are preserved. Other supported identities are exact public GitHub
+login/noreply pairs (optional positive numeric ID prefix), conventional `[bot]`
+login/noreply pairs, and `GitHub <noreply@github.com>` web-generated metadata.
+Arbitrary display-name aliases are not inferred. Invalid metadata fails with
+only the commit SHA and role, never the rejected identity.
+
+Local PR-range validation (full history required):
+
+```bash
+GITHUB_EVENT_NAME=pull_request PR_BASE_SHA=<full-base-sha> PR_HEAD_SHA=<full-head-sha> \
+python3 tests/ci_git_identity.py
+```
+
+Missing, malformed, zero, unavailable, unrelated/empty ranges and shallow history
+fail. The check bounds ranges to 1,000 commits and each inspected commit object to
+1 MiB. Diverged target history is supported through the reachable-set difference.
+Push and manual events explicitly skip this PR-only policy; they do not scan all
+historical commits. This checks metadata format, not cryptographic authorship or
+GitHub account ownership. Never rewrite published history without authorization.
+
 ## Main protection
 
 The main branch protection requires PRs, the required checks and an up-to-date PR branch, with zero required external approvals. Force pushes and deletion are disallowed. Protection applies to administrators; no standing bypass actor is configured.
