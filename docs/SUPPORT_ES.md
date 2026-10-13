@@ -27,7 +27,7 @@ Elige una criptomoneda y **comprueba que la red coincida exactamente**. Copia la
 <a id="usdt-tron"></a>
 ### ₮ USDT · Tron (TRC20)
 
-**Activo:** Tether USD (USDT)  
+**Activo:** Tether USD (USDT)\
 **Red:** Tron (TRC20)
 
 ```text
@@ -43,10 +43,29 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 
 ---
 
-<a id="usdt-solana"></a>
-### ₮ USDT · Solana (SPL)
+<a id="usdt-bsc"></a>
+### ₮ USDT · BNB Smart Chain (BEP20)
 
-**Activo:** Tether USD (USDT)  
+**Activo:** Tether USD (USDT)\
+**Red:** BNB Smart Chain (BEP20)
+
+```text
+0x9a057FE489b2b7036C6Ef69EC7150a0d4E649FD6
+```
+
+<details>
+<summary>Mostrar código QR de BEP20</summary>
+
+<img src="../assets/support/usdt-bsc.svg" width="184" alt="Código QR para recibir Tether USD (USDT) · BNB Smart Chain (BEP20)">
+
+</details>
+
+---
+
+<a id="usdt-solana"></a>
+### ₮ USDT / USDC · Solana (SPL)
+
+**Activos:** Tether USD (USDT), USD Coin (USDC)\
 **Red:** Solana (SPL)
 
 ```text
@@ -54,9 +73,28 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 ```
 
 <details>
-<summary>Mostrar código QR de SPL</summary>
+<summary>Mostrar código QR de Solana (SPL)</summary>
 
-<img src="../assets/support/usdt-solana.png" width="184" alt="Código QR para recibir Tether USD (USDT) · Solana (SPL)">
+<img src="../assets/support/usdt-solana.png" width="184" alt="Código QR para recibir USDT / USDC · Solana (SPL)">
+
+</details>
+
+---
+
+<a id="usdt-ton"></a>
+### ₮ USDT · TON (Jetton)
+
+**Activo:** Tether USD (USDT)\
+**Red:** TON (Jetton)
+
+```text
+UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
+```
+
+<details>
+<summary>Mostrar código QR de TON</summary>
+
+<img src="../assets/support/usdt-ton.svg" width="184" alt="Código QR para recibir Tether USD (USDT) · TON (Jetton)">
 
 </details>
 
@@ -65,7 +103,7 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 <a id="bitcoin"></a>
 ### ₿ Bitcoin (BTC)
 
-**Activo:** Bitcoin (BTC)  
+**Activo:** Bitcoin (BTC)\
 **Red:** Bitcoin (native SegWit)
 
 ```text
@@ -81,4 +119,4 @@ bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 
 ---
 
-> **Importante:** Envía únicamente el activo indicado a través de la red especificada. En particular, USDT en Tron (TRC20) y USDT en Solana (SPL) utilizan redes distintas y no pueden enviarse directamente de una a otra. Comprueba la dirección completa del destinatario y la red antes de enviar. Las transacciones en blockchain generalmente son irreversibles.
+> **Importante:** Envía únicamente los activos indicados a través de sus redes correspondientes: USDT en Tron (TRC20), BNB Smart Chain (BEP20), Solana (SPL) o TON (Jetton); USDC solo en Solana (SPL); BTC solo en Bitcoin. Un mismo activo en distintas redes no es intercambiable directamente. Comprueba la dirección completa del destinatario y la red antes de enviar. Las transacciones en blockchain generalmente son irreversibles.

@@ -27,7 +27,7 @@ Choose a cryptocurrency and **match the network exactly**. Copy the address or s
 <a id="usdt-tron"></a>
 ### ₮ USDT · Tron (TRC20)
 
-**Asset:** Tether USD (USDT)  
+**Asset:** Tether USD (USDT)\
 **Network:** Tron (TRC20)
 
 ```text
@@ -43,10 +43,29 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 
 ---
 
-<a id="usdt-solana"></a>
-### ₮ USDT · Solana (SPL)
+<a id="usdt-bsc"></a>
+### ₮ USDT · BNB Smart Chain (BEP20)
 
-**Asset:** Tether USD (USDT)  
+**Asset:** Tether USD (USDT)\
+**Network:** BNB Smart Chain (BEP20)
+
+```text
+0x9a057FE489b2b7036C6Ef69EC7150a0d4E649FD6
+```
+
+<details>
+<summary>Show QR code for BEP20</summary>
+
+<img src="../assets/support/usdt-bsc.svg" width="184" alt="QR code for Tether USD (USDT) · BNB Smart Chain (BEP20)">
+
+</details>
+
+---
+
+<a id="usdt-solana"></a>
+### ₮ USDT / USDC · Solana (SPL)
+
+**Assets:** Tether USD (USDT), USD Coin (USDC)\
 **Network:** Solana (SPL)
 
 ```text
@@ -54,9 +73,28 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 ```
 
 <details>
-<summary>Show QR code for SPL</summary>
+<summary>Show QR code for Solana (SPL)</summary>
 
-<img src="../assets/support/usdt-solana.png" width="184" alt="QR code for Tether USD (USDT) · Solana (SPL)">
+<img src="../assets/support/usdt-solana.png" width="184" alt="QR code for USDT / USDC · Solana (SPL)">
+
+</details>
+
+---
+
+<a id="usdt-ton"></a>
+### ₮ USDT · TON (Jetton)
+
+**Asset:** Tether USD (USDT)\
+**Network:** TON (Jetton)
+
+```text
+UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
+```
+
+<details>
+<summary>Show QR code for TON</summary>
+
+<img src="../assets/support/usdt-ton.svg" width="184" alt="QR code for Tether USD (USDT) · TON (Jetton)">
 
 </details>
 
@@ -65,7 +103,7 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 <a id="bitcoin"></a>
 ### ₿ Bitcoin (BTC)
 
-**Asset:** Bitcoin (BTC)  
+**Asset:** Bitcoin (BTC)\
 **Network:** Bitcoin (native SegWit)
 
 ```text
@@ -81,4 +119,4 @@ bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 
 ---
 
-> **Important:** Send only the specified asset on the specified network. In particular, USDT on Tron (TRC20) and USDT on Solana (SPL) are on different networks and cannot be sent directly between them. Verify the full receiving address and network before sending. Blockchain transfers are generally irreversible.
+> **Important:** Send only the listed assets on their specified networks: USDT on Tron (TRC20), BNB Smart Chain (BEP20), Solana (SPL), or TON (Jetton); USDC only on Solana (SPL); BTC only on Bitcoin. The same asset on different networks is not interchangeable. Check the full receiving address and network before sending. Blockchain transfers are generally irreversible.

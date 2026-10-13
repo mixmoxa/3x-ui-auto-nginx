@@ -27,7 +27,7 @@
 <a id="usdt-tron"></a>
 ### ₮ USDT · Tron (TRC20)
 
-**资产:** Tether USD (USDT)  
+**资产:** Tether USD (USDT)\
 **网络:** Tron (TRC20)
 
 ```text
@@ -43,10 +43,29 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 
 ---
 
-<a id="usdt-solana"></a>
-### ₮ USDT · Solana (SPL)
+<a id="usdt-bsc"></a>
+### ₮ USDT · BNB Smart Chain (BEP20)
 
-**资产:** Tether USD (USDT)  
+**资产:** Tether USD (USDT)\
+**网络:** BNB Smart Chain (BEP20)
+
+```text
+0x9a057FE489b2b7036C6Ef69EC7150a0d4E649FD6
+```
+
+<details>
+<summary>显示二维码：BEP20</summary>
+
+<img src="../assets/support/usdt-bsc.svg" width="184" alt="收款二维码：Tether USD (USDT) · BNB Smart Chain (BEP20)">
+
+</details>
+
+---
+
+<a id="usdt-solana"></a>
+### ₮ USDT / USDC · Solana (SPL)
+
+**资产:** Tether USD (USDT), USD Coin (USDC)\
 **网络:** Solana (SPL)
 
 ```text
@@ -54,9 +73,28 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 ```
 
 <details>
-<summary>显示二维码： SPL</summary>
+<summary>显示二维码：Solana (SPL)</summary>
 
-<img src="../assets/support/usdt-solana.png" width="184" alt="收款二维码： Tether USD (USDT) · Solana (SPL)">
+<img src="../assets/support/usdt-solana.png" width="184" alt="收款二维码：USDT / USDC · Solana (SPL)">
+
+</details>
+
+---
+
+<a id="usdt-ton"></a>
+### ₮ USDT · TON (Jetton)
+
+**资产:** Tether USD (USDT)\
+**网络:** TON (Jetton)
+
+```text
+UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
+```
+
+<details>
+<summary>显示二维码：TON</summary>
+
+<img src="../assets/support/usdt-ton.svg" width="184" alt="收款二维码：Tether USD (USDT) · TON (Jetton)">
 
 </details>
 
@@ -65,7 +103,7 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 <a id="bitcoin"></a>
 ### ₿ Bitcoin (BTC)
 
-**资产:** Bitcoin (BTC)  
+**资产:** Bitcoin (BTC)\
 **网络:** Bitcoin (native SegWit)
 
 ```text
@@ -81,4 +119,4 @@ bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 
 ---
 
-> **重要提示：** 请仅使用指定网络转入对应币种。尤其需要注意，Tron (TRC20) 与 Solana (SPL) 上的 USDT 属于不同网络，不能直接跨网络转账。发送前请仔细核对完整收款地址及网络。区块链交易通常不可撤销。
+> **重要提示：** 请仅通过对应网络发送指定资产：USDT 支持 Tron (TRC20)、BNB Smart Chain (BEP20)、Solana (SPL) 或 TON (Jetton)；USDC 仅支持 Solana (SPL)；BTC 仅支持 Bitcoin 网络。同一种资产在不同网络之间不能直接互通。转账前请核对完整收款地址和网络。区块链交易通常不可撤销。

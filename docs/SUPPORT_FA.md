@@ -27,7 +27,7 @@
 <a id="usdt-tron"></a>
 ### ₮ USDT · Tron (TRC20)
 
-**دارایی:** Tether USD (USDT)  
+**دارایی:** Tether USD (USDT)\
 **شبکه:** Tron (TRC20)
 
 ```text
@@ -43,10 +43,29 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 
 ---
 
-<a id="usdt-solana"></a>
-### ₮ USDT · Solana (SPL)
+<a id="usdt-bsc"></a>
+### ₮ USDT · BNB Smart Chain (BEP20)
 
-**دارایی:** Tether USD (USDT)  
+**دارایی:** Tether USD (USDT)\
+**شبکه:** BNB Smart Chain (BEP20)
+
+```text
+0x9a057FE489b2b7036C6Ef69EC7150a0d4E649FD6
+```
+
+<details>
+<summary>نمایش کد QR برای BEP20</summary>
+
+<img src="../assets/support/usdt-bsc.svg" width="184" alt="کد QR دریافت Tether USD (USDT) · BNB Smart Chain (BEP20)">
+
+</details>
+
+---
+
+<a id="usdt-solana"></a>
+### ₮ USDT / USDC · Solana (SPL)
+
+**دارایی‌ها:** Tether USD (USDT), USD Coin (USDC)\
 **شبکه:** Solana (SPL)
 
 ```text
@@ -54,9 +73,28 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 ```
 
 <details>
-<summary>نمایش کد QR برای SPL</summary>
+<summary>نمایش کد QR برای Solana (SPL)</summary>
 
-<img src="../assets/support/usdt-solana.png" width="184" alt="کد QR دریافت Tether USD (USDT) · Solana (SPL)">
+<img src="../assets/support/usdt-solana.png" width="184" alt="کد QR دریافت USDT / USDC · Solana (SPL)">
+
+</details>
+
+---
+
+<a id="usdt-ton"></a>
+### ₮ USDT · TON (Jetton)
+
+**دارایی:** Tether USD (USDT)\
+**شبکه:** TON (Jetton)
+
+```text
+UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
+```
+
+<details>
+<summary>نمایش کد QR برای TON</summary>
+
+<img src="../assets/support/usdt-ton.svg" width="184" alt="کد QR دریافت Tether USD (USDT) · TON (Jetton)">
 
 </details>
 
@@ -65,7 +103,7 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 <a id="bitcoin"></a>
 ### ₿ Bitcoin (BTC)
 
-**دارایی:** Bitcoin (BTC)  
+**دارایی:** Bitcoin (BTC)\
 **شبکه:** Bitcoin (native SegWit)
 
 ```text
@@ -81,4 +119,4 @@ bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 
 ---
 
-> **مهم:** فقط دارایی مشخص‌شده را در شبکهٔ مشخص‌شده ارسال کنید. به‌ویژه، USDT در شبکه‌های Tron (TRC20) و Solana (SPL) روی دو شبکهٔ متفاوت قرار دارد و نمی‌توان آن را مستقیماً از یکی به دیگری فرستاد. پیش از ارسال، آدرس کامل گیرنده و شبکه را بررسی کنید. تراکنش‌های بلاک‌چین معمولاً برگشت‌ناپذیرند.
+> **مهم:** فقط دارایی‌های مشخص‌شده را در شبکهٔ مربوط به آن‌ها ارسال کنید: USDT در Tron (TRC20)، BNB Smart Chain (BEP20)، Solana (SPL) یا TON (Jetton)؛ USDC فقط در Solana (SPL)؛ و BTC فقط در شبکهٔ Bitcoin. یک دارایی در شبکه‌های مختلف قابل انتقال مستقیم به یکدیگر نیست. پیش از ارسال، شبکه و آدرس کامل گیرنده را بررسی کنید. تراکنش‌های بلاک‌چین معمولاً برگشت‌ناپذیرند.

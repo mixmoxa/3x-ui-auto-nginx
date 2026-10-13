@@ -27,7 +27,7 @@
 <a id="usdt-tron"></a>
 ### ₮ USDT · Tron (TRC20)
 
-**Валюта:** Tether USD (USDT)  
+**Валюта:** Tether USD (USDT)\
 **Сеть:** Tron (TRC20)
 
 ```text
@@ -43,10 +43,29 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 
 ---
 
-<a id="usdt-solana"></a>
-### ₮ USDT · Solana (SPL)
+<a id="usdt-bsc"></a>
+### ₮ USDT · BNB Smart Chain (BEP20)
 
-**Валюта:** Tether USD (USDT)  
+**Валюта:** Tether USD (USDT)\
+**Сеть:** BNB Smart Chain (BEP20)
+
+```text
+0x9a057FE489b2b7036C6Ef69EC7150a0d4E649FD6
+```
+
+<details>
+<summary>Показать QR-код BEP20</summary>
+
+<img src="../assets/support/usdt-bsc.svg" width="184" alt="QR-код для Tether USD (USDT) · BNB Smart Chain (BEP20)">
+
+</details>
+
+---
+
+<a id="usdt-solana"></a>
+### ₮ USDT / USDC · Solana (SPL)
+
+**Валюты:** Tether USD (USDT), USD Coin (USDC)\
 **Сеть:** Solana (SPL)
 
 ```text
@@ -54,9 +73,28 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 ```
 
 <details>
-<summary>Показать QR-код SPL</summary>
+<summary>Показать QR-код Solana (SPL)</summary>
 
-<img src="../assets/support/usdt-solana.png" width="184" alt="QR-код для Tether USD (USDT) · Solana (SPL)">
+<img src="../assets/support/usdt-solana.png" width="184" alt="QR-код для USDT / USDC · Solana (SPL)">
+
+</details>
+
+---
+
+<a id="usdt-ton"></a>
+### ₮ USDT · TON (Jetton)
+
+**Валюта:** Tether USD (USDT)\
+**Сеть:** TON (Jetton)
+
+```text
+UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
+```
+
+<details>
+<summary>Показать QR-код TON</summary>
+
+<img src="../assets/support/usdt-ton.svg" width="184" alt="QR-код для Tether USD (USDT) · TON (Jetton)">
 
 </details>
 
@@ -65,7 +103,7 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 <a id="bitcoin"></a>
 ### ₿ Bitcoin (BTC)
 
-**Валюта:** Bitcoin (BTC)  
+**Валюта:** Bitcoin (BTC)\
 **Сеть:** Bitcoin (native SegWit)
 
 ```text
@@ -81,4 +119,4 @@ bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 
 ---
 
-> **Важно:** отправляйте только указанную криптовалюту в указанной сети. В частности, USDT в сетях Tron (TRC20) и Solana (SPL) нельзя переводить напрямую из одной сети в другую. Перед отправкой проверьте полный адрес получателя и сеть. Переводы в блокчейне, как правило, необратимы.
+> **Важно:** отправляйте только указанные валюты в соответствующих сетях: USDT в Tron (TRC20), BNB Smart Chain (BEP20), Solana (SPL) или TON (Jetton); USDC — только в Solana (SPL); BTC — только в Bitcoin. Один и тот же актив в разных сетях не взаимозаменяем. Перед переводом проверьте сеть и полный адрес получателя. Криптовалютные переводы, как правило, необратимы.
