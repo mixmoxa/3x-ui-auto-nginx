@@ -31,7 +31,7 @@
 **الشبكة:** Tron (TRC20)
 
 ```text
-TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
+TG4smVymuDacUsfjZmvfmPCSsKr9xUJkFS
 ```
 
 <details>
@@ -50,7 +50,7 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 **الشبكة:** BNB Smart Chain (BEP20)
 
 ```text
-0x9a057FE489b2b7036C6Ef69EC7150a0d4E649FD6
+0xD9C2344533e35d7d12B14F4c7852248B5127e2A8
 ```
 
 <details>
@@ -69,7 +69,7 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 **الشبكة:** Solana (SPL)
 
 ```text
-HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
+BdB4sJBHbrpwqCBANyNzZFiseoMbXUveQ6AH8gdwfERg
 ```
 
 <details>
@@ -90,7 +90,7 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 GRAM هي العملة الأصلية لشبكة TON (وكانت تُعرف سابقًا باسم Toncoin)، بينما USDT رمز من معيار Jetton. يستخدم الأصلان عنوان الاستلام نفسه.
 
 ```text
-UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
+UQCEcONYCy9zd86SxLkFmVECCEtwTOUtjhgGOz8pvDS9u5lP
 ```
 
 <details>
@@ -109,7 +109,7 @@ UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
 **الشبكة:** Bitcoin (native SegWit)
 
 ```text
-bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
+bc1qd82dr7sru37znp9s8r9hdrujctqsdzs5eea5sf
 ```
 
 <details>
