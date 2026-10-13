@@ -82,10 +82,12 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 ---
 
 <a id="usdt-ton"></a>
-### ₮ USDT · TON (Jetton)
+### GRAM / USDT · TON
 
-**Asset:** Tether USD (USDT)\
-**Network:** TON (Jetton)
+**Assets:** Gram (GRAM), Tether USD (USDT)\
+**Network:** TON
+
+GRAM is TON's native coin (formerly Toncoin), while USDT is a Jetton token. Both can be received at the same address.
 
 ```text
 UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
@@ -94,7 +96,7 @@ UQAYhYZlOiTWL-O_nsRxkgtcw--aCuVb2c_Tc7HKP-MTcAqC
 <details>
 <summary>Show QR code for TON</summary>
 
-<img src="../assets/support/usdt-ton.svg" width="184" alt="QR code for Tether USD (USDT) · TON (Jetton)">
+<img src="../assets/support/usdt-ton.svg" width="184" alt="QR code for GRAM / USDT · TON">
 
 </details>
 
@@ -119,4 +121,4 @@ bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 
 ---
 
-> **Important:** Send only the listed assets on their specified networks: USDT on Tron (TRC20), BNB Smart Chain (BEP20), Solana (SPL), or TON (Jetton); USDC only on Solana (SPL); BTC only on Bitcoin. The same asset on different networks is not interchangeable. Check the full receiving address and network before sending. Blockchain transfers are generally irreversible.
+> **Important:** Send only the listed assets on their specified networks: USDT on Tron (TRC20), BNB Smart Chain (BEP20), Solana (SPL), or TON (Jetton); USDC only on Solana (SPL); BTC only on Bitcoin. The same asset on different networks is not interchangeable. Check the full receiving address and network before sending. Blockchain transfers are generally irreversible. Send GRAM only on the TON network.
