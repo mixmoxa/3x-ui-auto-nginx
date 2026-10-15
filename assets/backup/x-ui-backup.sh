@@ -1161,11 +1161,21 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 root, dbpath, nginx, letsencrypt, certroot, webroot, panel, reality, validation, vision = sys.argv[1:]
 root, validation = pathlib.Path(root), pathlib.Path(validation)
-def staged(path):
+def staged(path, tls_reference=False):
     # Resolve every archived symlink component without consulting live certificates.
     if '..' in pathlib.PurePosixPath(str(path)).parts: raise ValueError('Staged path escaped private state')
     p = root / str(path).lstrip('/')
     for _ in range(32):
+        if tls_reference and p.is_relative_to(root / letsencrypt.lstrip('/')):
+            parts = p.relative_to(root / letsencrypt.lstrip('/')).parts
+            if len(parts) != 3 or parts[1] not in (panel, reality, *([vision] if vision else [])):
+                raise ValueError('Unowned staged Certbot TLS reference: ' + str(path))
+            # Match exactly what restore_project_certificates copies, at every link hop.
+            live = parts[0] == 'live' and parts[2] in ('cert.pem','chain.pem','fullchain.pem','privkey.pem')
+            archive = (parts[0] == 'archive' and re.fullmatch(r'(cert|chain|fullchain|privkey)[0-9]+\.pem', parts[2])
+                       and not p.is_symlink())
+            if not (live or archive):
+                raise ValueError('Non-restorable staged Certbot TLS reference: ' + str(path))
         relative = p.relative_to(root)
         current = root
         for i, component in enumerate(relative.parts):
@@ -1243,7 +1253,7 @@ server {{
 
 # Verify the existing runtime certificate references too, never a live-host fallback.
 with sqlite3.connect(staged(dbpath)) as db:
-    # User TLS settings need not match the seed, but referenced files must be archived.
+    # User TLS settings need not match the seed, but referenced files must survive Restore.
     # Never let a restored active inbound silently borrow a target-only certificate/key.
     for stream_json, in db.execute('SELECT stream_settings FROM inbounds WHERE enable=1'):
         stream = json.loads(stream_json)
@@ -1251,12 +1261,7 @@ with sqlite3.connect(staged(dbpath)) as db:
             for pair in stream.get('tlsSettings',{}).get('certificates',[]):
                 for name in ('certificateFile','keyFile'):
                     if not pair.get(name): continue
-                    saved = staged(pair[name])
-                    certbot = root / letsencrypt.lstrip('/')
-                    if saved.is_relative_to(certbot) and not any(
-                            saved.is_relative_to(certbot / kind / domain)
-                            for kind in ('live','archive') for domain in (panel,reality,*([vision] if vision else []))):
-                        raise ValueError('Unowned staged Certbot TLS reference')
+                    staged(pair[name], tls_reference=True)
     rows = db.execute('SELECT key,value FROM settings').fetchall()
     settings = dict(rows)
     for name in ('webListen','webPort','webBasePath','webCertFile','webKeyFile',

@@ -575,6 +575,76 @@ class AuditRecovery(unittest.TestCase):
                 self.assertIn(error,result.stderr)
                 self.assertEqual(self.user_state(f),state)
 
+    def test_tls_references_must_survive_selective_certificate_restore(self):
+        f = self.fixture; f.seed_vision()
+        live = f.path('/etc/letsencrypt/live/vision.example.com')
+        version = f.path('/etc/letsencrypt/archive/vision.example.com/fullchain1.pem')
+        version.parent.mkdir(parents=True)
+        version.write_bytes((live/'fullchain.pem').read_bytes())
+        custom = live/'custom.pem'; custom.write_bytes(version.read_bytes())
+        foreign = f.path('/etc/letsencrypt/live/foreign.example/fullchain.pem')
+        foreign.parent.mkdir(parents=True); foreign.symlink_to(version)
+        alias = version.with_name('fullchain2.pem'); alias.symlink_to(version)
+        indirect = live/'cert.pem'; indirect.symlink_to(foreign)
+        archive = f.backup(); original = archive.read_bytes()
+        digest = hashlib.sha256(original).hexdigest()
+        state = self.user_state(f); original_db = f.path('/etc/x-ui/x-ui.db').read_bytes()
+        services = json.loads((f.root/'services.json').read_text())
+        for path in (custom, foreign, alias, indirect):
+            with self.subTest(reference=str(path.relative_to(f.root))):
+                edited = Path(f.temp.name)/'tls-portability.db'; edited.write_bytes(original_db)
+                with sqlite3.connect(edited) as db:
+                    iid, text = db.execute("SELECT id,stream_settings FROM inbounds WHERE tag='inbound-12000'").fetchone()
+                    stream = json.loads(text)
+                    stream['tlsSettings']['certificates'][0]['certificateFile'] = str(path)
+                    db.execute('UPDATE inbounds SET stream_settings=? WHERE id=?',(json.dumps(stream),iid))
+                candidate = self.modified(archive,{f.member('/etc/x-ui/x-ui.db'):edited.read_bytes()})
+                (f.root/'commands').write_text('')
+                result = f.run_tool('restore',candidate)
+                self.assert_untouched(result,services)
+                self.assertIn('staged Certbot TLS reference',result.stderr)
+                self.assertEqual(self.user_state(f),state)
+                self.assertEqual(archive.read_bytes(),original)
+                self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
+
+    def test_copied_live_archive_and_compatibility_tls_references_restore(self):
+        f = self.fixture; f.seed_vision()
+        pairs = []; versions = []
+        for domain in ('example.com','reality.example.com','vision.example.com'):
+            live = f.path('/etc/letsencrypt/live/'+domain)
+            archived = f.path('/etc/letsencrypt/archive/'+domain)
+            archived.mkdir(parents=True)
+            for name in ('cert','chain','fullchain','privkey'):
+                source = live/('privkey.pem' if name=='privkey' else 'fullchain.pem')
+                version = archived/(name+'1.pem'); version.write_bytes(source.read_bytes())
+                versions.append(version)
+            for name in ('cert','chain','fullchain','privkey'):
+                link = live/(name+'.pem'); link.unlink(missing_ok=True)
+                link.symlink_to('../../archive/'+domain+'/'+name+'1.pem')
+            for base, suffix in ((live,''),(archived,'1')):
+                pairs.append({'certificateFile':str(base/('fullchain'+suffix+'.pem')),
+                              'keyFile':str(base/('privkey'+suffix+'.pem'))})
+        compat = f.path('/root/cert/example.com')
+        pairs.append({'certificateFile':str(compat/'fullchain.pem'),'keyFile':str(compat/'privkey.pem')})
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            iid, text = db.execute("SELECT id,stream_settings FROM inbounds WHERE tag='inbound-12000'").fetchone()
+            stream = json.loads(text); stream['tlsSettings']['certificates'] = pairs
+            db.execute('UPDATE inbounds SET stream_settings=? WHERE id=?',(json.dumps(stream),iid))
+        state = self.user_state(f); archive = f.backup(); original = archive.read_bytes()
+        for _ in range(2):
+            # A successful restore must actually supply the PEMs, not borrow target files.
+            for version in versions: version.unlink()
+            result = f.run_tool('restore',archive)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertIn('Restore completed successfully.',result.stdout)
+            for pair in pairs:
+                for path in pair.values(): self.assertTrue(Path(path).is_file(),path)
+            self.assertEqual(self.user_state(f),state)
+            with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                self.assertEqual(db.execute('PRAGMA quick_check').fetchone()[0],'ok')
+            self.assertEqual(archive.read_bytes(),original)
+            self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),hashlib.sha256(original).hexdigest())
+
     def test_old_managed_vless_encryption_is_normalized_only_in_staging(self):
         f = self.fixture
         with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
