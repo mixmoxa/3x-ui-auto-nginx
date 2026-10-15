@@ -507,9 +507,19 @@ http {{ access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {mai
         self.assertEqual(function('render_vision_hook'), function('render_vision_hook', backup))
         generator = relocate(function('render_vision_hook'), self.root)
         body = subprocess.check_output(['bash', '-c', generator+'\nrender_vision_hook vision.example'], text=True)
-        # Only host service control, privileged port and private CA are mapped;
-        # the rendered hook, curl, nginx stream, TLS and Xray fallback are real.
+        # Historical entry name stays for the workflow. Prove immediate cert
+        # application with real Xray/TLS; fallback HTTP is no longer a hook gate.
+        current = self.launch([self.xray,'run','-c',config],'hook-before')
+        self.ready(current,('127.0.0.1',self.vision_port))
+        def served_serial():
+            context=ssl.create_default_context(cafile=str(lineage/'fullchain.pem'))
+            with socket.create_connection(('127.0.0.1',self.public),timeout=5) as raw:
+                with context.wrap_socket(raw,server_hostname='vision.example') as connection:
+                    return connection.getpeercert()['serialNumber']
+        before=served_serial()
         trigger, pidfile = self.root/'restart', self.root/'service-pid'
+        pidfile.write_text(str(current.pid))
+        certificates(self.root, extra=('vision.example',))
         failures = []
         def restart():
             try:
@@ -517,41 +527,39 @@ http {{ access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {mai
                 while not trigger.exists():
                     if time.monotonic() >= deadline: raise RuntimeError('Hook did not restart its service')
                     time.sleep(.01)
-                process = self.launch(['bash', '-c', 'sleep 1.2; exec "$@"', 'delayed-xray',
-                    self.xray, 'run', '-c', config], 'hook-xray')
+                stop(current)
+                process = self.launch([self.xray,'run','-c',config], 'hook-after')
+                self.ready(process,('127.0.0.1',self.vision_port))
                 pidfile.write_text(str(process.pid))
             except Exception as error:
                 failures.append(type(error).__name__)
         worker = threading.Thread(target=restart, daemon=True); worker.start()
         mapping = '''systemctl() {
-    if [[ "$*" == 'restart x-ui' ]]; then
+    if [[ "$*" == 'try-restart x-ui' ]]; then
+        old=$(cat "$PIDFILE")
         touch "$TRIGGER"
-        for attempt in {1..100}; do [[ ! -f "$PIDFILE" ]] || return 0; sleep .01; done
+        for attempt in {1..1000}; do [[ "$(cat "$PIDFILE")" == "$old" ]] || return 0; sleep .01; done
         return 1
     fi
     [[ "$*" == 'is-active --quiet x-ui' ]] && kill -0 "$(cat "$PIDFILE")"
 }
-curl() { command curl --cacert "$TRUST" "$@"; }
+curl() { echo 'Unexpected fallback probe' >&2; return 35; }
 '''
-        body = body.replace('$VISION_DOMAIN:443:', f'$VISION_DOMAIN:{self.public}:').replace(
-            'https://$VISION_DOMAIN/', f'https://$VISION_DOMAIN:{self.public}/')
-        env = {**os.environ, 'TRIGGER': str(trigger), 'PIDFILE': str(pidfile), 'TRUST': str(lineage/'fullchain.pem'),
+        env = {**os.environ, 'TRIGGER': str(trigger), 'PIDFILE': str(pidfile),
                'RENEWED_LINEAGE': str(lineage)}
-        started = time.monotonic()
         result = subprocess.run(['bash', '-c', mapping+body], env=env, capture_output=True, text=True, timeout=18)
         worker.join(timeout=2)
         self.assertFalse(worker.is_alive()); self.assertEqual(failures, [])
-        self.assertEqual(result.returncode, 0, 'Delayed Xray readiness: '+result.stderr)
-        self.assertGreaterEqual(time.monotonic()-started, 1.2)
-        self.assertIn('curl:', result.stderr, 'The regression must actually attempt HTTPS before Xray is ready')
-        # A genuinely untrusted certificate remains fail-closed within the bound.
-        env['TRUST'] = str(self.cert)
-        result = subprocess.run(['bash', '-c', 'systemctl() { return 0; };\ncurl() { command curl --cacert "$TRUST" "$@"; }\n'+body],
-            env=env, capture_output=True, text=True, timeout=18)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotEqual(served_serial(),before,'Restarted Xray must serve the new certificate')
+        self.assertNotIn('Unexpected fallback probe',result.stderr)
+        # Wrong-domain certificate/key pair must fail before touching a service.
+        shutil.copyfile(self.cert,lineage/'fullchain.pem');shutil.copyfile(self.key,lineage/'privkey.pem')
+        result = subprocess.run(['bash', '-c', 'systemctl() { echo unexpected-service >&2; return 0; };\n'+body],
+            env=env,capture_output=True,text=True,timeout=18)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('certificate', result.stderr.lower())
-        self.assertNotIn('--insecure', body)
-        self.passed.append('Vision deploy-hook delayed Xray / strict TLS')
+        self.assertNotIn('unexpected-service',result.stderr)
+        self.passed.append('Vision deploy-hook real Xray / renewed TLS serial')
 
     def test_vision_and_initial_client_official_api(self):
         from test_integrated_features import helper

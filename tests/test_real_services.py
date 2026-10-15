@@ -19,6 +19,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from urllib.parse import urlsplit
 
 from certificate_fixtures import ROOT, function
@@ -164,7 +165,19 @@ class RealServices(unittest.TestCase):
     def start_agh(self):
         p=self.launch([self.work/'AdGuardHome','-c',self.config,'-w',self.work,'--no-check-update'],'agh')
         self.ready(p,self.web)
-        listing=subprocess.check_output(['ss','-H','-lntup'],text=True,timeout=5)
+        expected={f'127.0.0.1:{self.web}',f'127.0.0.1:{self.native}'}
+        deadline=time.monotonic()+5
+        while True:
+            self.assertIsNone(p.poll(),'AGH exited before HTTP/DNS readiness')
+            listing=subprocess.check_output(['ss','-H','-lntup'],text=True,timeout=2)
+            owned=[line.split() for line in listing.splitlines() if f'pid={p.pid},' in line]
+            if ({row[4] for row in owned}==expected and
+                any(row[0]=='tcp' and row[4]==f'127.0.0.1:{self.web}' for row in owned) and
+                any(row[0]=='udp' and row[4]==f'127.0.0.1:{self.native}' for row in owned)):
+                break
+            if time.monotonic()>=deadline:
+                self.fail(f'AGH HTTP/DNS readiness timed out: pid={p.pid}, expected={expected}, owned={owned}')
+            time.sleep(.05)  # Bounded listener polling, never a test retry/startup delay.
         self.shell('source "$1"; AGH_WEB_PORT="$2"; AGH_DNS_PORT="$3"; fixture_pid="$4"; systemctl() { printf "%s\\n" "$fixture_pid"; }; agh_listeners',HELPER,self.web,self.native,p.pid)
         owned=[line.split() for line in listing.splitlines() if f'pid={p.pid},' in line]
         self.assertTrue(owned);self.assertEqual({row[4] for row in owned},{f'127.0.0.1:{self.web}',f'127.0.0.1:{self.native}'})
@@ -269,7 +282,20 @@ class RealServices(unittest.TestCase):
         result=subprocess.run([self.agh,'-c',self.config,'-w',self.work,'--no-check-update','--check-config'],capture_output=True,timeout=15)
         self.assertNotEqual(result.returncode,0)
         self.config.write_text(original)
-        process=self.start_agh()
+        # Reproduce the observed startup window: HTTP is visible before DNS.
+        # The following reads still come from the real Linux socket table.
+        check_output=subprocess.check_output
+        snapshots=[]
+        def first_http_only(args,**kwargs):
+            result=check_output(args,**kwargs)
+            if args==['ss','-H','-lntup']:
+                snapshots.append(result)
+                if len(snapshots)==1:
+                    return '\n'.join(line for line in result.splitlines() if f'127.0.0.1:{self.native}' not in line)
+            return result
+        with patch.object(subprocess,'check_output',side_effect=first_http_only):
+            process=self.start_agh()
+        self.assertGreater(len(snapshots),1,'Must wait past the incomplete initial listener snapshot')
         script='source "$1"; AGH_DIR="$2"; agh_config'
         self.config.write_text(original.replace(f'127.0.0.1:{self.web}',f'0.0.0.0:{self.web}'))
         result=subprocess.run(['bash','-c',script,'fixture',str(HELPER),str(self.work)],capture_output=True,timeout=15)
@@ -357,7 +383,7 @@ class RealServices(unittest.TestCase):
         certroot.mkdir(); (certroot/'renewal-hooks/deploy').mkdir(parents=True)
         target_hook=certroot/'renewal-hooks/deploy/administrator'; target_hook.write_text('#!/bin/sh\nexit 0\n'); target_hook.chmod(0o755)
         backup_source=(ROOT/'assets/backup/x-ui-backup.sh').read_text()
-        script='\n'.join(relocate(function(name,backup_source),self.root) for name in ('restored_certificate_domains','restored_vision_domain','render_vision_hook','project_certbot_accounts','restore_project_certificates'))
+        script='\n'.join(relocate(function(name,backup_source),self.root) for name in ('check_xray_runtime','render_certificate_hook','restored_certificate_domains','restored_vision_domain','render_vision_hook','project_certbot_accounts','restore_project_certificates'))
         subprocess.run(['bash','-eu','-c','die() { echo "$*" >&2; exit 1; };\n'+script+'\nrestore_project_certificates '+shlex.quote(str(saved))],check=True,capture_output=True,text=True)
         self.assertFalse((certroot/'renewal-hooks/deploy/foreign-import').exists())
         self.assertEqual(target_hook.read_text(),'#!/bin/sh\nexit 0\n')
@@ -407,9 +433,9 @@ with open(root/'hook-calls','a') as log:log.write(json.dumps(args)+'\\n')
 if args==['reload','nginx']:
     sys.exit(subprocess.call([{self.nginx!r},'-p',str(root)+'/', '-c',str(root/'nginx.conf'),'-s','reload']))
 if args[0]=='is-active' and args[-1]=='nginx':
-    if (root/'fail-service').exists():sys.exit(1)
+    if (root/'fail-service').exists() and any(json.loads(line)==['reload','nginx'] for line in (root/'hook-calls').read_text().splitlines()):sys.exit(1)
     os.kill({nginx.pid},0)
-elif args not in (['restart','x-ui'],['is-active','--quiet','x-ui']):sys.exit(1)
+elif args not in (['try-restart','x-ui'],['is-active','--quiet','x-ui']):sys.exit(1)
 """);controller.chmod(0o755)
         self.certbot_extra_env={'PATH':str(health)+':'+os.environ['PATH']}
         roots=subprocess.check_output(['curl','-fsS','--noproxy','*','--max-time','10','--cacert',str(self.cert),
@@ -435,7 +461,7 @@ elif args not in (['restart','x-ui'],['is-active','--quiet','x-ui']):sys.exit(1)
                 self.certbot('renew','--force-renewal','--no-random-sleep-on-renew','--cert-name',name)
             recorded=[json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
             self.assertEqual(recorded.count(['reload','nginx']),0 if names==('unrelated.example.test',) else len(names))
-            self.assertEqual(recorded.count(['restart','x-ui']),int(self.domain in names))
+            self.assertEqual(recorded.count(['try-restart','x-ui']),int(self.domain in names))
             self.assertFalse(any(call[0]=='stop' for call in recorded));self.assertIsNone(nginx.poll())
             served(self.lineage(self.domain))
         for fault in ('fail-nginx','fail-service'):
@@ -446,7 +472,7 @@ elif args not in (['restart','x-ui'],['is-active','--quiet','x-ui']):sys.exit(1)
                 'RENEWED_LINEAGE':str(self.root/'etc/letsencrypt/live'/self.domain)},capture_output=True,timeout=30)
             self.assertNotEqual(result.returncode,0)
             recorded=[json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
-            self.assertNotIn(['restart','x-ui'],recorded)
+            self.assertNotIn(['try-restart','x-ui'],recorded)
             if fault=='fail-nginx':self.assertNotIn(['reload','nginx'],recorded)
             config.write_text(valid);marker.unlink();self.assertIsNone(nginx.poll())
 
