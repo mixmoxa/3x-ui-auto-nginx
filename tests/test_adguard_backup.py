@@ -335,7 +335,7 @@ schema_version: 34
         else:
             self.assertIn(['install', '-d', '-o', 'root', '-g', 'root', '-m', '0755', str(directory)], f.commands())
         self.assertIn('--check-config', (self.root/'binary-calls').read_text())
-        self.assertTrue(any(c[0] == 'curl' and '--resolve' in c for c in f.commands()))
+        self.assertFalse(any(c[0] == 'curl' for c in f.commands()))
 
     def test_present_restore_recreates_service_and_requires_health(self):
         f=self.fixture;self.install_fixture();archive=f.backup()
@@ -348,8 +348,8 @@ schema_version: 34
         self.assertTrue(f.path('/etc/systemd/system/AdGuardHome.service').exists())
         calls=f.commands()
         self.assertIn(['systemctl','enable','--now','AdGuardHome'],calls)
-        self.assertTrue(any(c[0]=='curl' and '--resolve' in c and 'example.com:443:127.0.0.1' in c for c in calls))
-        for fail in ({'FAIL':'version'},{'FAIL':'config'},{'FAIL':'service'},{'FAIL_AGH_HEALTH':'1'}):
+        self.assertFalse(any(c[0]=='curl' for c in calls))
+        for fail in ({'FAIL':'version'},{'FAIL':'config'},{'FAIL':'service'},{'FAIL_HEALTH_SERVICE':'AdGuardHome'}):
             r=f.run_tool('restore',archive,**fail)
             self.assertNotEqual(r.returncode,0,r.stdout+r.stderr)
             self.assertNotIn('Restore completed successfully.',r.stdout)

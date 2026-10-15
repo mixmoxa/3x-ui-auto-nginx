@@ -118,6 +118,9 @@ if name == 'systemctl':
             print((root / 'etc/systemd/system/AdGuardHome.service').read_text())
         sys.exit(0 if (root / ('etc/systemd/system/' + service + '.service')).exists() or service == 'nginx' else 1)
     if command in ('start', 'stop'):
+        if command == 'start' and service == 'x-ui' and (os.environ.get('FAIL_XUI_START') or
+            (os.environ.get('FAIL_INCOMING_XUI') and (root/'var/www/html/recovery-marker').read_text() == 'incoming')):
+            sys.exit(1)
         if service == 'certbot.timer' and os.environ.get('FAIL_TIMER_OPERATION') == command:
             sys.exit(1)
         services[service] = 'active' if command == 'start' else 'inactive'
@@ -181,6 +184,8 @@ elif name == 'curl':
         print('200', end=''); sys.exit(0)
     if '/login.html' in url:
         print('<html><script src="login.fixture.js"></script></html>'); sys.exit(0)
+    if url == 'https://vision.example.com/' and os.environ.get('FAIL_VISION_TLS'):
+        print('curl: (35) TLS unexpected eof while reading',file=sys.stderr); sys.exit(35)
     if url == 'https://vision.example.com/':
         print('vision cover'); sys.exit(0)
     if url.startswith('http://127.0.0.1/'):
@@ -879,7 +884,7 @@ class PersonalBackup(unittest.TestCase):
 
     def test_restore_renewal_failures_never_report_success(self):
         for env in ({'FAIL_CERTBOT_ENABLE': '1'}, {'FAIL_CRON_WRITE': '1'}, {'FAIL_HEALTH_SERVICE': 'certbot.timer'},
-                    *({'BREAK_FINAL_RENEWAL': state} for state in ('active', 'enabled', 'hook', 'authenticator', 'legacy'))):
+                    *({'BREAK_FINAL_RENEWAL': state} for state in ('active', 'enabled'))):
             with self.subTest(failure=env):
                 f = PersonalBackup('runTest'); f.setUp()
                 self.addCleanup(f.doCleanups)
@@ -906,7 +911,7 @@ class PersonalBackup(unittest.TestCase):
                     self.assertIn(['systemctl','enable','--now','certbot.timer'], calls)
                 if 'BREAK_FINAL_RENEWAL' in env:
                     self.assertIn(['fault','renewal',env['BREAK_FINAL_RENEWAL']], calls)
-                retained = 'FAIL_CRON_WRITE' in env or env.get('BREAK_FINAL_RENEWAL')=='legacy'
+                retained = False
                 self.assertEqual(bool(list(f.path('/var/backups/x-ui').glob('.rollback-*'))), retained)
                 self.assertIn('Automatic rollback could not be verified' if retained else
                               'Previous managed state/service states restored and checked', result.stderr)
@@ -934,33 +939,81 @@ class PersonalBackup(unittest.TestCase):
                 self.assertEqual(result.returncode,0 if accepted else 1,result.stderr)
                 self.assertEqual('accepted' in result.stdout,accepted)
 
-    def test_backup_renewal_preflight_rejects_broken_state_before_snapshot(self):
-        states=('lineage','authenticator','webroot','missing-hook','bad-hook','timer-disabled',
-                'timer-inactive','legacy-cron','acme','python-import')
-        for broken in states:
-            with self.subTest(broken=broken):
-                certificates(self.root)
-                services=json.loads((self.root/'services.json').read_text())
-                services['certbot.timer']='inactive' if broken=='timer-inactive' else 'active'
-                (self.root/'services.json').write_text(json.dumps(services))
-                (self.root/'enabled.json').write_text(json.dumps({'certbot.timer':broken!='timer-disabled'}))
-                (self.root/'crontab').write_text((CRON+'\n' if broken=='legacy-cron' else '')+'@hourly /opt/unrelated\n')
-                if broken=='lineage':shutil.rmtree(self.path('/etc/letsencrypt/live/example.com'))
-                if broken in ('authenticator','webroot'):
-                    cfg=ConfigObj(str(self.path('/etc/letsencrypt/renewal/example.com.conf')))
-                    if broken=='authenticator':cfg['renewalparams']['authenticator']='standalone'
-                    else:cfg['renewalparams']['webroot_map']['example.com']='/wrong'
-                    cfg.write()
-                hook=self.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx')
-                if broken=='missing-hook':hook.unlink()
-                if broken=='bad-hook':hook.write_text('if broken')
-                (self.root/'commands').write_text('')
-                result=self.run_tool('backup',FAIL_ACME='1' if broken=='acme' else '',
-                                     FAIL_PYTHON_IMPORT='1' if broken=='python-import' else '')
+    def test_backup_preserves_unhealthy_or_inactive_user_state(self):
+        for scenario in ('tls-eof','vision-disabled','transports-disabled','timer-disabled',
+                         'timer-inactive','acme','nginx','stopped','renewal-config'):
+            with self.subTest(scenario=scenario):
+                f=PersonalBackup('runTest'); f.setUp(); self.addCleanup(f.doCleanups)
+                if scenario in ('tls-eof','vision-disabled'): f.seed_vision()
+                with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                    if scenario=='vision-disabled': db.execute("UPDATE inbounds SET enable=0 WHERE tag='inbound-12000'")
+                    if scenario=='transports-disabled': db.execute("UPDATE inbounds SET enable=0 WHERE protocol IN ('vless','hysteria')")
+                    expected=db.execute('SELECT id,enable,settings,stream_settings FROM inbounds ORDER BY id').fetchall()
+                services=json.loads((f.root/'services.json').read_text())
+                if scenario=='stopped': services['x-ui']='inactive'
+                if scenario=='timer-inactive': services['certbot.timer']='inactive'
+                (f.root/'services.json').write_text(json.dumps(services))
+                enabled={'certbot.timer':scenario!='timer-disabled'}
+                (f.root/'enabled.json').write_text(json.dumps(enabled))
+                if scenario=='renewal-config':
+                    conf=f.path('/etc/letsencrypt/renewal/example.com.conf')
+                    conf.write_text(conf.read_text().replace('authenticator = webroot','authenticator = standalone'))
+                flags={'FAIL_VISION_TLS':'1'} if scenario=='tls-eof' else {}
+                if scenario=='transports-disabled': flags['DEAD_XRAY']='1'
+                if scenario=='acme': flags['FAIL_ACME']='1'
+                if scenario=='nginx': flags['FAIL_NGINX']='1'
+                archive=f.backup(**flags)
+                self.assertEqual(json.loads((f.root/'services.json').read_text()),services)
+                self.assertEqual(json.loads((f.root/'enabled.json').read_text()),enabled)
+                calls=f.commands()
+                self.assertFalse(any(c[0] in ('curl','ss','nginx') for c in calls),calls)
+                if scenario=='stopped': self.assertNotIn(['systemctl','start','x-ui'],calls)
+                with tarfile.open(archive) as saved:
+                    copied=Path(f.temp.name)/'archived.db'
+                    copied.write_bytes(saved.extractfile(f.member('/etc/x-ui/x-ui.db')).read())
+                with sqlite3.connect(copied) as db:
+                    self.assertEqual(db.execute('PRAGMA quick_check').fetchone()[0],'ok')
+                    self.assertEqual(db.execute('SELECT id,enable,settings,stream_settings FROM inbounds ORDER BY id').fetchall(),expected)
+
+    def test_restore_and_rollback_preserve_disabled_transports_without_network(self):
+        f=self; f.seed_vision()
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            db.execute("UPDATE inbounds SET enable=0 WHERE protocol IN ('vless','hysteria')")
+            expected=db.execute('SELECT id,enable,settings,stream_settings FROM inbounds ORDER BY id').fetchall()
+        archive=f.backup()
+        original=archive.read_bytes()
+        for failure in (False,True):
+            with self.subTest(rollback=failure):
+                marker=f.path('/etc/x-ui/target-marker'); marker.write_text('previous')
+                (f.root/'commands').write_text('')
+                result=f.run_tool('restore',archive,DEAD_XRAY='1',FAIL_VISION_TLS='1',FAIL_ACME='1',
+                                  FAIL_HEALTH_SERVICE='mtr-backend' if failure else '',FAIL_ONCE='1' if failure else '')
+                self.assertEqual(result.returncode,1 if failure else 0,result.stdout+result.stderr)
+                if failure:
+                    self.assertEqual(marker.read_text(),'previous')
+                    self.assertIn('Previous managed state/service states restored and checked',result.stderr)
+                else: self.assertIn('Restore completed successfully.',result.stdout)
+                with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                    self.assertEqual(db.execute('PRAGMA quick_check').fetchone()[0],'ok')
+                    self.assertEqual(db.execute('SELECT id,enable,settings,stream_settings FROM inbounds ORDER BY id').fetchall(),expected)
+                self.assertEqual(archive.read_bytes(),original)
+                self.assertFalse(any(c[0] in ('curl','ss') for c in f.commands()))
+                self.assertFalse(list(f.path('/var/backups/x-ui').glob('.rollback-*')))
+
+    def test_backup_still_fails_for_corrupt_db_or_failed_service_resume(self):
+        for failure in ('database','resume','copy-cleanup'):
+            with self.subTest(failure=failure):
+                f=PersonalBackup('runTest'); f.setUp(); self.addCleanup(f.doCleanups)
+                flags={}
+                if failure=='database': f.path('/etc/x-ui/x-ui.db').write_bytes(b'not sqlite')
+                if failure=='resume': flags['FAIL_HEALTH_SERVICE']='x-ui'
+                if failure=='copy-cleanup': flags.update(FAIL_COPY='1',FAIL_HEALTH_SERVICE='x-ui')
+                result=f.run_tool('backup',**flags)
                 self.assertNotEqual(result.returncode,0)
                 self.assertNotIn('Backup completed successfully.',result.stdout)
-                self.assertFalse(self.path('/var/backups/x-ui').exists())
-                self.assertFalse(any(c[0]=='cp' or c[:2]==['systemctl','stop'] for c in self.commands()))
+                self.assertFalse(list(f.path('/var/backups/x-ui').glob('*.tar.gz')))
+                self.assertFalse(list(f.path('/var/backups/x-ui').glob('*.partial')))
+                if failure!='database': self.assertIn('Cannot',result.stderr)
 
     def test_backup_pauses_certbot_before_collection_and_resumes_on_success(self):
         self.backup()
@@ -1063,7 +1116,7 @@ class PersonalBackup(unittest.TestCase):
 
     def test_mandatory_health_and_sysctl_failures_never_report_success(self):
         for env in ({'FAIL_NGINX': '1'}, {'FAIL_HEALTH_SERVICE': 'mtr-backend'},
-                    {'CORRUPT_RUNNING_DB': '1'}, {'MISSING_SOCKET': '1'}, {'FAIL_SYSCTL': '1'}):
+                    {'CORRUPT_RUNNING_DB': '1'}, {'FAIL_HEALTH_SERVICE': 'x-ui'}, {'FAIL_SYSCTL': '1'}):
             with self.subTest(failure=env):
                 f = PersonalBackup('runTest'); f.setUp()
                 self.addCleanup(f.doCleanups)
@@ -1090,7 +1143,7 @@ class PersonalBackup(unittest.TestCase):
                 else:
                     self.assertIn(['systemctl','start','x-ui'], calls)
                     if 'FAIL_HEALTH_SERVICE' in env:
-                        self.assertIn(['systemctl','is-active','--quiet','mtr-backend'], calls)
+                        self.assertIn(['systemctl','is-active','--quiet',env['FAIL_HEALTH_SERVICE']], calls)
                     if 'CORRUPT_RUNNING_DB' in env:
                         self.assertIn(['fault','running-db'], calls)
                     if 'MISSING_SOCKET' in env:

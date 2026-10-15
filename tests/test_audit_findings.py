@@ -233,9 +233,10 @@ if sys.argv[1]=='cert':
     def test_canonical_health_used_after_restart_resume_and_rollback(self):
         self.assertEqual(function('check_xray_runtime'), function('check_xray_runtime', BACKUP))
         self.assertEqual(function('render_certificate_hook'), function('render_certificate_hook', BACKUP))
-        for name, source in [('check_installation', INSTALLER), ('check_health', BACKUP),
-                             ('cmd_backup', BACKUP), ('cleanup', BACKUP), ('recover_restore_target', BACKUP)]:
-            self.assertIn('check_xray_runtime', function(name, source))
+        self.assertIn('check_xray_runtime', function('check_installation', INSTALLER))
+        for name in ('check_health','cmd_backup','cleanup','recover_restore_target'):
+            self.assertNotIn('check_xray_runtime', function(name, BACKUP))
+            self.assertIn('systemctl is-active', function(name, BACKUP))
         self.assertIn('declare -f check_xray_runtime', function('render_certificate_hook'))
         self.assertIn('if (( panel )); then check_xray_runtime; fi', function('render_certificate_hook'))
 
@@ -869,13 +870,13 @@ class AuditRecovery(unittest.TestCase):
                     self.assertEqual(restored.execute('PRAGMA quick_check').fetchone()[0], 'ok')
                     self.assertIsNone(restored.execute("SELECT name FROM sqlite_master WHERE name='rollback_wal_fixture'").fetchone())
 
-    def test_post_replacement_dead_xray_restores_and_verifies_old_state(self):
+    def test_post_replacement_failed_xui_start_restores_and_verifies_old_state(self):
         f = self.fixture; archive = f.backup()
         incoming = self.modified(archive,{f.member('/var/www/html/recovery-marker'):b'incoming'})
         old_db = f.path('/etc/x-ui/x-ui.db').read_bytes()
         old_nginx = f.path('/etc/nginx/snippets/includes.conf').read_bytes()
         old_states = (f.root/'services.json').read_bytes()
-        result = f.run_tool('restore',incoming,FAIL_INCOMING_XRAY='1')
+        result = f.run_tool('restore',incoming,FAIL_INCOMING_XUI='1')
         self.assertNotEqual(result.returncode,0)
         self.assertIn('Previous managed state/service states restored and checked',result.stderr)
         self.assertEqual(f.path('/var/www/html/recovery-marker').read_text(),'original')
@@ -887,7 +888,7 @@ class AuditRecovery(unittest.TestCase):
 
     def test_unverified_rollback_keeps_private_material_and_reports_exact_path(self):
         f = self.fixture; archive = f.backup()
-        result = f.run_tool('restore',archive,DEAD_XRAY='1')
+        result = f.run_tool('restore',archive,FAIL_XUI_START='1')
         self.assertNotEqual(result.returncode,0)
         material = list(f.path('/var/backups/x-ui').glob('.rollback-*'))
         self.assertEqual(len(material),1,result.stdout+result.stderr)
@@ -910,7 +911,7 @@ class AuditRecovery(unittest.TestCase):
         incoming = self.modified(archive,{f.member('/var/www/html/recovery-marker'):b'incoming'})
         self.fixture = original
         config = f.path('/opt/AdGuardHome/AdGuardHome.yaml').read_bytes()
-        result = f.run_tool('restore',incoming,FAIL_INCOMING_XRAY='1')
+        result = f.run_tool('restore',incoming,FAIL_INCOMING_XUI='1')
         self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
         self.assertIn('Previous managed state/service states restored and checked',result.stderr)
         self.assertEqual(f.path('/opt/AdGuardHome/AdGuardHome.yaml').read_bytes(),config)
