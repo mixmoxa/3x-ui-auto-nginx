@@ -107,6 +107,8 @@ if name == 'systemctl':
         active = state == 'active'
         if '--quiet' in args and os.environ.get('FAIL_HEALTH_SERVICE') == service:
             fault(); active = False
+            if os.environ.get('CONCURRENT_ACME'):
+                (root/'var/www/acme/.well-known/independent-file').write_text('keep independent data')
             if os.environ.get('CONCURRENT_CRON'):
                 with open(root/'crontab','a') as out: out.write('@daily administrator-change\n')
         if '--quiet' not in args:
@@ -1399,9 +1401,15 @@ class PersonalBackup(unittest.TestCase):
         archive=self.backup();before=archive.read_bytes()
         self.write('/var/www/acme/.well-known/acme-challenge/administrator-token','original challenge',0o640)
         self.write('/var/www/acme/foreign-resource','preserved')
+        parents=[self.path('/var/www/acme'),self.path('/var/www/acme/.well-known')]
+        for index,parent in enumerate(parents):
+            os.chown(parent,12340+index,12350+index);parent.chmod(0o710+index)
+        metadata=[(p.stat().st_uid,p.stat().st_gid,stat.S_IMODE(p.stat().st_mode)) for p in parents]
         directory=self.path('/var/www/acme/.well-known/acme-challenge');directory.chmod(0o710)
         result=self.run_tool('restore',archive,FAIL_HEALTH_SERVICE='mtr-backend',FAIL_ONCE='1')
         self.assertNotEqual(result.returncode,0);self.assertTrue((self.root/'fault-used').exists())
+        self.assertIn('Previous managed state/service states restored and checked',result.stderr)
+        self.assertEqual([(p.stat().st_uid,p.stat().st_gid,stat.S_IMODE(p.stat().st_mode)) for p in parents],metadata)
         self.assertEqual((directory/'administrator-token').read_text(),'original challenge')
         self.assertEqual(self.path('/var/www/acme/foreign-resource').read_text(),'preserved')
         self.assertEqual(stat.S_IMODE(directory.stat().st_mode),0o710)
@@ -1409,6 +1417,34 @@ class PersonalBackup(unittest.TestCase):
         self.assertEqual(archive.read_bytes(),before)
         with tarfile.open(archive) as tar:self.assertFalse(any('acme-challenge' in m.name for m in tar))
         self.assertIn('Previous managed state/service states restored and checked',result.stderr)
+        self.assertNotIn('Restore completed successfully',result.stdout)
+
+    def test_rollback_removes_only_empty_acme_parents_created_by_restore(self):
+        archive=self.backup();before=archive.read_bytes()
+        for path in ('/var/www/acme/.well-known/acme-challenge','/var/www/acme/.well-known','/var/www/acme'):
+            self.path(path).rmdir()
+        self.assertFalse(self.path('/var/www/acme').exists())
+        result=self.run_tool('restore',archive,FAIL_HEALTH_SERVICE='mtr-backend',FAIL_ONCE='1')
+        self.assertNotEqual(result.returncode,0);self.assertTrue((self.root/'fault-used').exists())
+        self.assertIn('Previous managed state/service states restored and checked',result.stderr)
+        self.assertFalse(self.path('/var/www/acme').exists())
+        self.assertFalse(list(self.path('/var/backups/x-ui').glob('.rollback-*')))
+        self.assertEqual(archive.read_bytes(),before)
+        self.assertNotIn('Restore completed successfully',result.stdout)
+
+    def test_rollback_preserves_independent_acme_file_and_reports_unverified(self):
+        archive=self.backup()
+        for path in ('/var/www/acme/.well-known/acme-challenge','/var/www/acme/.well-known','/var/www/acme'):
+            self.path(path).rmdir()
+        result=self.run_tool('restore',archive,FAIL_HEALTH_SERVICE='mtr-backend',FAIL_ONCE='1',CONCURRENT_ACME='1')
+        self.assertNotEqual(result.returncode,0);self.assertTrue((self.root/'fault-used').exists())
+        self.assertEqual(self.path('/var/www/acme/.well-known/independent-file').read_text(),'keep independent data')
+        self.assertIn('Automatic rollback could not be verified',result.stderr)
+        self.assertNotIn('Previous managed state/service states restored and checked',result.stderr)
+        recovery=next(self.path('/var/backups/x-ui').glob('.rollback-*'))
+        self.assertEqual(stat.S_IMODE(recovery.stat().st_mode),0o700)
+        self.assertTrue((recovery/'ready').is_file())
+        self.assertFalse(self.path('/var/www/acme/.well-known/acme-challenge').exists())
         self.assertNotIn('Restore completed successfully',result.stdout)
 
     def test_mandatory_health_and_sysctl_failures_never_report_success(self):

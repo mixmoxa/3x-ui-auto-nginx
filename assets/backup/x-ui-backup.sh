@@ -1694,10 +1694,36 @@ recover_restore_cron() {
         cmp -s "$ROLLBACK_DIR/cron.before" "$ROLLBACK_DIR/cron.current"
 }
 
+recover_restore_acme_parents() {
+    local path saved uid gid mode
+    # Only parent metadata/presence is owned here, never their unrelated contents.
+    for path in /var/www/acme/.well-known /var/www/acme; do
+        saved=$(cat "$ROLLBACK_DIR/acme-parent-${path##*/}") || return 1
+        if [[ "$saved" == absent ]]; then
+            if [[ -e "$path" || -L "$path" ]]; then
+                [[ -d "$path" && ! -L "$path" ]] && rmdir -- "$path" || return 1
+            fi
+        else
+            read -r uid gid mode <<< "$saved"
+            [[ -d "$path" && ! -L "$path" ]] &&
+                chown "$uid:$gid" -- "$path" && chmod "$mode" -- "$path" &&
+                [[ "$(stat -c '%u %g %a' -- "$path")" == "$saved" ]] || return 1
+        fi
+    done
+}
+
 snapshot_restore_target() {
     local path
     ROLLBACK_DIR=$(mktemp -d "$BACKUP_STORE/.rollback-XXXXXX") || die 'Cannot create private rollback directory.'
     chmod 0700 "$ROLLBACK_DIR" || die 'Cannot protect private rollback directory.'
+    for path in /var/www/acme /var/www/acme/.well-known; do
+        if [[ -e "$path" || -L "$path" ]]; then
+            [[ -d "$path" && ! -L "$path" ]] || die "Cannot snapshot ACME parent directory: $path"
+            stat -c '%u %g %a' -- "$path" > "$ROLLBACK_DIR/acme-parent-${path##*/}" || die "Cannot snapshot ACME parent metadata: $path"
+        else
+            printf 'absent\n' > "$ROLLBACK_DIR/acme-parent-${path##*/}" || die "Cannot snapshot ACME parent absence: $path"
+        fi
+    done
     local -a owned=("${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}" /var/www/diagnostics /etc/systemd/system/AdGuardHome.service /var/www/acme/.well-known/acme-challenge)
     for path in "${owned[@]}"; do
         if [[ -e "$path" || -L "$path" ]]; then
@@ -1728,6 +1754,7 @@ recover_restore_target() {
                 mkdir -p "$(dirname "$path")" && cp -aT -- "$ROLLBACK_DIR/files$path" "$path" || failed=1
             fi
         done
+        recover_restore_acme_parents || { warn 'Cannot verify original ACME parent directories; independent contents retained.'; failed=1; }
         recover_restore_firewall || { warn 'Cannot verify original UFW rules/state.'; failed=1; }
         recover_restore_cron || { warn 'Cannot verify original root crontab.'; failed=1; }
         recover_restore_sysctl || { warn 'Cannot verify original runtime sysctl values.'; failed=1; }
