@@ -107,6 +107,8 @@ if name == 'systemctl':
         active = state == 'active'
         if '--quiet' in args and os.environ.get('FAIL_HEALTH_SERVICE') == service:
             fault(); active = False
+            if os.environ.get('CONCURRENT_CRON'):
+                with open(root/'crontab','a') as out: out.write('@daily administrator-change\n')
         if '--quiet' not in args:
             print(state)
         sys.exit(0 if active else 3)
@@ -165,7 +167,7 @@ elif name == 'crontab':
             sys.exit(1)
         print(path.read_text(), end='')
     elif args == ['-']:
-        if os.environ.get('FAIL_CRON_WRITE'):
+        if os.environ.get('FAIL_CRON_WRITE') or (os.environ.get('FAIL_CRON_RECOVERY') and (root/'fault-used').exists()):
             fault(); sys.exit(1)
         path.write_text(sys.stdin.read())
     else:
@@ -214,6 +216,11 @@ elif name in ('python3', 'gzip'):
 elif name == 'ufw':
     if args == ['status']:
         print('Status: ' + os.environ.get('UFW_STATE', 'inactive'))
+    elif args[:1] == ['allow'] and os.environ.get('SCOPED_EFFECTS'):
+        for name in ('user.rules','user6.rules'):
+            with open(root/'etc/ufw'/name,'a') as out: out.write('allow '+args[1]+'\n')
+    elif args == ['reload'] and os.environ.get('FAIL_UFW_RECOVERY'):
+        sys.exit(1)
 elif name == 'nginx':
     if os.environ.get('FAIL_NGINX'):
         fault(); sys.exit(1)
@@ -249,7 +256,16 @@ elif name == 'tar':
 elif name == 'id':
     sys.exit(1 if os.environ.get('MTR_ABSENT') else 0)
 elif name == 'sysctl':
-    if os.environ.get('FAIL_SYSCTL'): fault(); sys.exit(1)
+    if args[0] == '-p' and os.environ.get('FAIL_SYSCTL'): fault(); sys.exit(1)
+    state=root/'runtime-sysctl.json'
+    values=json.loads(state.read_text()) if state.exists() else {}
+    if args[0] == '-n': print(values.get(args[1],'1'))
+    elif args[0] == '-p':
+        if '.rollback-' in args[1] and os.environ.get('FAIL_SYSCTL_RECOVERY'): sys.exit(1)
+        for line in pathlib.Path(args[1]).read_text().splitlines():
+            if '=' in line:
+                key,value=line.split('=',1);values[key.strip()]=value.strip()
+        state.write_text(json.dumps(values))
     sys.exit(0)
 elif name == 'setcap':
     sys.exit(1 if pathlib.Path(args[-1]).name in os.environ.get('FAIL_SETCAP', '').split() else 0)
@@ -948,8 +964,9 @@ class PersonalBackup(unittest.TestCase):
         self.assertFalse(self.path('/var/www/diagnostics/testfiles/test-512m.bin').exists())
         calls = self.commands()
         self.assertEqual([c for c in calls if c[0] == 'ufw'], [
-            ['ufw', 'allow', '80/tcp'], ['ufw', 'allow', '443/tcp'], ['ufw', 'allow', '443/udp'], ['ufw', 'status']])
+            ['ufw', 'status'], ['ufw', 'allow', '80/tcp'], ['ufw', 'allow', '443/tcp'], ['ufw', 'allow', '443/udp'], ['ufw', 'status']])
         self.assertEqual([c for c in calls if c[0] == 'sysctl'],
+                         [['sysctl','-n',line.split('=',1)[0]] for line in PARAMS] +
                          [['sysctl', '-p', str(self.path('/etc/sysctl.d/99-3x-ui-pro.conf'))]])
         self.assertFalse(any(c[0] == 'apt-get' for c in calls))
         self.assertIn(['useradd', '--system', '--no-create-home', '--shell', '/usr/sbin/nologin', 'mtr-backend'], calls)
@@ -1280,6 +1297,119 @@ class PersonalBackup(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('[FAIL] mtr-backend is not active', result.stderr)
         self.assertNotIn('Restore completed successfully.', result.stdout)
+
+    def test_rollback_preserves_stopped_invalid_nginx_and_active_failure_is_unverified(self):
+        self.assertTrue(os.environ.get('NGINX_BIN'),'Real nginx is required for this rollback regression')
+        for active in ('inactive','active'):
+            with self.subTest(original=active):
+                f=PersonalBackup('runTest');f.setUp();self.addCleanup(f.doCleanups)
+                archive=f.backup();before=archive.read_bytes()
+                states=json.loads((f.root/'services.json').read_text());states['nginx']=active
+                (f.root/'services.json').write_text(json.dumps(states))
+                f.write('/etc/nginx/nginx.conf','invalid old nginx;\n')
+                result=f.run_tool('restore',archive,FAIL_HEALTH_SERVICE='mtr-backend',FAIL_ONCE='1')
+                self.assertNotEqual(result.returncode,0)
+                self.assertTrue((f.root/'fault-used').exists(),'post-mutation health fault reached')
+                self.assertEqual(f.path('/etc/nginx/nginx.conf').read_text(),'invalid old nginx;\n')
+                self.assertEqual(archive.read_bytes(),before)
+                self.assertNotIn('Restore completed successfully',result.stdout)
+                if active=='inactive':
+                    self.assertEqual(json.loads((f.root/'services.json').read_text())['nginx'],'inactive')
+                    self.assertNotIn(['systemctl','start','nginx'],f.commands())
+                    self.assertIn('Previous managed state/service states restored and checked',result.stderr)
+                    self.assertFalse(list(f.path('/var/backups/x-ui').glob('.rollback-*')))
+                else:
+                    self.assertIn('Automatic rollback could not be verified',result.stderr)
+                    self.assertTrue(list(f.path('/var/backups/x-ui').glob('.rollback-*')))
+
+    def test_rollback_restores_ufw_rules_without_enabling_inactive_firewall(self):
+        for state,failure in (('inactive',False),('active',False),('active',True)):
+            with self.subTest(state=state,recovery_failure=failure):
+                f=PersonalBackup('runTest');f.setUp();self.addCleanup(f.doCleanups)
+                archive=f.backup()
+                for name in ('user.rules','user6.rules'):
+                    f.write('/etc/ufw/'+name,'SSH administrator rule\ncustom administrator rule\n',0o640)
+                original={name:(f.path('/etc/ufw/'+name).read_bytes(),f.path('/etc/ufw/'+name).stat()) for name in ('user.rules','user6.rules')}
+                result=f.run_tool('restore',archive,SCOPED_EFFECTS='1',UFW_STATE=state,
+                                  FAIL_UFW_RECOVERY='1' if failure else '',FAIL_HEALTH_SERVICE='mtr-backend',FAIL_ONCE='1')
+                self.assertNotEqual(result.returncode,0)
+                self.assertTrue((f.root/'fault-used').exists())
+                self.assertIn(['ufw','allow','443/udp'],f.commands())
+                for name,(data,metadata) in original.items():
+                    path=f.path('/etc/ufw/'+name);self.assertEqual(path.read_bytes(),data)
+                    self.assertEqual((path.stat().st_uid,path.stat().st_gid,stat.S_IMODE(path.stat().st_mode)),
+                                     (metadata.st_uid,metadata.st_gid,stat.S_IMODE(metadata.st_mode)))
+                self.assertFalse(any(c[0]=='ufw' and any(v in c for v in ('enable','disable','reset')) for c in f.commands()))
+                if state=='active':self.assertIn(['ufw','reload'],f.commands())
+                self.assertIn('Automatic rollback could not be verified' if failure else 'Previous managed state/service states restored and checked',result.stderr)
+                self.assertEqual(bool(list(f.path('/var/backups/x-ui').glob('.rollback-*'))),failure)
+                if failure:
+                    recovery=next(f.path('/var/backups/x-ui').glob('.rollback-*'))
+                    self.assertEqual(stat.S_IMODE(recovery.stat().st_mode),0o700)
+                    self.assertEqual((recovery/'ufw/user.rules').read_bytes(),original['user.rules'][0])
+                self.assertNotIn('Restore completed successfully',result.stdout)
+
+    def test_rollback_restores_only_its_legacy_cron_edit_and_detects_conflict(self):
+        for scenario in ('legacy','unrelated','absent','concurrent','write-failure'):
+            with self.subTest(scenario=scenario):
+                f=PersonalBackup('runTest');f.setUp();self.addCleanup(f.doCleanups)
+                archive=f.backup();cron=f.root/'crontab'
+                if scenario=='absent':cron.unlink()
+                else:cron.write_text('@hourly unrelated\n'+(CRON+'\n' if scenario in ('legacy','concurrent','write-failure') else ''))
+                original=cron.read_bytes() if cron.exists() else None
+                result=f.run_tool('restore',archive,FAIL_HEALTH_SERVICE='mtr-backend',FAIL_ONCE='1',CONCURRENT_CRON='1' if scenario=='concurrent' else '',
+                                  FAIL_CRON_RECOVERY='1' if scenario=='write-failure' else '')
+                self.assertNotEqual(result.returncode,0);self.assertTrue((f.root/'fault-used').exists())
+                writes=[c for c in f.commands() if c==['crontab','-']]
+                if scenario in ('concurrent','write-failure'):
+                    self.assertEqual(cron.read_text(),'@hourly unrelated\n'+('@daily administrator-change\n' if scenario=='concurrent' else ''))
+                    self.assertIn('Automatic rollback could not be verified',result.stderr)
+                    self.assertTrue(list(f.path('/var/backups/x-ui').glob('.rollback-*')))
+                else:
+                    self.assertEqual(cron.read_bytes() if cron.exists() else None,original)
+                    self.assertEqual(len(writes),2 if scenario=='legacy' else 0)
+                    self.assertIn('Previous managed state/service states restored and checked',result.stderr)
+                self.assertNotIn('Restore completed successfully',result.stdout)
+
+    def test_rollback_restores_actual_sysctl_values_not_previous_file_values(self):
+        for scenario in ('different','no-old-file','recovery-failure'):
+            with self.subTest(scenario=scenario):
+                f=PersonalBackup('runTest');f.setUp();self.addCleanup(f.doCleanups)
+                archive=f.backup();file=f.path('/etc/sysctl.d/99-3x-ui-pro.conf')
+                if scenario=='no-old-file':file.unlink()
+                else:file.write_text('net.ipv4.tcp_sack=0\n')
+                old=file.read_bytes() if file.exists() else None
+                runtime={line.split('=',1)[0]:'7' for line in PARAMS};runtime['unrelated.value']='unchanged'
+                (f.root/'runtime-sysctl.json').write_text(json.dumps(runtime))
+                result=f.run_tool('restore',archive,FAIL_HEALTH_SERVICE='mtr-backend',FAIL_ONCE='1',
+                                  FAIL_SYSCTL_RECOVERY='1' if scenario=='recovery-failure' else '')
+                self.assertNotEqual(result.returncode,0);self.assertTrue((f.root/'fault-used').exists())
+                self.assertEqual(file.read_bytes() if file.exists() else None,old)
+                self.assertTrue(any(c[:2]==['sysctl','-p'] for c in f.commands()))
+                if scenario!='recovery-failure':self.assertEqual(json.loads((f.root/'runtime-sysctl.json').read_text()),runtime)
+                self.assertIn('Automatic rollback could not be verified' if scenario=='recovery-failure' else 'Previous managed state/service states restored and checked',result.stderr)
+                self.assertEqual(bool(list(f.path('/var/backups/x-ui').glob('.rollback-*'))),scenario=='recovery-failure')
+                if scenario=='recovery-failure':
+                    recovery=next(f.path('/var/backups/x-ui').glob('.rollback-*'))
+                    self.assertEqual(stat.S_IMODE(recovery.stat().st_mode),0o700)
+                    self.assertIn('fs.file-max=7', (recovery/'sysctl.before').read_text())
+                self.assertNotIn('Restore completed successfully',result.stdout)
+
+    def test_rollback_restores_preexisting_acme_challenge_directory(self):
+        archive=self.backup();before=archive.read_bytes()
+        self.write('/var/www/acme/.well-known/acme-challenge/administrator-token','original challenge',0o640)
+        self.write('/var/www/acme/foreign-resource','preserved')
+        directory=self.path('/var/www/acme/.well-known/acme-challenge');directory.chmod(0o710)
+        result=self.run_tool('restore',archive,FAIL_HEALTH_SERVICE='mtr-backend',FAIL_ONCE='1')
+        self.assertNotEqual(result.returncode,0);self.assertTrue((self.root/'fault-used').exists())
+        self.assertEqual((directory/'administrator-token').read_text(),'original challenge')
+        self.assertEqual(self.path('/var/www/acme/foreign-resource').read_text(),'preserved')
+        self.assertEqual(stat.S_IMODE(directory.stat().st_mode),0o710)
+        self.assertEqual(stat.S_IMODE((directory/'administrator-token').stat().st_mode),0o640)
+        self.assertEqual(archive.read_bytes(),before)
+        with tarfile.open(archive) as tar:self.assertFalse(any('acme-challenge' in m.name for m in tar))
+        self.assertIn('Previous managed state/service states restored and checked',result.stderr)
+        self.assertNotIn('Restore completed successfully',result.stdout)
 
     def test_mandatory_health_and_sysctl_failures_never_report_success(self):
         for env in ({'FAIL_NGINX': '1'}, {'FAIL_HEALTH_SERVICE': 'mtr-backend'},

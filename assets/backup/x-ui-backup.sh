@@ -482,6 +482,7 @@ replace_managed_state() {
     if [[ -f "$STAGING/files$SYSCTL_FILE" ]]; then
         mkdir -p "$(dirname "$SYSCTL_FILE")"
         install -o root -g root -m 0644 "$STAGING/files$SYSCTL_FILE" "$SYSCTL_FILE"
+        snapshot_restore_sysctl || die 'Cannot save current managed sysctl values.'
         sysctl -p "$SYSCTL_FILE" || die 'Cannot apply managed sysctl file.'
     fi
 }
@@ -693,6 +694,11 @@ remove_legacy_certbot_cron() {
     fi
     if grep -Fxq -- "$LEGACY_CERTBOT_CRON" "$directory/current"; then
         awk -v legacy="$LEGACY_CERTBOT_CRON" '$0 != legacy' "$directory/current" > "$directory/new" || { rm -rf "$directory"; return 1; }
+        if [[ -n "$ROLLBACK_DIR" ]]; then
+            cp -- "$directory/current" "$ROLLBACK_DIR/cron.before" &&
+                cp -- "$directory/new" "$ROLLBACK_DIR/cron.after" &&
+                touch "$ROLLBACK_DIR/cron.changed" || { rm -rf "$directory"; return 1; }
+        fi
         crontab - < "$directory/new" && crontab -l > "$directory/verified" &&
             cmp -s "$directory/new" "$directory/verified" || { rm -rf "$directory"; return 1; }
     fi
@@ -789,7 +795,42 @@ PY
     check_no_legacy_certbot_cron && nginx -t && check_acme_http "$domain" "$reality_domain"
 }
 
+snapshot_restore_firewall() {
+    local path status
+    status=$(LC_ALL=C ufw status) || return 1
+    case "$status" in
+        'Status: active'*) printf 'active\n' > "$ROLLBACK_DIR/ufw.state" ;;
+        'Status: inactive'*) printf 'inactive\n' > "$ROLLBACK_DIR/ufw.state" ;;
+        *) return 1 ;;
+    esac || return 1
+    mkdir "$ROLLBACK_DIR/ufw" || return 1
+    for path in /etc/ufw/user.rules /etc/ufw/user6.rules; do
+        if [[ -e "$path" || -L "$path" ]]; then cp -a -- "$path" "$ROLLBACK_DIR/ufw/" || return 1; fi
+    done
+    touch "$ROLLBACK_DIR/ufw.changed"
+}
+
+recover_restore_firewall() {
+    [[ -f "$ROLLBACK_DIR/ufw.changed" ]] || return 0
+    local path saved status expected failed=0
+    for path in /etc/ufw/user.rules /etc/ufw/user6.rules; do
+        saved="$ROLLBACK_DIR/ufw/${path##*/}"
+        if [[ -e "$saved" || -L "$saved" ]]; then
+            cp -aT -- "$saved" "$path" && cmp -s "$saved" "$path" &&
+                [[ "$(stat -c '%u:%g:%a' "$saved")" == "$(stat -c '%u:%g:%a' "$path")" ]] || failed=1
+        else
+            rm -f -- "$path" || failed=1
+        fi
+    done
+    (( ! failed )) || return 1
+    expected=$(cat "$ROLLBACK_DIR/ufw.state") || return 1
+    case "$expected" in active) ufw reload || return 1 ;; inactive) ;; *) return 1 ;; esac
+    status=$(LC_ALL=C ufw status) || return 1
+    [[ "$status" == "Status: $expected"* ]]
+}
+
 restore_firewall() {
+    snapshot_restore_firewall || die 'Cannot save current UFW rules/state.'
     for rule in 80/tcp 443/tcp 443/udp; do ufw allow "$rule"; done
     local awg status
     awg=$(sqlite3 "$DB" "SELECT count(*) FROM inbounds WHERE protocol='amneziawg' AND tag='inbound-8443-udp' AND port=8443 AND enable=1 AND listen='0.0.0.0';") || die 'Cannot read restored AmneziaWG firewall state.'
@@ -1612,11 +1653,52 @@ save_restore_services() {
     RESTORE_RECOVERY=1
 }
 
+# Capture only keys about to be applied; old file contents are not runtime state.
+snapshot_restore_sysctl() {
+    local line key value
+    local -A seen=()
+    : > "$ROLLBACK_DIR/sysctl.before" || return 1
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line=${line%%#*}; line=${line%%;*}
+        if [[ "$line" =~ ^[[:space:]]*-?([a-zA-Z0-9_./-]+)[[:space:]]*= ]]; then
+            key=${BASH_REMATCH[1]}
+            [[ ! ${seen[$key]+present} ]] || continue
+            value=$(sysctl -n "$key") || return 1
+            [[ "$value" != *$'\n'* ]] || return 1
+            printf '%s=%s\n' "$key" "$value" >> "$ROLLBACK_DIR/sysctl.before" || return 1
+            seen[$key]=1
+        elif [[ "$line" =~ [^[:space:]] ]]; then
+            warn 'Cannot snapshot unsupported managed sysctl assignment.'; return 1
+        fi
+    done < "$SYSCTL_FILE" || return 1
+    touch "$ROLLBACK_DIR/sysctl.changed"
+}
+
+recover_restore_sysctl() {
+    [[ -f "$ROLLBACK_DIR/sysctl.changed" ]] || return 0
+    local key value actual
+    sysctl -p "$ROLLBACK_DIR/sysctl.before" || return 1
+    while IFS='=' read -r key value; do
+        actual=$(sysctl -n "$key") && [[ "$actual" == "$value" ]] || return 1
+    done < "$ROLLBACK_DIR/sysctl.before"
+}
+
+recover_restore_cron() {
+    [[ -f "$ROLLBACK_DIR/cron.changed" ]] || return 0
+    crontab -l > "$ROLLBACK_DIR/cron.current" || return 1
+    cmp -s "$ROLLBACK_DIR/cron.before" "$ROLLBACK_DIR/cron.current" && return 0
+    cmp -s "$ROLLBACK_DIR/cron.after" "$ROLLBACK_DIR/cron.current" || {
+        warn 'Root crontab changed independently; original crontab retained for manual recovery.'; return 1;
+    }
+    crontab - < "$ROLLBACK_DIR/cron.before" && crontab -l > "$ROLLBACK_DIR/cron.current" &&
+        cmp -s "$ROLLBACK_DIR/cron.before" "$ROLLBACK_DIR/cron.current"
+}
+
 snapshot_restore_target() {
     local path
     ROLLBACK_DIR=$(mktemp -d "$BACKUP_STORE/.rollback-XXXXXX") || die 'Cannot create private rollback directory.'
     chmod 0700 "$ROLLBACK_DIR" || die 'Cannot protect private rollback directory.'
-    local -a owned=("${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}" /var/www/diagnostics /etc/systemd/system/AdGuardHome.service)
+    local -a owned=("${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}" /var/www/diagnostics /etc/systemd/system/AdGuardHome.service /var/www/acme/.well-known/acme-challenge)
     for path in "${owned[@]}"; do
         if [[ -e "$path" || -L "$path" ]]; then
             mkdir -p "$ROLLBACK_DIR/files$(dirname "$path")" || die "Cannot prepare rollback copy: $path"
@@ -1640,15 +1722,17 @@ recover_restore_target() {
             if systemctl cat "$service" >/dev/null 2>&1; then systemctl stop "$service" || failed=1; fi
         done
         (( ! failed )) || return 1
-        for path in "${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}" /var/www/diagnostics /etc/systemd/system/AdGuardHome.service; do
+        for path in "${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}" /var/www/diagnostics /etc/systemd/system/AdGuardHome.service /var/www/acme/.well-known/acme-challenge; do
             rm -rf -- "$path" || failed=1
             if [[ -e "$ROLLBACK_DIR/files$path" || -L "$ROLLBACK_DIR/files$path" ]]; then
                 mkdir -p "$(dirname "$path")" && cp -aT -- "$ROLLBACK_DIR/files$path" "$path" || failed=1
             fi
         done
-        if [[ -f "$SYSCTL_FILE" ]]; then sysctl -p "$SYSCTL_FILE" || failed=1; fi
+        recover_restore_firewall || { warn 'Cannot verify original UFW rules/state.'; failed=1; }
+        recover_restore_cron || { warn 'Cannot verify original root crontab.'; failed=1; }
+        recover_restore_sysctl || { warn 'Cannot verify original runtime sysctl values.'; failed=1; }
         systemctl daemon-reload || failed=1
-        nginx -t || failed=1
+        if [[ "${OLD_ACTIVE[nginx]}" == active ]]; then nginx -t || failed=1; fi
         rm -f -- "$XHTTP_SOCKET" || failed=1
     fi
     for service in x-ui mtr-backend AdGuardHome nginx certbot.timer; do
