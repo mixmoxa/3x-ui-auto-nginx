@@ -184,7 +184,9 @@ schema_version: 34
         file=tarfile.TarInfo('files/' + str(f.path('/opt/AdGuardHome/unexpected')).lstrip('/'));file.size=3
         bad=f.changed_archive(archive,extra=file)
         r=f.run_tool('restore',bad);self.assertNotEqual(r.returncode,0);self.assertIn('prohibited',r.stderr)
-        bad=f.changed_archive(archive,metadata={'adguard_home':True,'adguard_version':'v0.107.79','adguard_arch':'amd64'})
+        # Keep this legacy-v3 case focused on missing AGH files, not mismatched service metadata.
+        bad=f.changed_archive(archive,metadata={'adguard_home':True,'adguard_version':'v0.107.79','adguard_arch':'amd64'},
+                              omit_metadata=('service_states',))
         r=f.run_tool('restore',bad);self.assertNotEqual(r.returncode,0);self.assertIn('missing required',r.stderr)
         bad=f.changed_archive(archive,metadata={'adguard_home':'false'})
         r=f.run_tool('restore',bad);self.assertNotEqual(r.returncode,0);self.assertIn('boolean',r.stderr)

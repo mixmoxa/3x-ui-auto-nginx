@@ -1570,7 +1570,8 @@ restore_service_states() {
         fi
         if [[ "${RESTORED_ACTIVE[$service]}" == active ]]; then
             [[ "$service" != certbot.timer || "${RESTORED_ENABLED[$service]}" != 1 ]] || continue
-            systemctl start "$service" && systemctl is-active --quiet "$service" || die "Cannot start $service."
+            systemctl start "$service" || die "Cannot start $service."
+            systemctl is-active --quiet "$service" || die "$service is not active"
         else
             systemctl stop "$service" || die "Cannot leave $service stopped."
         fi
