@@ -1161,10 +1161,21 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 root, dbpath, nginx, letsencrypt, certroot, webroot, panel, reality, validation, vision = sys.argv[1:]
 root, validation = pathlib.Path(root), pathlib.Path(validation)
-def staged(path):
+def staged(path, tls_reference=False):
     # Resolve every archived symlink component without consulting live certificates.
+    if '..' in pathlib.PurePosixPath(str(path)).parts: raise ValueError('Staged path escaped private state')
     p = root / str(path).lstrip('/')
     for _ in range(32):
+        if tls_reference and p.is_relative_to(root / letsencrypt.lstrip('/')):
+            parts = p.relative_to(root / letsencrypt.lstrip('/')).parts
+            if len(parts) != 3 or parts[1] not in (panel, reality, *([vision] if vision else [])):
+                raise ValueError('Unowned staged Certbot TLS reference: ' + str(path))
+            # Match exactly what restore_project_certificates copies, at every link hop.
+            live = parts[0] == 'live' and parts[2] in ('cert.pem','chain.pem','fullchain.pem','privkey.pem')
+            archive = (parts[0] == 'archive' and re.fullmatch(r'(cert|chain|fullchain|privkey)[0-9]+\.pem', parts[2])
+                       and not p.is_symlink())
+            if not (live or archive):
+                raise ValueError('Non-restorable staged Certbot TLS reference: ' + str(path))
         relative = p.relative_to(root)
         current = root
         for i, component in enumerate(relative.parts):
@@ -1201,44 +1212,26 @@ for domain in (panel, reality, *([vision] if vision else [])):
         raise ValueError('Invalid staged webroot renewal')
     if any(params.get(k) for k in ('pre_hook','post_hook','renew_hook','deploy_hook')):
         raise ValueError('Unexpected per-lineage hook')
-# Optional Vision contract: third lineage is mandatory only for a declared Vision installation.
-with sqlite3.connect(staged(dbpath)) as vision_db:
-    candidates=vision_db.execute("SELECT id,listen,port,protocol,settings,stream_settings FROM inbounds WHERE id IN (SELECT inbound_id FROM hosts WHERE address=?)", (vision,)).fetchall()
-    site=root / (nginx+'/sites-available/vision.conf').lstrip('/')
-    acme=root / (nginx+'/sites-available/vision-acme.conf').lstrip('/')
-    if not vision:
-        # A user-defined remark or filename in an older archive is not ownership.
-        for path in (site,acme):
-            if path.exists() or path.is_symlink():
-                saved=staged('/'+str(path.relative_to(root)))
-                if saved.read_text().startswith('# Managed by 3x-ui Auto Nginx: Vision\n'):
-                    raise ValueError('Managed Vision artifacts without trusted declaration')
-    else:
-        site=staged(nginx+'/sites-available/vision.conf')
-        if staged(nginx+'/sites-enabled/vision.conf')!=site:
-            raise ValueError('Inactive or redirected Vision fallback')
-        if vision in (panel,reality) or len(candidates)!=1: raise ValueError('Conflicting/missing Vision inbound')
-        iid,listen,port,protocol,settings,stream=candidates[0]
-        settings,stream=json.loads(settings),json.loads(stream)
-        if (listen,protocol,stream.get('network'),stream.get('security'))!=('127.0.0.1','vless','tcp','tls'):
-            raise ValueError('Invalid Vision topology')
-        tls=stream['tlsSettings']
-        pair=tls['certificates']
-        if (tls.get('serverName')!=vision or tls.get('alpn')!=['http/1.1'] or len(pair)!=1
-            or pair[0].get('certificateFile')!=letsencrypt+'/live/'+vision+'/fullchain.pem'
-            or pair[0].get('keyFile')!=letsencrypt+'/live/'+vision+'/privkey.pem'
-            or stream.get('rawSettings')!={'acceptProxyProtocol':True,'header':{'type':'none'}}):
-            raise ValueError('Invalid Vision TLS/PROXY contract')
-        fallbacks=settings.get('fallbacks',[])
-        if len(fallbacks)!=1: raise ValueError('Ambiguous Vision fallback')
-        f=fallbacks[0]
-        match=re.fullmatch(r'127\.0\.0\.1:(\d+)',str(f.get('dest')))
-        if not match or f.get('name')!=vision or f.get('alpn')!='http/1.1' or f.get('xver')!=1:
-            raise ValueError('Invalid plaintext Vision fallback')
-        fallback=int(match[1])
-        if not 1024<=port<=65535 or not 1024<=fallback<=65535 or port==fallback:
-            raise ValueError('Invalid Vision internal ports')
-        expected_site=f"""# Managed by 3x-ui Auto Nginx: Vision
+# Vision ownership comes from the canonical hook/lineage and managed nginx, not editable inbounds/Hosts.
+site=root / (nginx+'/sites-available/vision.conf').lstrip('/')
+acme=root / (nginx+'/sites-available/vision-acme.conf').lstrip('/')
+if not vision:
+    # A user-defined remark or filename in an older archive is not ownership.
+    for path in (site,acme):
+        if path.exists() or path.is_symlink():
+            saved=staged('/'+str(path.relative_to(root)))
+            if saved.read_text().startswith('# Managed by 3x-ui Auto Nginx: Vision\n'):
+                raise ValueError('Managed Vision artifacts without trusted declaration')
+else:
+    site=staged(nginx+'/sites-available/vision.conf')
+    if staged(nginx+'/sites-enabled/vision.conf')!=site:
+        raise ValueError('Inactive or redirected Vision fallback')
+    if vision in (panel,reality): raise ValueError('Conflicting Vision domain')
+    match=re.search(r'^    listen 127\.0\.0\.1:(\d+) proxy_protocol;$',site.read_text(),re.M)
+    if not match: raise ValueError('Invalid plaintext Vision fallback')
+    fallback=int(match[1])
+    if not 1024<=fallback<=65535: raise ValueError('Invalid Vision fallback port')
+    expected_site=f"""# Managed by 3x-ui Auto Nginx: Vision
 server {{
     listen 127.0.0.1:{fallback} proxy_protocol;
     server_name {vision};
@@ -1251,21 +1244,28 @@ server {{
     location / {{ try_files $uri $uri/ =404; }}
 }}
 """
-        if not site.is_file() or site.read_text()!=expected_site: raise ValueError('Unsafe Vision fallback site')
-        streamtext=staged(nginx+'/stream-enabled/stream.conf').read_text()
-        if (streamtext.count(f'    {vision} vision;')!=1 or
-            streamtext.count(f'upstream vision {{ server 127.0.0.1:{port}; }}')!=1):
-            raise ValueError('Vision SNI mapping mismatch')
-        hosts=vision_db.execute('SELECT address,port,security,sni,alpn,allow_insecure FROM hosts WHERE inbound_id=?',(iid,)).fetchall()
-        if len(hosts)!=1 or hosts[0][:4]!=(vision,443,'same',vision) or json.loads(hosts[0][4])!=['http/1.1'] or hosts[0][5]:
-            raise ValueError('Invalid Vision public Host')
+    if not site.is_file() or site.read_text()!=expected_site: raise ValueError('Unsafe Vision fallback site')
+    streamtext=staged(nginx+'/stream-enabled/stream.conf').read_text()
+    upstreams=re.findall(r'^upstream vision \{ server 127\.0\.0\.1:(\d+); \}$',streamtext,re.M)
+    if (streamtext.count(f'    {vision} vision;')!=1 or
+        len(upstreams)!=1 or not 1024<=int(upstreams[0])<=65535 or int(upstreams[0])==fallback):
+        raise ValueError('Vision SNI mapping mismatch')
 
 # Verify the existing runtime certificate references too, never a live-host fallback.
 with sqlite3.connect(staged(dbpath)) as db:
+    # User TLS settings need not match the seed, but referenced files must survive Restore.
+    # Never let a restored active inbound silently borrow a target-only certificate/key.
+    for stream_json, in db.execute('SELECT stream_settings FROM inbounds WHERE enable=1'):
+        stream = json.loads(stream_json)
+        if stream.get('security') == 'tls':
+            for pair in stream.get('tlsSettings',{}).get('certificates',[]):
+                for name in ('certificateFile','keyFile'):
+                    if not pair.get(name): continue
+                    staged(pair[name], tls_reference=True)
     rows = db.execute('SELECT key,value FROM settings').fetchall()
     settings = dict(rows)
     for name in ('webListen','webPort','webBasePath','webCertFile','webKeyFile',
-                 'subListen','subCertFile','subKeyFile','subPort','subPath','subJsonPath','subJsonURI'):
+                 'subListen','subCertFile','subKeyFile','subPort','subPath','subJsonPath'):
         if sum(k == name for k,v in rows) != 1: raise ValueError('Missing/duplicate setting: ' + name)
     if settings['webListen'] not in ('','127.0.0.1'): raise ValueError('Unexpected panel listen setting')
     if settings['subListen'] != '127.0.0.1':
@@ -1286,92 +1286,69 @@ with sqlite3.connect(staged(dbpath)) as db:
     if not re.fullmatch(r'[0-9]{1,5}',panel_port) or not 1 <= int(panel_port) <= 65535:
         raise ValueError('Invalid panel port')
     panel_base = settings['webBasePath']
-    if not re.fullmatch(r'/[A-Za-z0-9]+/',panel_base):
+    if not re.fullmatch(r'/(?:[A-Za-z0-9_-]+/)+',panel_base):
         raise ValueError('Unexpected managed panel base path')
     if not re.fullmatch(r'[0-9]{1,5}',port) or not 1 <= int(port) <= 65535 or port == panel_port:
         raise ValueError('Invalid subscription port')
     sub, jsonpath = settings['subPath'], settings['subJsonPath']
-    if not re.fullmatch(r'/[A-Za-z0-9_-]+/',sub) or not re.fullmatch(r'/[A-Za-z0-9_-]+/',jsonpath):
+    if not re.fullmatch(r'/(?:[A-Za-z0-9_-]+/)+',sub) or not re.fullmatch(r'/(?:[A-Za-z0-9_-]+/)+',jsonpath):
         raise ValueError('Unexpected managed subscription paths')
     # Repair only the exact old project-generated JSON URI, in the private staged DB.
     modern_json_uri = 'https://' + panel + jsonpath
     legacy_json_uri = modern_json_uri.rstrip('/') + '?name='
     enabled = [v for k,v in rows if k == 'subJsonEnable']
-    if len(enabled) > 1 or (enabled and enabled[0] not in ('true','false')):
+    if len(enabled) > 1 or (enabled and enabled[0] not in ('','true','false','True','False','TRUE','FALSE','t','f','T','F','1','0')):
         raise ValueError('Invalid/duplicate managed JSON enable setting')
-    if settings['subJsonURI'] == legacy_json_uri:
+    if sum(k == 'subJsonURI' for k,v in rows) > 1: raise ValueError('Duplicate JSON URI setting')
+    # Missing/empty enable uses upstream's false default. Never enable on the user's behalf.
+    if enabled == ['true'] and settings.get('subJsonURI') == legacy_json_uri:
         db.execute('UPDATE settings SET value=? WHERE key=?', (modern_json_uri, 'subJsonURI'))
-        db.execute("DELETE FROM settings WHERE key='subJsonEnable'")
-        db.execute("INSERT INTO settings(key,value) VALUES('subJsonEnable','true')")
-    elif settings['subJsonURI'] != modern_json_uri or enabled != ['true']:
-        raise ValueError('Unexpected managed JSON subscription state; staged migration refused')
     # Only the three exact installer-managed Host/inbound topologies may be migrated.
     managed_ids = set()
     for profile in ('reality','ws','xhttp'):
         hosts = db.execute('SELECT inbound_id,sort_order,address,port,security FROM hosts WHERE remark=?',
                            (profile,)).fetchall()
-        # Correct/custom non-empty encryption needs no identity migration or Host restriction.
-        associated = {row[0] for row in hosts}
-        needed = set()
-        for cid, listen, number, tag, stream_json, settings_json in db.execute(
-                "SELECT id,listen,port,tag,stream_settings,settings FROM inbounds WHERE protocol='vless'"):
-            stream = json.loads(stream_json)
-            ws = stream.get('wsSettings',{})
-            linked = db.execute('SELECT 1 FROM hosts WHERE inbound_id=? LIMIT 1',(cid,)).fetchone()
-            # A numeric tag/network alone also describes ordinary user WS profiles.
-            # Orphaned exact managed topology still fails closed; unrelated Hosts do not identify it.
-            ws_family = (listen == '127.0.0.1' and str(number).isdigit() and 1024 <= int(number) <= 65535 and
-                         tag == 'inbound-' + str(number) and stream.get('network') == 'ws' and
-                         stream.get('security') == 'none' and ws.get('host') == panel and
-                         ws.get('acceptProxyProtocol') is False and isinstance(ws.get('path'),str) and
-                         bool(re.fullmatch('/'+str(number)+r'/[A-Za-z0-9]+',ws['path'])) and
-                         not linked)
-            family = (tag == 'inbound-8443' if profile == 'reality' else
-                      tag == 'inbound-/dev/shm/uds2023.sock,0666:0|' if profile == 'xhttp' else ws_family)
-            if cid not in associated and not family: continue
-            value = json.loads(settings_json).get('encryption','')
-            if not isinstance(value,str) or value == '': needed.add(cid)
-        if not needed:
-            continue
-        if len(hosts) != 1 or needed != {hosts[0][0]}:
-            raise ValueError('Ambiguous/missing managed VLESS Host: ' + profile)
-        iid, order, address, public_port, security = hosts[0]
-        if (iid in managed_ids or order != 0 or address != panel or public_port != 443 or
-                security != ('same' if profile == 'reality' else 'tls')):
-            raise ValueError('Inconsistent managed VLESS Host: ' + profile)
-        inbound = db.execute('SELECT protocol,listen,port,tag,stream_settings,settings FROM inbounds WHERE id=?',
-                             (iid,)).fetchall()
-        if len(inbound) != 1: raise ValueError('Ambiguous managed VLESS inbound: ' + profile)
-        protocol, listen, number, tag, stream_json, settings_json = inbound[0]
-        stream, inbound_settings = json.loads(stream_json), json.loads(settings_json)
-        valid = protocol == 'vless' and isinstance(stream, dict) and isinstance(inbound_settings, dict)
-        if profile == 'reality':
-            valid = valid and (listen,str(number),tag,stream.get('network'),stream.get('security')) == (
-                '127.0.0.1','8443','inbound-8443','tcp','reality')
-            valid = valid and stream.get('realitySettings',{}).get('target') == '127.0.0.1:9443'
-            valid = valid and stream.get('realitySettings',{}).get('serverNames') == [reality]
-            valid = valid and stream.get('tcpSettings',{}).get('acceptProxyProtocol') is True
-        elif profile == 'ws':
-            valid = valid and listen == '127.0.0.1' and str(number).isdigit() and 1024 <= int(number) <= 65535
-            valid = valid and tag == 'inbound-' + str(number) and stream.get('network') == 'ws' and stream.get('security') == 'none'
-            ws = stream.get('wsSettings',{})
-            valid = valid and ws.get('host') == panel and ws.get('acceptProxyProtocol') is False
-            valid = valid and isinstance(ws.get('path'),str) and bool(re.fullmatch('/'+str(number)+r'/[A-Za-z0-9]+',ws['path']))
-        else:
-            socket = '/dev/shm/uds2023.sock,0666'
-            valid = valid and (listen,str(number),tag,stream.get('network'),stream.get('security')) == (
-                socket,'0','inbound-'+socket+':0|','xhttp','none')
-            xhttp = stream.get('xhttpSettings',{})
-            valid = valid and xhttp.get('mode') == 'stream-up' and isinstance(xhttp.get('path'),str)
-            valid = valid and bool(re.fullmatch(r'/[A-Za-z0-9]+',xhttp['path']))
-        if not valid or db.execute('SELECT count(*) FROM inbounds WHERE tag=?',(tag,)).fetchone()[0] != 1:
-            raise ValueError('Unexpected managed VLESS topology; staged migration refused: ' + profile)
-        encryption = inbound_settings.get('encryption','')
-        if not isinstance(encryption,str): raise ValueError('Invalid managed VLESS encryption: ' + profile)
-        if not encryption:
-            inbound_settings['encryption'] = 'none'
-            db.execute('UPDATE inbounds SET settings=? WHERE id=?',(json.dumps(inbound_settings),iid))
-        managed_ids.add(iid)
+        # Only exact historical Host relationships are candidates. Deleted/edited profiles
+        # are user state, not evidence that a historical repair is required.
+        hosts = [h for h in hosts if h[1:] == (0,panel,443,'same' if profile == 'reality' else 'tls')]
+        if not hosts: continue
+        for iid in {h[0] for h in hosts}:
+            inbound = db.execute('SELECT protocol,listen,port,tag,stream_settings,settings FROM inbounds WHERE id=?',
+                                 (iid,)).fetchall()
+            if not inbound: continue
+            if len(inbound) != 1: raise ValueError('Ambiguous managed VLESS inbound: ' + profile)
+            protocol, listen, number, tag, stream_json, settings_json = inbound[0]
+            stream, inbound_settings = json.loads(stream_json), json.loads(settings_json)
+            valid = protocol == 'vless' and isinstance(stream, dict) and isinstance(inbound_settings, dict)
+            if profile == 'reality':
+                valid = valid and (listen,str(number),tag,stream.get('network'),stream.get('security')) == (
+                    '127.0.0.1','8443','inbound-8443','tcp','reality')
+                valid = valid and stream.get('realitySettings',{}).get('target') == '127.0.0.1:9443'
+                valid = valid and stream.get('realitySettings',{}).get('serverNames') == [reality]
+                valid = valid and stream.get('tcpSettings',{}).get('acceptProxyProtocol') is True
+            elif profile == 'ws':
+                valid = valid and listen == '127.0.0.1' and str(number).isdigit() and 1024 <= int(number) <= 65535
+                valid = valid and tag == 'inbound-' + str(number) and stream.get('network') == 'ws' and stream.get('security') == 'none'
+                ws = stream.get('wsSettings',{})
+                valid = valid and ws.get('host') == panel and ws.get('acceptProxyProtocol') is False
+                valid = valid and isinstance(ws.get('path'),str) and bool(re.fullmatch('/'+str(number)+r'/[A-Za-z0-9]+',ws['path']))
+            else:
+                socket = '/dev/shm/uds2023.sock,0666'
+                valid = valid and (listen,str(number),tag,stream.get('network'),stream.get('security')) == (
+                    socket,'0','inbound-'+socket+':0|','xhttp','none')
+                xhttp = stream.get('xhttpSettings',{})
+                valid = valid and xhttp.get('mode') == 'stream-up' and isinstance(xhttp.get('path'),str)
+                valid = valid and bool(re.fullmatch(r'/[A-Za-z0-9]+',xhttp['path']))
+            if not valid: continue
+            encryption = inbound_settings.get('encryption','')
+            if not isinstance(encryption,str): raise ValueError('Invalid managed VLESS encryption: ' + profile)
+            if not encryption:
+                if (len(hosts)!=1 or iid in managed_ids or
+                        db.execute('SELECT count(*) FROM inbounds WHERE tag=?',(tag,)).fetchone()[0] != 1):
+                    raise ValueError('Ambiguous managed VLESS identity; staged migration refused: ' + profile)
+                inbound_settings['encryption'] = 'none'
+                db.execute('UPDATE inbounds SET settings=? WHERE id=?',(json.dumps(inbound_settings),iid))
+            managed_ids.add(iid)
     # Only an exact old project Trojan/Host/route relationship is repaired in staging.
     # Custom profiles and already-separated method names are left untouched.
     shared = staged(nginx + '/snippets/includes.conf').read_text()
@@ -1391,10 +1368,6 @@ with sqlite3.connect(staged(dbpath)) as db:
         hosts = db.execute('SELECT sort_order,address,port,security FROM hosts '
                            "WHERE inbound_id=? AND remark='trojan'",(iid,)).fetchall()
         if (0,panel,443,'tls') not in hosts: continue
-        if hosts.count((0,panel,443,'tls')) != 1:
-            raise ValueError('Ambiguous managed gRPC Host; staged migration refused')
-        if db.execute('SELECT count(*) FROM inbounds WHERE tag=?',(tag,)).fetchone()[0] != 1:
-            raise ValueError('Ambiguous managed gRPC tag; staged migration refused')
         blocks = re.findall(r'^\s*location\s+=\s+'+re.escape(service)+r'\s*\{.*?^\s*\}',shared,re.M|re.S)
         expected = '''location = %s {
         if ($hack = 1) { return 404; }
@@ -1405,8 +1378,12 @@ with sqlite3.connect(staged(dbpath)) as db:
         grpc_set_header Host $host;
         grpc_pass grpc://127.0.0.1:%s;
     }''' % (service, number)
-        if len(blocks) != 1 or ' '.join(blocks[0].split()) != ' '.join(expected.split()):
-            raise ValueError('Unexpected managed gRPC route; staged migration refused')
+        if not blocks or any(' '.join(b.split()) != ' '.join(expected.split()) for b in blocks):
+            continue
+        if len(blocks) != 1 or hosts.count((0,panel,443,'tls')) != 1:
+            raise ValueError('Ambiguous managed gRPC Host/route; staged migration refused')
+        if db.execute('SELECT count(*) FROM inbounds WHERE tag=?',(tag,)).fetchone()[0] != 1:
+            raise ValueError('Ambiguous managed gRPC tag; staged migration refused')
         grpc['serviceName'] = service + '|' + service.rsplit('/',1)[1] + '-multi'
         db.execute('UPDATE inbounds SET stream_settings=? WHERE id=?',(json.dumps(stream),iid))
     jsonpath = jsonpath.rstrip('/')

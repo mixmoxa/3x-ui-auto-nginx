@@ -17,6 +17,7 @@ import ssl
 import sqlite3
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import threading
@@ -1146,6 +1147,59 @@ rules:
                     self.assertTrue(stream['hysteriaSettings']['auth']==self.auth,'JSON Hysteria credential mismatch')
                     self.assertEqual(stream['tlsSettings']['alpn'],['h3'])
         self.passed.append('Subscription semantics')
+
+    def test_user_state_restore_with_official_sqlite_schema(self):
+        # As in services_restore.py, sudo is limited to the private ownership/Restore fixture.
+        # The canonical integration process, actual x-ui and transport processes stay nonroot.
+        code = r'''from pathlib import Path
+import hashlib, json, shutil, sqlite3, sys, unittest
+sys.path.insert(0,sys.argv[1])
+from test_personal_backup import PersonalBackup
+case=unittest.TestCase()
+f=PersonalBackup('runTest'); f.setUp()
+try:
+    # The real panel created this schema, native clients and client_inbounds above.
+    # Copy the stopped panel's whole DB directory, including SQLite WAL state.
+    shutil.copytree(Path(sys.argv[2]).parent,f.path('/etc/x-ui'),dirs_exist_ok=True)
+    with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+        # Relocate only fixture infrastructure references before taking the backup.
+        for key,value in (('webPort','10002'),('subPort','10003'),
+                          ('webCertFile',str(f.path('/root/cert/example.com/fullchain.pem'))),
+                          ('webKeyFile',str(f.path('/root/cert/example.com/privkey.pem'))),
+                          ('subCertFile',str(f.path('/root/cert/example.com/fullchain.pem'))),
+                          ('subKeyFile',str(f.path('/root/cert/example.com/privkey.pem')))):
+            db.execute('UPDATE settings SET value=? WHERE key=?',(value,key))
+        for iid,text in db.execute('SELECT id,stream_settings FROM inbounds').fetchall():
+            stream = json.loads(text)
+            for pair in stream.get('tlsSettings',{}).get('certificates',[]):
+                for key,file in (('certificateFile','fullchain.pem'),('keyFile','privkey.pem')):
+                    if pair.get(key): pair[key] = str(f.path('/root/cert/example.com/'+file))
+            db.execute('UPDATE inbounds SET stream_settings=? WHERE id=?',(json.dumps(stream),iid))
+        db.execute("UPDATE settings SET value='false' WHERE key='subJsonEnable'")
+        db.execute("UPDATE settings SET value='https://user.example/export/' WHERE key='subJsonURI'")
+        db.execute("UPDATE inbounds SET enable=0,tag='user-ws',remark='user profile' WHERE protocol='vless' AND stream_settings LIKE '%wsSettings%'")
+        db.execute("UPDATE hosts SET address='user.example',port=2443 WHERE remark='ws'")
+    def state():
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            case.assertEqual(db.execute('PRAGMA quick_check').fetchone(),('ok',))
+            return {name:db.execute('SELECT * FROM "'+name+'" ORDER BY rowid').fetchall()
+                    for name, in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    before = state()
+    case.assertTrue({'clients','client_inbounds','hosts','inbounds','settings','users'} <= before.keys())
+    archive=f.backup(); original=archive.read_bytes(); digest=hashlib.sha256(original).hexdigest()
+    for _ in range(2):
+        result=f.run_tool('restore',archive)
+        case.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        case.assertEqual(state(),before)
+        case.assertEqual(archive.read_bytes(),original)
+        case.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
+finally:
+    f.doCleanups()
+'''
+        result=subprocess.run(['sudo','--preserve-env=NGINX_BIN,PYTHONDONTWRITEBYTECODE',sys.executable,
+            '-c',code,str(ROOT/'tests'),str(self.root/'db/x-ui.db')],capture_output=True,text=True,timeout=120)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.passed.append('Official DB restore fidelity')
 
     def test_public_outputs_do_not_leak_internal_endpoints(self):
         raw=base64.b64decode(self.raw,validate=True).decode()
