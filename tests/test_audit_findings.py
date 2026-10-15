@@ -549,17 +549,31 @@ class AuditRecovery(unittest.TestCase):
         local_only = f.path('/etc/administrator-only/cert.pem')
         local_only.parent.mkdir()
         local_only.write_bytes(f.path('/etc/letsencrypt/live/vision.example.com/fullchain.pem').read_bytes())
+        foreign = f.path('/etc/letsencrypt/live/foreign.example/fullchain.pem')
+        foreign.parent.mkdir()
+        foreign.write_bytes(local_only.read_bytes())
         with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
             iid = db.execute("SELECT id FROM inbounds WHERE tag='inbound-12000'").fetchone()[0]
             stream = json.loads(db.execute('SELECT stream_settings FROM inbounds WHERE id=?',(iid,)).fetchone()[0])
             stream['tlsSettings']['certificates'][0]['certificateFile'] = str(local_only)
             db.execute('UPDATE inbounds SET stream_settings=? WHERE id=?',(json.dumps(stream),iid))
         archive = f.backup(); state = self.user_state(f)
+        original_db = f.path('/etc/x-ui/x-ui.db').read_bytes()
         services = json.loads((f.root/'services.json').read_text()); (f.root/'commands').write_text('')
-        result = f.run_tool('restore',archive)
-        self.assert_untouched(result, services)
-        self.assertIn('Missing staged file',result.stderr)
-        self.assertEqual(self.user_state(f),state)
+        for path, error in ((str(local_only),'Missing staged file'),
+                            ('/'+'../'*32+str(local_only).lstrip('/'),'Staged path escaped private state'),
+                            (str(foreign),'Unowned staged Certbot TLS reference')):
+            with self.subTest(path_kind=error):
+                edited = Path(f.temp.name)/'tls-reference.db'; edited.write_bytes(original_db)
+                with sqlite3.connect(edited) as db:
+                    stream['tlsSettings']['certificates'][0]['certificateFile'] = path
+                    db.execute('UPDATE inbounds SET stream_settings=? WHERE id=?',(json.dumps(stream),iid))
+                candidate = self.modified(archive,{f.member('/etc/x-ui/x-ui.db'):edited.read_bytes()})
+                (f.root/'commands').write_text('')
+                result = f.run_tool('restore',candidate)
+                self.assert_untouched(result, services)
+                self.assertIn(error,result.stderr)
+                self.assertEqual(self.user_state(f),state)
 
     def test_old_managed_vless_encryption_is_normalized_only_in_staging(self):
         f = self.fixture

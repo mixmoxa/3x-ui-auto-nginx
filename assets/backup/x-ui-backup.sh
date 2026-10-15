@@ -1163,6 +1163,7 @@ root, dbpath, nginx, letsencrypt, certroot, webroot, panel, reality, validation,
 root, validation = pathlib.Path(root), pathlib.Path(validation)
 def staged(path):
     # Resolve every archived symlink component without consulting live certificates.
+    if '..' in pathlib.PurePosixPath(str(path)).parts: raise ValueError('Staged path escaped private state')
     p = root / str(path).lstrip('/')
     for _ in range(32):
         relative = p.relative_to(root)
@@ -1249,7 +1250,13 @@ with sqlite3.connect(staged(dbpath)) as db:
         if stream.get('security') == 'tls':
             for pair in stream.get('tlsSettings',{}).get('certificates',[]):
                 for name in ('certificateFile','keyFile'):
-                    if pair.get(name): staged(pair[name])
+                    if not pair.get(name): continue
+                    saved = staged(pair[name])
+                    certbot = root / letsencrypt.lstrip('/')
+                    if saved.is_relative_to(certbot) and not any(
+                            saved.is_relative_to(certbot / kind / domain)
+                            for kind in ('live','archive') for domain in (panel,reality,*([vision] if vision else []))):
+                        raise ValueError('Unowned staged Certbot TLS reference')
     rows = db.execute('SELECT key,value FROM settings').fetchall()
     settings = dict(rows)
     for name in ('webListen','webPort','webBasePath','webCertFile','webKeyFile',
