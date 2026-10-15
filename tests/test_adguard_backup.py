@@ -126,6 +126,27 @@ schema_version: 34
         self.assertFalse(f.path('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf').exists())
         self.assertNotIn('binary -c', (self.root/'binary-calls').read_text() if (self.root/'binary-calls').exists() else '')
 
+    def test_stopped_adguard_restore_never_starts_it_and_preserves_data(self):
+        f=self.fixture;self.install_fixture(active=False)
+        enabled=json.loads((self.root/'enabled.json').read_text());enabled['AdGuardHome']=False
+        (self.root/'enabled.json').write_text(json.dumps(enabled))
+        archive=f.backup();original=archive.read_bytes()
+        for _ in range(2):
+            states=json.loads((self.root/'services.json').read_text());states['AdGuardHome']='active'
+            (self.root/'services.json').write_text(json.dumps(states))
+            (self.root/'commands').write_text('');(self.root/'binary-calls').write_text('')
+            result=f.run_tool('restore',archive)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertEqual(json.loads((self.root/'services.json').read_text())['AdGuardHome'],'inactive')
+            self.assertFalse(json.loads((self.root/'enabled.json').read_text())['AdGuardHome'])
+            self.assertNotIn(['systemctl','start','AdGuardHome'],f.commands())
+            self.assertNotIn(['systemctl','enable','--now','AdGuardHome'],f.commands())
+            self.assertNotIn('-s install',(self.root/'binary-calls').read_text(),
+                             'Official AGH -s install starts its service as a side effect')
+            self.assertEqual(f.path('/opt/AdGuardHome/data/querylog.json').read_text(),'persistent query state')
+            self.assertTrue(f.path('/etc/systemd/system/AdGuardHome.service').is_file())
+            self.assertEqual(archive.read_bytes(),original)
+
     def test_present_snapshot_order_state_and_workdir(self):
         f=self.fixture
         for active in (True,False):
