@@ -169,8 +169,7 @@ if sys.argv[1]=='cert':
                 self.assertNotRegex(function(name),r'(?:x-ui\s+(?:start|restart)|systemctl\s+(?:start|restart)\s+x-ui)')
             self.assertLess(function('main').index('configure_xui_db'),function('main').index('x-ui restart'))
             hook = function('render_certificate_hook')
-            self.assertEqual(hook.count('systemctl restart x-ui'),1)
-            self.assertIn('if (( panel )); then check_xray_runtime; fi',hook)
+            self.assertIn('systemctl try-restart x-ui',hook)
 
     def test_fresh_json_subscription_replaces_upstream_seed(self):
         from test_personal_xhttp import render
@@ -237,8 +236,12 @@ if sys.argv[1]=='cert':
         for name in ('check_health','cmd_backup','cleanup','recover_restore_target'):
             self.assertNotIn('check_xray_runtime', function(name, BACKUP))
             self.assertIn('systemctl is-active', function(name, BACKUP))
-        self.assertIn('declare -f check_xray_runtime', function('render_certificate_hook'))
-        self.assertIn('if (( panel )); then check_xray_runtime; fi', function('render_certificate_hook'))
+        # Historical renderings retain exact bytes; the deployed current hook does not.
+        from certificate_fixtures import certificates
+        with tempfile.TemporaryDirectory() as directory:
+            hook=certificates(Path(directory)).read_text()
+            self.assertNotIn('check_xray_runtime',hook)
+            self.assertNotIn('RENEWED_DOMAINS',hook)
 
     def test_panel_renewal_fails_when_xray_does_not_resume(self):
         from certificate_fixtures import certificates
@@ -249,9 +252,12 @@ if sys.argv[1]=='cert':
         result = subprocess.run(['bash','-c',MOCK+'\nsleep() { :; }; source "$HOOK"'],
                                 capture_output=True,text=True,env={**f.env,'HOOK':str(hook),
                                 'RENEWED_DOMAINS':'example.com','RENEWED_LINEAGE':str(f.root/'etc/letsencrypt/live/example.com')})
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertNotIn('Xray must own',result.stderr)
+        result,calls=f.deploy(hook,FAIL_DEPLOY='try-restart x-ui',
+            RENEWED_LINEAGE=str(f.root/'etc/letsencrypt/live/example.com'))
         self.assertNotEqual(result.returncode,0)
-        self.assertIn('Xray must own',result.stderr)
-        self.assertIn('systemctl restart x-ui',f.calls.read_text())
+        self.assertIn('systemctl try-restart x-ui',calls)
 
     def test_real_nginx_verified_https_api_token_and_tls_subscriptions(self):
         from test_personal_xhttp import render, SHARED, MAIN
@@ -803,7 +809,7 @@ class AuditRecovery(unittest.TestCase):
             self.assertNotIn('location /panel',reality_path.read_text())
             self.assertEqual(f.path('/etc/nginx/nginx.conf').read_bytes(),main)
             self.assertIn('proxy_pass https://127.0.0.1:10002;',f.path('/etc/nginx/nginx.conf').read_text())
-            self.assertIn('check_xray_runtime',f.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx').read_text())
+            self.assertNotIn('check_xray_runtime',f.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx').read_text())
             self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
             archive.unlink(); archive = f.backup(); digest = hashlib.sha256(archive.read_bytes()).hexdigest()
 

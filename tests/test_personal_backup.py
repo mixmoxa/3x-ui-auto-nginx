@@ -488,6 +488,75 @@ class PersonalBackup(unittest.TestCase):
         self.assertEqual(self.path('/etc/x-ui/marker').read_text(),'keep-target')
         self.assertFalse(any(c[:2]==['systemctl','stop'] for c in self.commands()))
 
+    def test_historical_hooks_restore_as_current_without_changing_archive(self):
+        import hashlib
+        from certificate_fixtures import historical_hook
+        for mode in ('legacy','previous','current'):
+            with self.subTest(mode=mode):
+                f=PersonalBackup('runTest');f.setUp();self.addCleanup(f.doCleanups);f.seed_vision()
+                hooks={kind:f.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx'+
+                    ('-vision' if kind=='vision' else '')) for kind in ('panel','vision')}
+                expected={kind:path.read_bytes() for kind,path in hooks.items()}
+                if mode!='current':
+                    for kind,path in hooks.items():path.write_text(historical_hook(f.root,kind,mode=='legacy'))
+                with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                    original=db.execute('SELECT * FROM inbounds ORDER BY id').fetchall()
+                archive=f.backup();digest=hashlib.sha256(archive.read_bytes()).hexdigest()
+                f.write('/etc/letsencrypt/renewal-hooks/deploy/administrator','# administrator hook\n',0o755)
+                result=f.run_tool('restore',archive)
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                for kind,path in hooks.items():self.assertEqual(path.read_bytes(),expected[kind])
+                self.assertNotIn(b'check_xray_runtime',hooks['panel'].read_bytes())
+                self.assertNotIn(b'curl',hooks['vision'].read_bytes())
+                self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
+                with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                    self.assertEqual(db.execute('SELECT * FROM inbounds ORDER BY id').fetchall(),original)
+                self.assertEqual(f.path('/etc/letsencrypt/renewal-hooks/deploy/administrator').read_text(),'# administrator hook\n')
+
+    def test_update_hooks_is_scoped_idempotent_and_rolls_back_write_failure(self):
+        from certificate_fixtures import historical_hook
+        for scenario in ('legacy','previous','current','no-vision','unknown','symlink','mode','owner','write'):
+            with self.subTest(scenario=scenario):
+                f=PersonalBackup('runTest');f.setUp();self.addCleanup(f.doCleanups)
+                if scenario!='no-vision':f.seed_vision()
+                hooks=[f.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx')]
+                if scenario!='no-vision':hooks.append(f.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision'))
+                expected={path:path.read_bytes() for path in hooks}
+                if scenario!='current':
+                    for path,kind in zip(hooks,('panel','vision')):
+                        path.write_text(historical_hook(f.root,kind,scenario=='legacy'))
+                if scenario=='unknown':hooks[-1].write_text(hooks[-1].read_text()+'\necho executed > "$FIXTURE_ROOT/untrusted-executed"\n')
+                if scenario=='symlink':
+                    target=f.root/'administrator-hook';target.write_bytes(hooks[-1].read_bytes());hooks[-1].unlink();hooks[-1].symlink_to(target)
+                if scenario=='mode':hooks[-1].chmod(0o644)
+                if scenario=='owner':os.chown(hooks[-1],1000,1000)
+                if scenario=='write':
+                    # One real rename fails after the first hook replacement; recovery must restore both.
+                    wrapper=f.bin/'mv';wrapper.write_text('#!/bin/bash\nif [[ "${!#}" == *-vision && ! -e "$FIXTURE_ROOT/rename-failed" ]]; then touch "$FIXTURE_ROOT/rename-failed"; exit 1; fi\nexec /bin/mv "$@"\n');wrapper.chmod(0o755)
+                before={path:path.read_bytes() for path in hooks}
+                services=(f.root/'services.json').read_bytes();enabled=(f.root/'enabled.json').read_bytes()
+                db=f.path('/etc/x-ui/x-ui.db').read_bytes();(f.root/'commands').write_text('')
+                result=f.run_tool('update-hooks')
+                if scenario in ('unknown','symlink','mode','owner','write'):
+                    self.assertNotEqual(result.returncode,0)
+                    self.assertEqual({p:p.read_bytes() for p in hooks},before)
+                    self.assertNotIn('Hooks updated successfully',result.stdout)
+                    if scenario=='write':self.assertTrue((f.root/'rename-failed').exists(),'Failure must reach second replacement')
+                    if scenario=='symlink':self.assertTrue(hooks[-1].is_symlink())
+                else:
+                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                    self.assertEqual({p:p.read_bytes() for p in hooks},expected)
+                    stamps={p:p.stat().st_mtime_ns for p in hooks}
+                    result=f.run_tool('update-hooks');self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertEqual({p:p.stat().st_mtime_ns for p in hooks},stamps)
+                    for p in hooks:self.assertEqual(p.stat().st_mode & 0o777,0o755)
+                self.assertEqual((f.root/'services.json').read_bytes(),services)
+                self.assertEqual((f.root/'enabled.json').read_bytes(),enabled)
+                self.assertEqual(f.path('/etc/x-ui/x-ui.db').read_bytes(),db)
+                self.assertFalse((f.root/'untrusted-executed').exists())
+                self.assertFalse(any(c[0] in ('systemctl','curl','nginx','ss') for c in f.commands()))
+                if scenario=='no-vision':self.assertFalse(f.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision').exists())
+
     def seed_vision(self):
         from test_integrated_features import helper
         vision = helper('vision')

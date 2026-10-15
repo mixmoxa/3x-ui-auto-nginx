@@ -42,6 +42,64 @@ def nightly_after_cold_boot():
 
 
 class SecuritySystemd(unittest.TestCase):
+    def test_certbot_hooks_use_native_active_only_systemd_operations(self):
+        if Path('/proc/1/comm').read_text().strip() != 'systemd':
+            self.fail('Requires the existing disposable systemd VM')
+        from certificate_fixtures import certificates, function, relocate
+        run=lambda *a: subprocess.check_output(a,text=True,stderr=subprocess.STDOUT,timeout=30)
+        units={'x-ui':'xui-certbot-fixture.service','nginx':'nginx-certbot-fixture.service'}
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);hook=certificates(root,extra=('vision.example',))
+            cfg=root/'nginx.conf';cfg.write_text(f'pid {root}/nginx.pid;\nerror_log stderr;\nevents {{}}\nhttp {{}}\n')
+            def cleanup():
+                for unit in units.values():
+                    subprocess.run(['systemctl','stop',unit],check=False,capture_output=True)
+                    (Path('/run/systemd/system')/unit).unlink(missing_ok=True)
+                    subprocess.run(['systemctl','reset-failed',unit],check=False,capture_output=True)
+                run('systemctl','daemon-reload')
+            self.addCleanup(cleanup)
+            for service,unit in units.items():
+                text=f'[Service]\nExecStartPre=/bin/sh -c "test ! -e {root}/{service}-fail"\nExecStart=/bin/sleep 600\n'
+                if service=='nginx':text+=f'ExecReload=/bin/sh -c "test ! -e {root}/reload-fail"\n'
+                (Path('/run/systemd/system')/unit).write_text(text)
+            run('systemctl','daemon-reload')
+            mapping='''systemctl() {
+    local arg; local -a args=()
+    for arg in "$@"; do
+        case "$arg" in x-ui) arg=xui-certbot-fixture.service;; nginx) arg=nginx-certbot-fixture.service;; esac
+        args+=("$arg")
+    done
+    command systemctl "${args[@]}"
+}
+nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
+'''
+            env={**os.environ,'ROOT':str(root),'RENEWED_LINEAGE':str(root/'etc/letsencrypt/live/example.com')}
+            def apply(path=hook):
+                return subprocess.run(['bash','-c',mapping+'\nsource "$1"','fixture',str(path)],
+                    env=env,capture_output=True,text=True,timeout=30)
+            result=apply();self.assertEqual(result.returncode,0,result.stderr)
+            for unit in units.values():self.assertNotEqual(subprocess.run(['systemctl','is-active','--quiet',unit]).returncode,0)
+            for unit in units.values():run('systemctl','start',unit)
+            invocation=lambda:run('systemctl','show',units['x-ui'],'-p','InvocationID','--value').strip()
+            before=invocation();result=apply();self.assertEqual(result.returncode,0,result.stderr)
+            self.assertNotEqual(invocation(),before,'Real try-restart must create a new service invocation')
+            before=invocation();(root/'reload-fail').touch()
+            result=apply();self.assertNotEqual(result.returncode,0);self.assertEqual(invocation(),before)
+            (root/'reload-fail').unlink();(root/'x-ui-fail').touch()
+            result=apply();self.assertNotEqual(result.returncode,0,'Native failed restart must propagate')
+            (root/'x-ui-fail').unlink()
+            run('systemctl','stop',units['nginx'])
+            result=apply();self.assertEqual(result.returncode,0,result.stderr)
+            self.assertNotEqual(subprocess.run(['systemctl','is-active','--quiet',units['x-ui']]).returncode,0)
+            vision=root/'vision-hook'
+            source=relocate(function('render_vision_hook'),root)
+            vision.write_text(run('bash','-c',source+'\nrender_vision_hook vision.example'))
+            env['RENEWED_LINEAGE']=str(root/'etc/letsencrypt/live/vision.example')
+            result=apply(vision);self.assertEqual(result.returncode,0,result.stderr)
+            self.assertNotEqual(subprocess.run(['systemctl','is-active','--quiet',units['x-ui']]).returncode,0)
+            self.doCleanups()
+        print('REAL systemd deploy: inactive preserved / active try-restart / reload and restart failures: PASS',flush=True)
+
     def test_verified_panel_native_sandbox_and_initial_configuration(self):
         if Path('/proc/1/comm').read_text().strip() != 'systemd':
             self.fail('Requires the existing disposable systemd VM')

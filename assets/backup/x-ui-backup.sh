@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Managed 3x-ui Auto Nginx backup: same-host rollback or clean-host recovery, same OS/arch.
-# Usage: x-ui-backup {backup|restore <archive>|list}
+# Usage: x-ui-backup {backup|restore <archive>|list|update-hooks}
 set -Eeuo pipefail
 umask 077
 
@@ -458,8 +458,6 @@ preflight_target_certbot_ownership() {
         [[ -f "$hook" && ! -L "$hook" && "$(stat -c '%u:%g:%a' "$hook")" == '0:0:755' ]] || die 'Unowned target project deploy-hook.'
         domains=$(restored_certificate_domains "$hook") || die 'Unowned target project deploy-hook.'
         mapfile -t owned <<< "$domains"
-        { cmp -s "$hook" <(render_certificate_hook "${owned[0]}" "${owned[1]}") ||
-          cmp -s "$hook" <(render_certificate_hook "${owned[0]}" "${owned[1]}" legacy); } || die 'Unowned target project deploy-hook.'
     fi
     hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision
     if [[ -e "$hook" || -L "$hook" ]]; then
@@ -562,10 +560,9 @@ restore_project_certificates() {
     for name in 3x-ui-auto-nginx 3x-ui-auto-nginx-vision; do
         [[ -f "$source/renewal-hooks/deploy/$name" ]] || continue
         if [[ "$name" == 3x-ui-auto-nginx-vision ]]; then
-            render_vision_hook "$vision" > "/etc/letsencrypt/renewal-hooks/deploy/$name" || die 'Cannot restore verified Vision hook.'
-            chmod 0755 "/etc/letsencrypt/renewal-hooks/deploy/$name" || die 'Cannot set Vision hook permissions.'
+            install -m 0755 <(render_vision_hook "$vision") "/etc/letsencrypt/renewal-hooks/deploy/$name" || die 'Cannot restore verified Vision hook.'
         else
-            cp -a -- "$source/renewal-hooks/deploy/$name" /etc/letsencrypt/renewal-hooks/deploy/ || die 'Cannot restore verified project hook.'
+            install -m 0755 <(render_certificate_hook "${names[0]}" "${names[1]}") "/etc/letsencrypt/renewal-hooks/deploy/$name" || die 'Cannot restore verified project hook.'
         fi
     done
     while IFS= read -r file; do
@@ -768,7 +765,9 @@ restore_firewall() {
 }
 
 restored_certificate_domains() {
-    python3 - "${1:-/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx}" <<'PYDOM'
+    local hook=${1:-/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx} values mode
+    [[ -f "$hook" && ! -L "$hook" ]] || return 1
+    values=$(python3 - "$hook" <<'PYDOM'
 import shlex, sys
 values = {}
 for line in open(sys.argv[1]):
@@ -782,6 +781,16 @@ if any(not name or '/' in name or any(c.isspace() for c in name) for name in nam
     sys.exit('Missing or ambiguous project domains in deploy hook')
 print('\n'.join(names))
 PYDOM
+    ) || return 1
+    local -a names
+    mapfile -t names <<< "$values"
+    for mode in current previous legacy; do
+        if cmp -s "$hook" <(render_certificate_hook "${names[0]}" "${names[1]}" "$mode"); then
+            printf '%s\n' "$values"
+            return 0
+        fi
+    done
+    return 1
 }
 
 restored_vision_domain() {
@@ -803,6 +812,7 @@ print(values[0])
 PYVISION
     ) || return 1
     cmp -s "$hook" <(render_vision_hook "$value") ||
+        cmp -s "$hook" <(render_vision_hook "$value" previous) ||
         cmp -s "$hook" <(render_vision_hook "$value" legacy) || return 1
     printf '%s\n' "$value"
 }
@@ -818,16 +828,38 @@ check_vision_renewal() {
 }
 
 render_vision_hook() {
-    local readiness="--connect-timeout 2 --max-time 3 --retry 4 --retry-delay 1 --retry-max-time 10 --retry-all-errors"
-    # Recognize only the exact previous canonical hook for existing installations/archives.
-    [[ "${2:-}" != legacy ]] || readiness="--connect-timeout 5 --max-time 20"
     printf '#!/usr/bin/env bash\nset -Eeuo pipefail\nVISION_DOMAIN=%q\n' "$1"
     cat <<'VISIONHOOK'
 [[ "${RENEWED_LINEAGE:-}" == "/etc/letsencrypt/live/$VISION_DOMAIN" ]] || exit 0
-openssl x509 -in "$RENEWED_LINEAGE/fullchain.pem" -noout -checkend 0 -checkhost "$VISION_DOMAIN"
+VISIONHOOK
+    if [[ "${2:-current}" == current ]]; then
+        # -checkend short-circuits -checkhost; hostname mismatch alone exits zero.
+        cat <<'VISIONHOOK'
+openssl x509 -in "$RENEWED_LINEAGE/fullchain.pem" -noout -checkend 0
+openssl x509 -in "$RENEWED_LINEAGE/fullchain.pem" -noout -checkhost "$VISION_DOMAIN" |
+    grep -Fx "Hostname $VISION_DOMAIN does match certificate"
+VISIONHOOK
+    else
+        printf '%s\n' 'openssl x509 -in "$RENEWED_LINEAGE/fullchain.pem" -noout -checkend 0 -checkhost "$VISION_DOMAIN"'
+    fi
+    cat <<'VISIONHOOK'
 cert_key=$(openssl x509 -in "$RENEWED_LINEAGE/fullchain.pem" -pubkey -noout)
 private_key=$(openssl pkey -in "$RENEWED_LINEAGE/privkey.pem" -pubout)
 [[ "$cert_key" == "$private_key" ]] || exit 1
+VISIONHOOK
+    if [[ "${2:-current}" == current ]]; then
+        cat <<'VISIONHOOK'
+if systemctl is-active --quiet x-ui; then
+    systemctl try-restart x-ui
+    systemctl is-active --quiet x-ui
+fi
+VISIONHOOK
+        return
+    fi
+    # Exact historical renderings are recognized, never deployed or executed.
+    local readiness="--connect-timeout 2 --max-time 3 --retry 4 --retry-delay 1 --retry-max-time 10 --retry-all-errors"
+    [[ "${2:-}" != legacy ]] || readiness="--connect-timeout 5 --max-time 20"
+    cat <<'VISIONHOOK'
 # Xray 26.9.30 polls files hourly; ensure the deployed certificate is used now.
 systemctl restart x-ui
 systemctl is-active --quiet x-ui
@@ -882,6 +914,28 @@ PY
 
 render_certificate_hook() {
     local domain=$1 reality_domain=$2
+    if [[ "${3:-current}" == current ]]; then
+        printf '#!/usr/bin/env bash\nset -Eeuo pipefail\n'
+        printf 'PANEL_DOMAIN=%q\nREALITY_DOMAIN=%q\n' "$domain" "$reality_domain"
+        cat <<'HOOK'
+case "${RENEWED_LINEAGE:-}" in
+    "/etc/letsencrypt/live/$PANEL_DOMAIN") panel=1 ;;
+    "/etc/letsencrypt/live/$REALITY_DOMAIN") panel=0 ;;
+    *) exit 0 ;;
+esac
+if systemctl is-active --quiet nginx; then
+    nginx -t
+    systemctl reload nginx
+    systemctl is-active --quiet nginx
+fi
+if (( panel )) && systemctl is-active --quiet x-ui; then
+    systemctl try-restart x-ui
+    systemctl is-active --quiet x-ui
+fi
+HOOK
+        return
+    fi
+    # Exact historical renderings are recognized, never deployed or executed.
     {
         printf '#!/usr/bin/env bash\nset -Eeuo pipefail\n'
         printf 'PANEL_DOMAIN=%q\nREALITY_DOMAIN=%q\n' "$domain" "$reality_domain"
@@ -1095,13 +1149,9 @@ preflight_staged_adguard() (
 
 preflight_staged_core() {
     local domains panel reality vision hook="$STAGING/files/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx"
-    domains=$(restored_certificate_domains "$hook") || die 'Invalid staged project domains.'
+    domains=$(restored_certificate_domains "$hook") || die 'Unexpected staged project deploy hook; archive code was not executed.'
     panel=${domains%%$'\n'*} reality=${domains#*$'\n'}
     render_certificate_hook "$panel" "$reality" > "$STAGING/current-hook"
-    render_certificate_hook "$panel" "$reality" legacy > "$STAGING/legacy-hook"
-    [[ -f "$hook" && ! -L "$hook" ]] &&
-        { cmp -s "$hook" "$STAGING/current-hook" || cmp -s "$hook" "$STAGING/legacy-hook"; } ||
-        die 'Unexpected staged project deploy hook; archive code was not executed.'
     vision=$(restored_vision_domain "$STAGING/files/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision") || die 'Invalid staged Vision hook.'
     python3 - "$STAGING/files" "$DB" /etc/nginx /etc/letsencrypt /root/cert /var/www \
         "$panel" "$reality" "$STAGING/nginx-validation" "$vision" <<'PY'
@@ -1615,6 +1665,56 @@ cmd_restore() {
     warn 'Recovery uses the saved domains. On a new VPS, point their DNS to this VPS separately.'
 }
 
+# Explicit one-shot maintenance: reuse trusted renderers without running Restore.
+cmd_update_hooks() (
+    local deploy=/etc/letsencrypt/renewal-hooks/deploy domains vision directory='' name
+    local -a hooks=(3x-ui-auto-nginx) changed=() names
+    [[ -d "$deploy" && ! -L /etc/letsencrypt && ! -L /etc/letsencrypt/renewal-hooks && ! -L "$deploy" ]] ||
+        die 'Unsafe/missing project deploy directory; no hooks changed.'
+    domains=$(restored_certificate_domains "$deploy/3x-ui-auto-nginx") || die 'Unrecognized project hook; no hooks changed.'
+    mapfile -t names <<< "$domains"
+    vision=$(restored_vision_domain "$deploy/3x-ui-auto-nginx-vision") || die 'Unrecognized Vision hook; no hooks changed.'
+    [[ -z "$vision" ]] || hooks+=(3x-ui-auto-nginx-vision)
+    for name in "${hooks[@]}"; do
+        [[ "$(stat -c '%u:%g:%a' "$deploy/$name")" == '0:0:755' ]] || die 'Unowned project hook; no hooks changed.'
+    done
+    directory=$(mktemp -d /etc/letsencrypt/.3x-ui-hooks-XXXXXX) || die 'Cannot prepare private hook update.'
+    chmod 0700 "$directory" || die 'Cannot protect hook update directory.'
+    # Each rename is atomic; a later failure restores every attempted replacement.
+    trap 'result=$?; trap - EXIT ERR; if (( result )); then
+        for name in "${changed[@]}"; do
+            if cp -a -- "$directory/$name.old" "$directory/$name.restore" &&
+               mv -fT -- "$directory/$name.restore" "$deploy/$name"; then :;
+            else warn "Cannot restore project hook: $name"; fi
+        done
+        warn "Hook update failed; original files retained in $directory";
+    fi; exit "$result"' EXIT
+    trap 'exit 1' ERR
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    render_certificate_hook "${names[0]}" "${names[1]}" > "$directory/3x-ui-auto-nginx.new"
+    if [[ -n "$vision" ]]; then render_vision_hook "$vision" > "$directory/3x-ui-auto-nginx-vision.new"; fi
+    # Prepare and validate both files before the first replacement.
+    for name in "${hooks[@]}"; do
+        bash -n "$directory/$name.new"
+        chown root:root "$directory/$name.new"
+        chmod 0755 "$directory/$name.new"
+        cp -a -- "$deploy/$name" "$directory/$name.old"
+    done
+    for name in "${hooks[@]}"; do
+        cmp -s "$deploy/$name" "$directory/$name.new" && continue
+        changed+=("$name")
+        mv -fT -- "$directory/$name.new" "$deploy/$name"
+    done
+    if (( ${#changed[@]} )); then
+        ok 'Hooks updated successfully; services and certbot.timer were not changed.'
+        printf 'Original hooks: %s\n' "$directory"
+    else
+        rm -rf -- "$directory"
+        ok 'Project hooks are already current.'
+    fi
+)
+
 cmd_list() {
     local archive
     shopt -s nullglob
@@ -1636,7 +1736,8 @@ main() {
         backup) cmd_backup ;;
         restore) cmd_restore "${2:-}" ;;
         list) cmd_list ;;
-        *) die 'Usage: x-ui-backup {backup|restore <archive>|list}' ;;
+        update-hooks) cmd_update_hooks ;;
+        *) die 'Usage: x-ui-backup {backup|restore <archive>|list|update-hooks}' ;;
     esac
 }
 

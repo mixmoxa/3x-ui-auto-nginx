@@ -82,6 +82,115 @@ class CertificateRenewal(unittest.TestCase):
         return subprocess.run(['bash', '-euo', 'pipefail', '-c', script], input=input, text=True, capture_output=True,
                               env={**self.env, **env})
 
+    def deploy(self, hook, **env):
+        # Services are stateful fixtures; certificate parsing stays real.
+        self.calls.unlink(missing_ok=True)
+        script = r'''
+restarted=0
+reloaded=0
+systemctl() {
+    echo "systemctl $*" >> "$CALLS"
+    case "$1" in
+        is-active)
+            [[ "$*" != "${FAIL_DEPLOY:-}" ]] || return 1
+            [[ "${FAIL_DEPLOY:-}" != 'post x-ui' || "$restarted" == 0 || "${!#}" != x-ui ]] || return 1
+            [[ "${FAIL_DEPLOY:-}" != 'post nginx' || "$reloaded" == 0 || "${!#}" != nginx ]] || return 1
+            [[ "${!#}" != x-ui || "$XUI_ACTIVE" == 1 ]] &&
+            [[ "${!#}" != nginx || "$NGINX_ACTIVE" == 1 ]] ;;
+        restart|try-restart) restarted=1; [[ "$*" != "${FAIL_DEPLOY:-}" ]] ;;
+        reload) reloaded=1; [[ "$*" != "${FAIL_DEPLOY:-}" ]] ;;
+        *) return 1 ;;
+    esac
+}
+nginx() { echo "nginx $*" >> "$CALLS"; [[ "${FAIL_DEPLOY:-}" != nginx ]]; }
+curl() { echo curl >> "$CALLS"; return 35; }
+sleep() { :; }
+source "$HOOK"
+'''
+        result = subprocess.run(['bash', '-c', script], text=True, capture_output=True,
+            env={**self.env, 'HOOK': str(hook), 'XUI_ACTIVE':'1', 'NGINX_ACTIVE':'1', **env})
+        calls = self.calls.read_text().splitlines() if self.calls.exists() else []
+        return result, calls
+
+    def test_deploy_is_independent_of_inbounds_and_preserves_stopped_services(self):
+        hook = certificates(self.root)
+        ss = self.root/'health-bin/ss'
+        # Python subprocess must encounter this real executable, not a shell function.
+        ss.write_text('''#!/bin/sh
+echo ss >> "$CALLS"
+case "$DISABLED" in all|custom-only) exit 0;; esac
+case "$*" in
+ *-lxnp*) [ "$DISABLED" = xhttp ] || echo 'u_str LISTEN 0 128 '''+str(self.root)+'''/dev/shm/uds2023.sock 0 users:(("xray",pid=43210,fd=1))';;
+ *)
+ [ "$DISABLED" = reality ] || echo 'tcp LISTEN 0 128 127.0.0.1:8443 *:* users:(("xray",pid=43210,fd=2))'
+ [ "$DISABLED" = hysteria2 ] || echo 'udp UNCONN 0 128 *:443 *:* users:(("xray",pid=43210,fd=3))';;
+esac
+exit 0
+''')
+        for disabled in ('none','reality','xhttp','hysteria2','all','custom-only'):
+            with self.subTest(disabled=disabled):
+                result,calls = self.deploy(hook, DISABLED=disabled,
+                    RENEWED_LINEAGE=str(self.root/'etc/letsencrypt/live/example.com'))
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertIn('systemctl try-restart x-ui',calls)
+                self.assertNotIn('ss',calls)
+                self.assertNotIn('curl',calls)
+        for nginx,xui in (('1','1'),('1','0'),('0','1'),('0','0')):
+            with self.subTest(nginx=nginx,xui=xui):
+                result,calls = self.deploy(hook, NGINX_ACTIVE=nginx, XUI_ACTIVE=xui,
+                    RENEWED_LINEAGE=str(self.root/'etc/letsencrypt/live/example.com'))
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual('systemctl reload nginx' in calls,nginx=='1')
+                self.assertEqual('nginx -t' in calls,nginx=='1')
+                self.assertEqual('systemctl try-restart x-ui' in calls,xui=='1')
+                self.assertNotIn('systemctl restart x-ui',calls)
+        for lineage,domains in (('foreign','example.com reality.example.com'),
+                                ('','example.com'),('reality.example.com','example.com')):
+            result,calls = self.deploy(hook, RENEWED_DOMAINS=domains,
+                RENEWED_LINEAGE=str(self.root/'etc/letsencrypt/live'/lineage) if lineage else '')
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertFalse(any('restart' in c for c in calls),calls)
+            if lineage!='reality.example.com':self.assertEqual(calls,[])
+        for failure in ('nginx','reload nginx','try-restart x-ui'):
+            result,calls = self.deploy(hook, FAIL_DEPLOY=failure,
+                RENEWED_LINEAGE=str(self.root/'etc/letsencrypt/live/example.com'))
+            self.assertNotEqual(result.returncode,0,failure)
+            self.assertIn('nginx -t' if failure=='nginx' else 'systemctl '+failure,calls)
+        for failure in ('post nginx','post x-ui'):
+            result,calls=self.deploy(hook,FAIL_DEPLOY=failure,
+                RENEWED_LINEAGE=str(self.root/'etc/letsencrypt/live/example.com'))
+            self.assertNotEqual(result.returncode,0,failure)
+
+    def test_vision_deploy_uses_certificate_and_active_service_only(self):
+        certificates(self.root,extra=('vision.example','other.example'))
+        result=self.run_functions(('render_vision_hook',),'render_vision_hook vision.example')
+        self.assertEqual(result.returncode,0,result.stderr)
+        hook=self.root/'vision-hook';hook.write_text(result.stdout)
+        lineage=self.root/'etc/letsencrypt/live/vision.example'
+        for active in ('1','0'):
+            result,calls=self.deploy(hook,XUI_ACTIVE=active,RENEWED_LINEAGE=str(lineage))
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertNotIn('curl',calls,'Unavailable/TLS EOF fallback is not a deployment gate')
+            self.assertEqual('systemctl try-restart x-ui' in calls,active=='1')
+            self.assertNotIn('systemctl restart x-ui',calls)
+        result,calls=self.deploy(hook,RENEWED_LINEAGE=str(lineage),FAIL_DEPLOY='try-restart x-ui')
+        self.assertNotEqual(result.returncode,0)
+        result,calls=self.deploy(hook,RENEWED_LINEAGE=str(self.root/'etc/letsencrypt/live/other.example'))
+        self.assertEqual(result.returncode,0);self.assertEqual(calls,[])
+        original={name:(lineage/name).read_bytes() for name in ('fullchain.pem','privkey.pem')}
+        for fault in ('missing','invalid','mismatch','hostname'):
+            with self.subTest(fault=fault):
+                for name,data in original.items():(lineage/name).write_bytes(data)
+                if fault=='missing':(lineage/'fullchain.pem').unlink()
+                if fault=='invalid':(lineage/'fullchain.pem').write_text('invalid')
+                if fault in ('mismatch','hostname'):
+                    shutil.copyfile(self.root/'etc/letsencrypt/live/other.example/privkey.pem',lineage/'privkey.pem')
+                if fault=='hostname':
+                    shutil.copyfile(self.root/'etc/letsencrypt/live/other.example/fullchain.pem',lineage/'fullchain.pem')
+                result,calls=self.deploy(hook,RENEWED_LINEAGE=str(lineage))
+                self.assertNotEqual(result.returncode,0)
+                self.assertFalse(any('restart' in c for c in calls),calls)
+
     def test_supported_os_rejects_debian12_before_guard(self):
         for distro, version, allowed in (('ubuntu','24.04',True),('ubuntu','26.04',True),('debian','13',True),
                                         ('debian','12',False),('ubuntu','22.04',False),('other','13',False)):
@@ -290,25 +399,23 @@ COPY
 
     def test_deploy_hook_decision_matrix_and_fail_closed_order(self):
         hook=certificates(self.root)
+        nginx=['systemctl is-active --quiet nginx','nginx -t','systemctl reload nginx','systemctl is-active --quiet nginx']
+        panel=nginx+['systemctl is-active --quiet x-ui','systemctl try-restart x-ui','systemctl is-active --quiet x-ui']
         scenarios=(('unrelated.example','unrelated.example',[],''),
-                   ('*.unrelated.example','unrelated.example',[],''),
-                   ('','example.com',['nginx -t','systemctl reload nginx','systemctl is-active --quiet nginx','systemctl restart x-ui','systemctl is-active --quiet x-ui'],''),
-                   ('reality.example.com','reality.example.com',['nginx -t','systemctl reload nginx','systemctl is-active --quiet nginx'],''),
-                   ('example.com','example.com',['nginx -t','systemctl reload nginx','systemctl is-active --quiet nginx','systemctl restart x-ui','systemctl is-active --quiet x-ui'],''),
-                   ('example.com reality.example.com','example.com',['nginx -t','systemctl reload nginx','systemctl is-active --quiet nginx','systemctl restart x-ui','systemctl is-active --quiet x-ui'],''),
-                   ('example.com','example.com',['nginx -t'],'nginx'),
-                   ('example.com','example.com',['nginx -t','systemctl reload nginx'],'reload nginx'),
-                   ('example.com','example.com',['nginx -t','systemctl reload nginx','systemctl is-active --quiet nginx','systemctl restart x-ui'],'restart x-ui'),
-                   ('example.com','example.com',['nginx -t','systemctl reload nginx','systemctl is-active --quiet nginx'],'is-active --quiet nginx'),
-                   ('example.com','example.com',['nginx -t','systemctl reload nginx','systemctl is-active --quiet nginx','systemctl restart x-ui','systemctl is-active --quiet x-ui'],'is-active --quiet x-ui'))
+                   ('example.com','unrelated.example',[],''),
+                   ('','example.com',panel,''),
+                   ('reality.example.com','reality.example.com',nginx,''),
+                   ('example.com','example.com',panel,''),
+                   ('example.com additional.example','example.com',panel,''),
+                   ('example.com','example.com',nginx[:2],'nginx'),
+                   ('example.com','example.com',nginx[:3],'reload nginx'),
+                   ('example.com','example.com',panel[:-1],'try-restart x-ui'),
+                   ('example.com','example.com',nginx,'post nginx'),
+                   ('example.com','example.com',panel,'post x-ui'))
         for domains,lineage,expected,failure in scenarios:
-            self.calls.unlink(missing_ok=True)
-            result=subprocess.run(['bash','-c',MOCK+'\nsource "$HOOK"'],capture_output=True,text=True,env={
-                **self.env,'HOOK':str(hook),'RENEWED_DOMAINS':domains,'RENEWED_LINEAGE':str(self.root/'etc/letsencrypt/live'/lineage),'FAIL_CERT':failure})
+            result,calls=self.deploy(hook, RENEWED_DOMAINS=domains,
+                RENEWED_LINEAGE=str(self.root/'etc/letsencrypt/live'/lineage),FAIL_DEPLOY=failure)
             self.assertEqual(result.returncode,1 if failure else 0,result.stderr)
-            calls=self.calls.read_text().splitlines() if self.calls.exists() else []
-            if not failure and 'systemctl restart x-ui' in expected:
-                expected = expected + ['systemctl is-active --quiet x-ui']
             self.assertEqual(calls,expected)
         self.assertEqual(hook.stat().st_mode & 0o777,0o755)
         if os.geteuid()==0: self.assertEqual((hook.stat().st_uid,hook.stat().st_gid),(0,0))
