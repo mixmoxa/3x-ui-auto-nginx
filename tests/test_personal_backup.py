@@ -4,6 +4,7 @@ Only filesystem roots are relocated in a temporary copy of the source. tar/gzip,
 SQLite and (when NGINX_BIN is set) nginx are real; no installer is executed.
 """
 import copy
+import hashlib
 import io
 import json
 import os
@@ -353,7 +354,8 @@ class PersonalBackup(unittest.TestCase):
         (self.root / 'crontab').write_text('@hourly /opt/unrelated\n')
         (self.root / 'services.json').write_text(json.dumps({'x-ui': 'active', 'nginx': 'active', 'mtr-backend': 'active',
                                                           'certbot.timer': 'active', 'certbot.service': 'inactive'}))
-        (self.root / 'enabled.json').write_text(json.dumps({'certbot.timer': True}))
+        (self.root / 'enabled.json').write_text(json.dumps({name: True for name in
+                                                          ('x-ui','nginx','mtr-backend','certbot.timer')}))
 
     def path(self, absolute):
         return self.root / absolute.lstrip('/')
@@ -385,7 +387,7 @@ class PersonalBackup(unittest.TestCase):
     def member(self, path):
         return 'files/' + str(self.path(path)).lstrip('/')
 
-    def changed_archive(self, archive, metadata=None, extra=None, db=None, omit=None):
+    def changed_archive(self, archive, metadata=None, extra=None, db=None, omit=None, omit_metadata=()):
         fd, target = tempfile.mkstemp(dir=self.temp.name, suffix='.tar.gz')
         os.close(fd)
         target = Path(target)
@@ -394,9 +396,10 @@ class PersonalBackup(unittest.TestCase):
                 if omit and (item.name == omit or item.name.startswith(omit + '/')):
                     continue
                 data = src.extractfile(item).read() if item.isfile() else None
-                if item.name == 'meta.json' and metadata:
+                if item.name == 'meta.json' and (metadata or omit_metadata):
                     meta = json.loads(data)
-                    meta.update(metadata)
+                    meta.update(metadata or {})
+                    for key in omit_metadata: meta.pop(key, None)
                     data = json.dumps(meta).encode()
                 if item.name == self.member('/etc/x-ui/x-ui.db') and db is not None:
                     data = db
@@ -694,6 +697,104 @@ class PersonalBackup(unittest.TestCase):
         self.assertLess(start, later_copy)
         self.assertEqual(json.loads((self.root / 'services.json').read_text())['x-ui'], 'active')
         self.assertEqual(self.run_tool('list').returncode, 0)
+
+    def test_service_states_survive_backup_and_repeated_restore(self):
+        for service, active, enabled in (('x-ui','inactive',True), ('x-ui','active',False),
+                ('x-ui','failed',False), ('nginx','inactive',False),
+                ('mtr-backend','inactive',False), ('certbot.timer','inactive',False)):
+            with self.subTest(service=service,active=active,enabled=enabled):
+                f=PersonalBackup('runTest');f.setUp();self.addCleanup(f.doCleanups)
+                states=json.loads((f.root/'services.json').read_text());states[service]=active
+                flags=json.loads((f.root/'enabled.json').read_text());flags[service]=enabled
+                (f.root/'services.json').write_text(json.dumps(states))
+                (f.root/'enabled.json').write_text(json.dumps(flags))
+                with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                    expected={name:db.execute('SELECT * FROM "'+name+'" ORDER BY rowid').fetchall()
+                        for name, in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                archive=f.backup(DEAD_XRAY='1',FAIL_ACME='1',FAIL_NGINX='1')
+                original=archive.read_bytes();digest=hashlib.sha256(original).digest()
+                self.assertEqual(json.loads((f.root/'services.json').read_text()),states)
+                for _ in range(2):
+                    (f.root/'services.json').write_text(json.dumps({name:'active' for name in flags} | {'certbot.service':'inactive'}))
+                    (f.root/'enabled.json').write_text(json.dumps({name:True for name in flags}))
+                    (f.root/'commands').write_text('')
+                    result=f.run_tool('restore',archive,DEAD_XRAY='1',FAIL_ACME='1',FAIL_VISION_TLS='1')
+                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                    restored=json.loads((f.root/'services.json').read_text())
+                    for name,state in states.items():
+                        self.assertEqual(restored.get(name,'inactive'),'inactive' if state=='failed' else state)
+                    self.assertEqual(json.loads((f.root/'enabled.json').read_text()),flags)
+                    if active!='active':self.assertNotIn(['systemctl','start',service],f.commands())
+                    self.assertFalse(any(c[0] in ('curl','ss') for c in f.commands()))
+                    with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                        self.assertEqual(db.execute('PRAGMA quick_check').fetchone()[0],'ok')
+                        self.assertEqual({name:db.execute('SELECT * FROM "'+name+'" ORDER BY rowid').fetchall()
+                            for name in expected},expected)
+                    self.assertEqual(archive.read_bytes(),original)
+                    self.assertEqual(hashlib.sha256(archive.read_bytes()).digest(),digest)
+                with tarfile.open(archive) as saved:
+                    meta=json.load(saved.extractfile('meta.json'))
+                self.assertEqual(meta['format_version'],3)
+                self.assertEqual(meta['service_states'],{name:{'active':states[name],'enabled':value} for name,value in flags.items()})
+                if service=='x-ui' and active=='inactive':
+                    target={name:'active' for name in flags} | {'certbot.service':'inactive'}
+                    target_enabled={name:name=='certbot.timer' for name in flags}
+                    (f.root/'services.json').write_text(json.dumps(target))
+                    (f.root/'enabled.json').write_text(json.dumps(target_enabled))
+                    f.write('/etc/x-ui/target-only','previous target')
+                    result=f.run_tool('restore',archive,FAIL_HEALTH_SERVICE='mtr-backend',FAIL_ONCE='1')
+                    self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
+                    self.assertNotIn('Restore completed successfully.',result.stdout)
+                    self.assertTrue((f.root/'fault-used').exists(),'Intended service-health fault was not reached')
+                    self.assertEqual(f.path('/etc/x-ui/target-only').read_text(),'previous target')
+                    self.assertEqual(json.loads((f.root/'services.json').read_text()),target)
+                    self.assertEqual(json.loads((f.root/'enabled.json').read_text()),target_enabled)
+                    self.assertIn('Previous managed state/service states restored and checked',result.stderr)
+                    self.assertFalse(list(f.path('/var/backups/x-ui').glob('.rollback-*')))
+                    self.assertEqual(archive.read_bytes(),original)
+
+    def test_service_metadata_rejects_invalid_state_before_target_mutation(self):
+        archive=self.backup()
+        valid={name:{'active':'active','enabled':True} for name in ('x-ui','nginx','mtr-backend','certbot.timer')}
+        for bad in (None, [], {}, {**valid,'ssh':{'active':'active','enabled':True}},
+                    {**valid,'x-ui':{'active':'activating','enabled':True}},
+                    {**valid,'x-ui':{'active':'active','enabled':'false'}},
+                    {**valid,'x-ui':{'active':'active','enabled':True,'command':'arbitrary'}}):
+            with self.subTest(metadata=bad):
+                candidate=self.changed_archive(archive,metadata={'service_states':bad})
+                before=self.path('/etc/x-ui/x-ui.db').read_bytes()
+                states=(self.root/'services.json').read_bytes();enabled=(self.root/'enabled.json').read_bytes()
+                (self.root/'commands').write_text('')
+                result=self.run_tool('restore',candidate)
+                self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
+                self.assertIn('service-state metadata',result.stderr)
+                self.assertEqual(self.path('/etc/x-ui/x-ui.db').read_bytes(),before)
+                self.assertEqual((self.root/'services.json').read_bytes(),states)
+                self.assertEqual((self.root/'enabled.json').read_bytes(),enabled)
+                self.assertFalse(any(c[:2]==['systemctl','stop'] for c in self.commands()))
+
+    def test_legacy_v3_without_service_metadata_keeps_original_startup_contract(self):
+        archive=self.changed_archive(self.backup(),omit_metadata=('service_states',))
+        with tarfile.open(archive) as saved:self.assertNotIn('service_states',json.load(saved.extractfile('meta.json')))
+        original=archive.read_bytes()
+        (self.root/'services.json').write_text(json.dumps({'certbot.service':'inactive'}))
+        (self.root/'enabled.json').write_text('{}')
+        result=self.run_tool('restore',archive)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        states=json.loads((self.root/'services.json').read_text());enabled=json.loads((self.root/'enabled.json').read_text())
+        for name in ('x-ui','nginx','mtr-backend','certbot.timer'):
+            self.assertEqual(states[name],'active');self.assertIs(enabled[name],True)
+        self.assertEqual(archive.read_bytes(),original)
+
+    def test_recreatable_cert_links_are_optional_but_original_data_is_required(self):
+        for name in ('fullchain.pem','privkey.pem'):self.path('/root/cert/example.com/'+name).unlink()
+        archive=self.backup();result=self.run_tool('restore',archive)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        for name in ('fullchain.pem','privkey.pem'):self.assertTrue(self.path('/root/cert/example.com/'+name).is_file())
+        self.path('/usr/bin/x-ui').unlink()
+        result=self.run_tool('backup')
+        self.assertNotEqual(result.returncode,0);self.assertIn('Required managed path is missing',result.stderr)
+        self.assertNotIn('Backup completed successfully.',result.stdout)
 
     def test_inactive_service_is_not_started(self):
         state = self.root / 'services.json'

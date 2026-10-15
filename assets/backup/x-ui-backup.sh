@@ -27,6 +27,8 @@ RESUME_CERTBOT_TIMER=0
 RESUME_AGH=0 ADGUARD_HOME=false AGH_ARCH=
 RESTORE_RECOVERY=0 RESTORE_MUTATED=0 ROLLBACK_DIR=
 declare -A OLD_ACTIVE=() OLD_ENABLED=()
+declare -A RESTORED_ACTIVE=() RESTORED_ENABLED=()
+BACKUP_SERVICE_STATES=
 
 stage() { STAGE=$*; printf '\n==> %s\n' "$*"; }
 ok()    { printf '[OK] %s\n' "$*"; }
@@ -226,6 +228,16 @@ try:
             fail('Metadata must be an object')
         if type(meta.get('adguard_home')) is not bool:
             fail('Missing boolean adguard_home metadata')
+        if 'service_states' in meta:
+            states = meta['service_states']
+            services = {'x-ui', 'nginx', 'mtr-backend', 'certbot.timer'}
+            if meta['adguard_home']: services.add('AdGuardHome')
+            if not isinstance(states, dict) or set(states) != services:
+                fail('Invalid service-state metadata: expected managed services only')
+            for state in states.values():
+                if (not isinstance(state, dict) or set(state) != {'active', 'enabled'} or
+                    state['active'] not in ('active', 'inactive', 'failed') or type(state['enabled']) is not bool):
+                    fail('Invalid service-state metadata: expected active/inactive/failed and boolean enabled')
         agh_tree = '/opt/AdGuardHome'.lstrip('/')
         agh_helper = '/usr/local/lib/3x-ui-pro/managed-adguard.sh'.lstrip('/')
         agh_snippet = '/etc/nginx/snippets/x-ui-auto-optional/adguard.conf'.lstrip('/')
@@ -323,6 +335,28 @@ collect_path() {
     fi
 }
 
+save_backup_services() {
+    local service state enabled status records=()
+    for service in x-ui nginx mtr-backend certbot.timer AdGuardHome; do
+        [[ "$service" != AdGuardHome || "$ADGUARD_HOME" == true ]] || continue
+        state=$(systemctl is-active "$service") || :
+        case "$state" in active|inactive|failed) ;; *) die "Unknown initial $service state." ;; esac
+        if systemctl is-enabled --quiet "$service"; then enabled=true;
+        else
+            status=$?
+            (( status == 1 )) || die "Cannot determine whether $service is enabled."
+            enabled=false
+        fi
+        records+=("$service" "$state" "$enabled")
+    done
+    BACKUP_SERVICE_STATES=$(python3 - "${records[@]}" <<'PY'
+import json, sys
+args = sys.argv[1:]
+print(json.dumps({args[i]: dict(active=args[i+1], enabled=args[i+2]=='true') for i in range(0,len(args),3)}))
+PY
+    ) || die 'Cannot save initial service states.'
+}
+
 write_metadata() {
     local source_ip xui_version xray_version xray
     source_ip=$(current_ipv4) || { source_ip=; warn 'Cannot detect source IPv4; diagnostics IP migration will be skipped.'; }
@@ -333,13 +367,14 @@ write_metadata() {
         xray_version=$("$xray" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1) || xray_version=unknown
         break
     done
-    python3 - "$STAGING/meta.json" "$OS_ID" "$OS_VERSION" "$ARCH" "$xui_version" "$xray_version" "$source_ip" "$ADGUARD_HOME" "$AGH_ARCH" <<'PY'
+    python3 - "$STAGING/meta.json" "$OS_ID" "$OS_VERSION" "$ARCH" "$xui_version" "$xray_version" "$source_ip" "$ADGUARD_HOME" "$AGH_ARCH" "$BACKUP_SERVICE_STATES" <<'PY'
 import datetime, json, socket, sys
-path, os_id, os_version, arch, x_ui, xray, ipv4, agh, agh_arch = sys.argv[1:]
+path, os_id, os_version, arch, x_ui, xray, ipv4, agh, agh_arch, services = sys.argv[1:]
 with open(path, 'w') as out:
     json.dump(dict(format_version=3, created=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                    hostname=socket.gethostname(), os_id=os_id, os_version=os_version, arch=arch,
                    x_ui_version=x_ui, xray_version=xray, source_ipv4=ipv4, adguard_home=(agh == "true"),
+                   service_states=json.loads(services),
                    **(dict(adguard_version="v0.107.79", adguard_arch=agh_arch) if agh == "true" else {})), out, indent=2)
     out.write('\n')
 PY
@@ -353,6 +388,7 @@ cmd_backup() {
     done
     command -v python3 >/dev/null && command -v sqlite3 >/dev/null || die 'Backup requires python3 and sqlite3.'
     load_adguard_backup_state
+    save_backup_services
     pause_certbot_timer
     prepare_store backup
     local estimate available path initial_state existing=()
@@ -968,7 +1004,7 @@ HOOK
 }
 
 check_health() {
-    local service failed=0
+    local service state failed=0
     stage 'Final checks'
     quick_check "$DB"
     [[ "$(sqlite3 "$DB" "SELECT value FROM settings WHERE key='webListen';")" == 127.0.0.1 ]] ||
@@ -979,15 +1015,19 @@ check_health() {
         warn 'nginx configuration check failed; inspect nginx -t.'
         failed=1
     fi
-    for service in x-ui nginx mtr-backend; do
-        if systemctl is-active --quiet "$service"; then ok "$service is active";
-        else printf '[FAIL] %s is not active\n' "$service" >&2; failed=1; fi
+    for service in x-ui nginx mtr-backend certbot.timer AdGuardHome; do
+        [[ "$service" != AdGuardHome || "$ADGUARD_HOME" == true ]] || continue
+        state=$(systemctl is-active "$service") || :
+        if [[ "${RESTORED_ACTIVE[$service]}" == active ]]; then
+            if [[ "$state" == active ]]; then ok "$service is active";
+            else printf '[FAIL] %s is not active\n' "$service" >&2; failed=1; fi
+        else
+            case "$state" in inactive|failed) ok "$service remains stopped ($state)" ;;
+                *) printf '[FAIL] Unexpected %s state: %s\n' "$service" "$state" >&2; failed=1 ;; esac
+        fi
     done
-    systemctl is-enabled --quiet certbot.timer || failed=1
-    systemctl is-active --quiet certbot.timer || failed=1
     if [[ "$ADGUARD_HOME" == true ]]; then
-        systemctl is-active --quiet AdGuardHome || die 'AdGuard Home is not active.'
-        ok 'AdGuard Home is active; existing credentials preserved'
+        ok 'AdGuard Home existing credentials preserved'
     fi
     (( ! failed )) || die 'Restore failed mandatory health checks; archive is unchanged. Fix the cause and rerun restore.'
 }
@@ -1497,6 +1537,71 @@ PY
     install -o root -g root -m 0755 "$STAGING/current-hook" "$hook" || die 'Cannot normalize staged project hook.'
 }
 
+load_restored_services() {
+    local records service active enabled
+    records=$(python3 - "$STAGING/meta.json" <<'PY'
+import json, sys
+meta = json.load(open(sys.argv[1]))
+services = ['x-ui', 'nginx', 'mtr-backend', 'certbot.timer']
+if meta['adguard_home']: services.append('AdGuardHome')
+for service in services:
+    state = meta['service_states'][service] if 'service_states' in meta else dict(active='active', enabled=True)
+    print(service, state['active'], int(state['enabled']))
+PY
+    ) || die 'Cannot read saved service states.'
+    while read -r service active enabled; do
+        RESTORED_ACTIVE[$service]=$active RESTORED_ENABLED[$service]=$enabled
+    done <<< "$records"
+}
+
+restore_service_states() {
+    local service status
+    for service in x-ui mtr-backend AdGuardHome nginx certbot.timer; do
+        [[ "$service" != AdGuardHome || "$ADGUARD_HOME" == true ]] || continue
+        if [[ "${RESTORED_ENABLED[$service]}" == 1 ]]; then
+            if [[ "$service" == certbot.timer && "${RESTORED_ACTIVE[$service]}" == active ]]; then
+                systemctl enable --now "$service" && systemctl is-active --quiet "$service" || die "Cannot enable and start $service."
+            else systemctl enable "$service" || die "Cannot enable $service."; fi
+            systemctl is-enabled --quiet "$service" || die "$service was not enabled."
+        else
+            systemctl disable "$service" || die "Cannot disable $service."
+            if systemctl is-enabled --quiet "$service"; then die "$service is still enabled.";
+            else status=$?; (( status == 1 )) || die "Cannot verify disabled $service."; fi
+        fi
+        if [[ "${RESTORED_ACTIVE[$service]}" == active ]]; then
+            [[ "$service" != certbot.timer || "${RESTORED_ENABLED[$service]}" != 1 ]] || continue
+            systemctl start "$service" || die "Cannot start $service."
+            systemctl is-active --quiet "$service" || die "$service is not active"
+        else
+            systemctl stop "$service" || die "Cannot leave $service stopped."
+        fi
+    done
+    RESUME_CERTBOT_TIMER=0
+}
+
+prepare_stopped_adguard_service() {
+    # v0.107.79 -s install also starts AGH. Render its systemd contract without that side effect.
+    install -o root -g root -m 0644 /dev/stdin /etc/systemd/system/AdGuardHome.service <<EOF || return 1
+[Unit]
+Description=AdGuard Home: Network-level blocker
+ConditionFileIsExecutable=${AGH_DIR}/AdGuardHome
+After=syslog.target network-online.target
+[Service]
+StartLimitInterval=5
+StartLimitBurst=10
+ExecStart=${AGH_DIR}/AdGuardHome -c ${AGH_DIR}/AdGuardHome.yaml -w ${AGH_DIR} --no-check-update -s run
+WorkingDirectory=${AGH_DIR}
+StandardOutput=journal
+StandardError=journal
+Restart=always
+RestartSec=10
+EnvironmentFile=-/etc/sysconfig/AdGuardHome
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload && agh_unit
+}
+
 save_restore_services() {
     local service state
     for service in x-ui nginx mtr-backend AdGuardHome certbot.timer; do
@@ -1583,6 +1688,7 @@ cmd_restore() {
     check_python_dependencies
     quick_check "$STAGING/files$DB"
     ADGUARD_HOME=$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["adguard_home"]).lower())' "$STAGING/meta.json")
+    load_restored_services
     if [[ "$ADGUARD_HOME" == true ]]; then
         preflight_staged_adguard
     fi
@@ -1615,7 +1721,12 @@ cmd_restore() {
         chmod 0755 /opt/AdGuardHome/AdGuardHome
         chmod 0600 /opt/AdGuardHome/AdGuardHome.yaml /opt/AdGuardHome/managed.json
         . /usr/local/lib/3x-ui-pro/managed-adguard.sh
-        agh_config && [[ "$AGH_ARCH" == "$ARCH" ]] && agh_install_service || die 'Cannot validate/recreate restored AdGuard Home service.'
+        agh_config && [[ "$AGH_ARCH" == "$ARCH" ]] || die 'Cannot validate restored AdGuard Home state.'
+        if [[ "${RESTORED_ACTIVE[AdGuardHome]}" == active ]]; then
+            agh_install_service || die 'Cannot recreate/start restored AdGuard Home service.'
+        else
+            prepare_stopped_adguard_service || die 'Cannot recreate stopped AdGuard Home service.'
+        fi
     fi
     repair_panel_certificates
     prepare_mtr_backend
@@ -1624,16 +1735,11 @@ cmd_restore() {
     prepare_acme_webroot
     remove_legacy_certbot_cron || die 'Cannot remove the exact legacy project renewal job.'
     restore_firewall
-    stage 'Enabling and starting services'
+    stage 'Restoring saved service states'
     systemctl daemon-reload
     nginx -t > "$STAGING/nginx-test.log" 2>&1 || die 'nginx -t failed; nginx was not started. Fix the configuration and rerun restore.'
     rm -f -- "$XHTTP_SOCKET"
-    for service in x-ui mtr-backend nginx; do
-        systemctl enable "$service" || die "Cannot enable $service."
-        systemctl start "$service" || die "Cannot start $service."
-    done
-    systemctl enable --now certbot.timer || die 'Cannot enable and start certbot.timer.'
-    RESUME_CERTBOT_TIMER=0
+    restore_service_states
     check_health
     RESTORE_RECOVERY=0 RESTORE_MUTATED=0
     rm -rf -- "$ROLLBACK_DIR"

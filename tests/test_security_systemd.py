@@ -42,6 +42,91 @@ def nightly_after_cold_boot():
 
 
 class SecuritySystemd(unittest.TestCase):
+    def test_backup_restore_saved_states_with_native_systemd(self):
+        if Path('/proc/1/comm').read_text().strip() != 'systemd':
+            self.fail('Requires the existing disposable systemd VM')
+        from certificate_fixtures import function
+        run=lambda *a: subprocess.check_output(a,text=True,stderr=subprocess.STDOUT,timeout=30)
+        source=(Path(__file__).resolve().parents[1]/'assets/backup/x-ui-backup.sh').read_text()
+        helper=(Path(__file__).resolve().parents[1]/'assets/adguard/managed.sh').read_text()
+        names=('x-ui','nginx','mtr-backend','certbot.timer','AdGuardHome')
+        with tempfile.TemporaryDirectory(prefix='restore-systemd-') as directory:
+            root=Path(directory);prefix=root.name
+            units={name:prefix+'-'+str(i)+('.timer' if name=='certbot.timer' else '.service') for i,name in enumerate(names)}
+            paths={name:Path('/run/systemd/system')/unit for name,unit in units.items()}
+            timer_service=paths['certbot.timer'].with_suffix('.service')
+            def cleanup():
+                for unit in (*units.values(),timer_service.name):
+                    subprocess.run(['systemctl','stop',unit],check=False,capture_output=True)
+                    subprocess.run(['systemctl','disable',unit],check=False,capture_output=True)
+                    subprocess.run(['systemctl','reset-failed',unit],check=False,capture_output=True)
+                for path in (*paths.values(),timer_service):path.unlink(missing_ok=True)
+                run('systemctl','daemon-reload')
+            self.addCleanup(cleanup)
+            agh=root/'AdGuardHome';agh.mkdir()
+            run('cp','/opt/xui-ci/AdGuardHome',str(agh/'AdGuardHome'))
+            for name in ('x-ui','nginx','mtr-backend'):
+                paths[name].write_text(f'[Service]\nExecStartPre=/bin/sh -c "touch {root}/{name}-attempt; test ! -e {root}/{name}-fail"\nExecStart=/bin/sleep 600\n[Install]\nWantedBy=multi-user.target\n')
+            timer_service.write_text('[Service]\nType=oneshot\nExecStart=/bin/true\n')
+            paths['certbot.timer'].write_text('[Timer]\nOnActiveSec=1h\n[Install]\nWantedBy=timers.target\n')
+            mapping='systemctl() { local arg; local -a args=(); for arg in "$@"; do case "$arg" in\n'
+            mapping+='\n'.join(name+') arg='+unit+';;' for name,unit in units.items())
+            mapping+='\nesac; args+=("$arg"); done; command systemctl "${args[@]}"; }\n'
+            code='set -Eeuo pipefail\ndie() { echo "$*" >&2; exit 1; };\n'
+            code+='declare -A RESTORED_ACTIVE=() RESTORED_ENABLED=(); ADGUARD_HOME=true;\n'
+            code+=mapping+'\n'+function('agh_unit',helper)+'\n'
+            for name in ('save_backup_services','load_restored_services','restore_service_states','prepare_stopped_adguard_service'):
+                code+=function(name,source)+'\n'
+            code=code.replace('/etc/systemd/system/AdGuardHome.service',str(paths['AdGuardHome']))
+            env={**os.environ,'AGH_DIR':str(agh),'STAGING':str(root)}
+            def apply(command):
+                return subprocess.run(['bash','-c',code+'\n'+command],env=env,text=True,capture_output=True,timeout=45)
+            result=apply('prepare_stopped_adguard_service')
+            self.assertEqual(result.returncode,0,result.stderr)
+            run('systemd-analyze','verify',str(paths['AdGuardHome']))
+            cases=[{'x-ui':('inactive',True),'nginx':('inactive',False),'mtr-backend':('active',False),
+                    'certbot.timer':('inactive',False),'AdGuardHome':('inactive',False)},
+                   {name:('failed' if name=='x-ui' else 'inactive' if name=='AdGuardHome' else 'active',True) for name in names},
+                   {name:('inactive' if name=='AdGuardHome' else 'active',False) for name in names}]
+            for expected in cases:
+                with self.subTest(states=expected):
+                    for name,(active,enabled) in expected.items():
+                        run('systemctl','stop',units[name])
+                        run('systemctl','enable' if enabled else 'disable',units[name])
+                        if active=='failed':
+                            marker=root/(name+'-fail');marker.touch()
+                            failure=subprocess.run(['systemctl','start',units[name]],capture_output=True,timeout=30)
+                            self.assertNotEqual(failure.returncode,0)
+                            marker.unlink()
+                        elif active=='active':run('systemctl','start',units[name])
+                    result=apply('save_backup_services; printf "%s\\n" "$BACKUP_SERVICE_STATES"')
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    saved=json.loads(result.stdout)
+                    self.assertEqual(saved,{name:dict(active=active,enabled=enabled) for name,(active,enabled) in expected.items()})
+                    (root/'meta.json').write_text(json.dumps(dict(adguard_home=True,service_states=saved)))
+                    # Target state differs; Restore must use the archive, not current state.
+                    for name in names[:-1]:
+                        run('systemctl','stop',units[name]);run('systemctl','enable',units[name])
+                        run('systemctl','start',units[name])
+                    result=apply('load_restored_services; restore_service_states')
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    for name,(active,enabled) in expected.items():
+                        actual=subprocess.run(['systemctl','is-active',units[name]],capture_output=True,text=True,timeout=10)
+                        self.assertEqual(actual.stdout.strip(),'active' if active=='active' else 'inactive')
+                        actual=subprocess.run(['systemctl','is-enabled','--quiet',units[name]],timeout=10)
+                        self.assertEqual(actual.returncode,0 if enabled else 1)
+                    self.assertEqual(run('systemctl','show',units['AdGuardHome'],'-p','MainPID','--value').strip(),'0')
+            saved['x-ui']=dict(active='active',enabled=True)
+            (root/'meta.json').write_text(json.dumps(dict(adguard_home=True,service_states=saved)))
+            run('systemctl','stop',units['x-ui']);(root/'x-ui-fail').touch()
+            (root/'x-ui-attempt').unlink(missing_ok=True)
+            result=apply('load_restored_services; restore_service_states')
+            self.assertNotEqual(result.returncode,0,'Native start failure must propagate')
+            self.assertIn('Cannot start x-ui',result.stderr)
+            self.assertTrue((root/'x-ui-attempt').is_file(),'Native ExecStartPre fault point was not reached')
+            self.doCleanups()
+        print('REAL Backup/Restore service states: active/inactive/failed, enabled/disabled, stopped AGH, start failure: PASS',flush=True)
+
     def test_certbot_hooks_use_native_active_only_systemd_operations(self):
         if Path('/proc/1/comm').read_text().strip() != 'systemd':
             self.fail('Requires the existing disposable systemd VM')
