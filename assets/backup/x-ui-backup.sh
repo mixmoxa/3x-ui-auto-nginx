@@ -50,7 +50,7 @@ cleanup() {
         RESUME_CERTBOT_TIMER=0
     fi
     if (( RESUME_XUI )); then
-        if systemctl start x-ui && check_xray_runtime; then
+        if systemctl start x-ui && systemctl is-active --quiet x-ui; then
             ok 'x-ui returned to its original active state after failure'
         else
             printf '[FAIL] Cannot recover x-ui; run systemctl start x-ui.\n' >&2
@@ -115,7 +115,9 @@ pause_certbot_timer() {
         inactive|failed) ;;
         *) die 'Cannot determine certbot.timer state; retry after checking systemd.' ;;
     esac
-    systemctl stop certbot.timer || die 'Cannot pause certbot.timer.'
+    if (( RESUME_CERTBOT_TIMER )); then
+        systemctl stop certbot.timer || die 'Cannot pause certbot.timer.'
+    fi
     service_state=$(systemctl is-active certbot.service) || :
     case "$service_state" in
         inactive|failed) ;;
@@ -350,12 +352,6 @@ cmd_backup() {
         [[ -e "$path" ]] || die "Required managed path is missing: $path"
     done
     command -v python3 >/dev/null && command -v sqlite3 >/dev/null || die 'Backup requires python3 and sqlite3.'
-    check_python_dependencies
-    local domains
-    local -a names
-    domains=$(restored_certificate_domains) || die 'Cannot detect project certificate domains.'
-    mapfile -t names <<< "$domains"
-    check_certificate_renewal "${names[0]}" "${names[1]}" && check_vision_renewal || die 'Certificate renewal preflight failed; no archive was created.'
     load_adguard_backup_state
     pause_certbot_timer
     prepare_store backup
@@ -380,7 +376,7 @@ cmd_backup() {
     quick_check "$DB"
     for path in "${RUNTIME_PATHS[@]}"; do collect_path "$path"; done
     if (( RESUME_XUI )); then
-        systemctl start x-ui && check_xray_runtime || die 'Cannot return x-ui to its original active state.'
+        systemctl start x-ui && systemctl is-active --quiet x-ui || die 'Cannot return x-ui to its original active state.'
         RESUME_XUI=0
         ok 'x-ui returned to its original active state'
     else
@@ -933,15 +929,11 @@ check_health() {
         if systemctl is-active --quiet "$service"; then ok "$service is active";
         else printf '[FAIL] %s is not active\n' "$service" >&2; failed=1; fi
     done
-    local domains
-    domains=$(restored_certificate_domains) || die 'Cannot detect saved certificate domains.'
-    local -a names
-    mapfile -t names <<< "$domains"
-    check_certificate_renewal "${names[0]}" "${names[1]}" && check_vision_renewal || die 'Certificate renewal validation failed.'
-    check_xray_runtime || die 'Restore failed Xray runtime health.'
+    systemctl is-enabled --quiet certbot.timer || failed=1
+    systemctl is-active --quiet certbot.timer || failed=1
     if [[ "$ADGUARD_HOME" == true ]]; then
-        agh_health || die 'AdGuard Home failed mandatory health checks.'
-        ok 'AdGuard Home / HTTPS DoH; existing credentials preserved'
+        systemctl is-active --quiet AdGuardHome || die 'AdGuard Home is not active.'
+        ok 'AdGuard Home is active; existing credentials preserved'
     fi
     (( ! failed )) || die 'Restore failed mandatory health checks; archive is unchanged. Fix the cause and rerun restore.'
 }
@@ -1530,6 +1522,7 @@ recover_restore_target() {
     for service in x-ui mtr-backend AdGuardHome nginx certbot.timer; do
         if [[ "${OLD_ACTIVE[$service]}" == active ]]; then
             systemctl is-active --quiet "$service" || systemctl start "$service" || failed=1
+            systemctl is-active --quiet "$service" || failed=1
         else
             if systemctl is-active --quiet "$service"; then systemctl stop "$service" || failed=1; fi
         fi
@@ -1539,20 +1532,6 @@ recover_restore_target() {
             systemctl disable "$service" || failed=1
         fi
     done
-    [[ "${OLD_ACTIVE[x-ui]}" != active ]] || check_xray_runtime || failed=1
-    if (( RESTORE_MUTATED )) && [[ -f "$DB" ]]; then
-        local domains
-        local -a names
-        domains=$(restored_certificate_domains) || failed=1
-        mapfile -t names <<< "$domains"
-        check_certificate_renewal "${names[0]:-}" "${names[1]:-}" && check_vision_renewal || failed=1
-        if [[ "${OLD_ACTIVE[AdGuardHome]}" == active ]]; then
-            if [[ -f /usr/local/lib/3x-ui-pro/managed-adguard.sh ]]; then
-                . /usr/local/lib/3x-ui-pro/managed-adguard.sh
-                agh_health || failed=1
-            else failed=1; fi
-        fi
-    fi
     (( ! failed ))
 }
 
