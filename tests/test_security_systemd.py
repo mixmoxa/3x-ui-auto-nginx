@@ -42,6 +42,69 @@ def nightly_after_cold_boot():
 
 
 class SecuritySystemd(unittest.TestCase):
+    def test_zz_restore_scoped_ufw_and_runtime_sysctl_in_guest(self):
+        if Path('/proc/1/comm').read_text().strip() != 'systemd':
+            self.fail('Requires the existing disposable systemd VM')
+        from certificate_fixtures import function
+        import sqlite3
+        run=lambda *a: subprocess.check_output(a,text=True,stderr=subprocess.STDOUT,timeout=45)
+        source=(Path(__file__).resolve().parents[1]/'assets/backup/x-ui-backup.sh').read_text()
+        # Reuse the existing offline UFW package; do not depend on another test installing it.
+        if not Path('/usr/sbin/ufw').exists():
+            packages=list(Path('/opt/xui-ci/apt').glob('ufw_*.deb'))
+            self.assertEqual(len(packages),1)
+            run('dpkg','-i',str(packages[0]))
+        with tempfile.TemporaryDirectory(prefix='rollback-os-') as directory:
+            root=Path(directory);db=root/'x-ui.db'
+            with sqlite3.connect(db) as conn:conn.execute('CREATE TABLE inbounds (protocol,tag,port,enable,listen)')
+            code='set -Eeuo pipefail; die() { echo "$*" >&2; exit 1; }; warn() { echo "$*" >&2; };\n'
+            for name in ('snapshot_restore_firewall','restore_firewall','recover_restore_firewall',
+                         'snapshot_restore_sysctl','recover_restore_sysctl'):
+                code+=function(name,source)+'\n'
+            def apply(command,rollback):
+                return subprocess.run(['bash','-c',code+'\n'+command],env={**os.environ,'DB':str(db),
+                    'ROLLBACK_DIR':str(rollback),'SYSCTL_FILE':str(root/'incoming.conf')},capture_output=True,text=True,timeout=90)
+            initial_active=run('ufw','status').startswith('Status: active')
+            saved=root/'original';saved.mkdir()
+            files=[Path('/etc/ufw/user.rules'),Path('/etc/ufw/user6.rules')]
+            for path in files:run('cp','-a',str(path),str(saved/path.name))
+            key='net.ipv4.tcp_timestamps';original=run('sysctl','-n',key).strip()
+            unrelated=run('sysctl','-n','net.ipv4.tcp_sack').strip()
+            try:
+                run('ufw','allow','2222/tcp');run('ufw','allow','9000/udp')
+                for active in (False,True):
+                    run('ufw','--force','enable') if active else run('ufw','disable')
+                    before={str(p):p.read_bytes() for p in Path('/etc/ufw').rglob('*') if p.is_file()}
+                    metadata={p:(p.stat().st_uid,p.stat().st_gid,p.stat().st_mode) for p in files}
+                    rollback=root/('active' if active else 'inactive');rollback.mkdir(mode=0o700)
+                    result=apply('restore_firewall',rollback)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    changed={str(p) for p in Path('/etc/ufw').rglob('*') if p.is_file() and before.get(str(p))!=p.read_bytes()}
+                    self.assertEqual(changed,{str(p) for p in files},'UFW allow changed unexpected persistent files')
+                    if active:
+                        for tool in ('iptables','ip6tables'):run(tool,'-C','ufw-user-input' if tool=='iptables' else 'ufw6-user-input','-p','tcp','--dport','443','-j','ACCEPT')
+                    result=apply('recover_restore_firewall',rollback)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertEqual({str(p):p.read_bytes() for p in Path('/etc/ufw').rglob('*') if p.is_file()},before)
+                    self.assertEqual(run('ufw','status').startswith('Status: active'),active)
+                    for path in files:self.assertEqual((path.stat().st_uid,path.stat().st_gid,path.stat().st_mode),metadata[path])
+                    if active:
+                        for tool,chain in (('iptables','ufw-user-input'),('ip6tables','ufw6-user-input')):
+                            run(tool,'-C',chain,'-p','tcp','--dport','2222','-j','ACCEPT')
+                            missing=subprocess.run([tool,'-C',chain,'-p','tcp','--dport','443','-j','ACCEPT'],capture_output=True,timeout=10)
+                            self.assertNotEqual(missing.returncode,0)
+                rollback=root/'sysctl';rollback.mkdir(mode=0o700)
+                (root/'incoming.conf').write_text(key+'='+('0' if original=='1' else '1')+'\n')
+                result=apply('snapshot_restore_sysctl; sysctl -p "$SYSCTL_FILE"; recover_restore_sysctl',rollback)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(run('sysctl','-n',key).strip(),original)
+                self.assertEqual(run('sysctl','-n','net.ipv4.tcp_sack').strip(),unrelated)
+            finally:
+                run('sysctl','-w',key+'='+original)
+                for path in files:run('cp','-a',str(saved/path.name),str(path))
+                run('ufw','reload') if initial_active else run('ufw','disable')
+        print('REAL scoped rollback: UFW '+run('dpkg-query','-W','-f=${Version}','ufw')+', active/inactive IPv4/IPv6 rules, SSH rule, runtime sysctl: PASS',flush=True)
+
     def test_backup_restore_saved_states_with_native_systemd(self):
         if Path('/proc/1/comm').read_text().strip() != 'systemd':
             self.fail('Requires the existing disposable systemd VM')
