@@ -427,6 +427,140 @@ class AuditRecovery(unittest.TestCase):
     }
 ''' % path for path in ('/panel/', '/panel'))
 
+    def user_state(self, f):
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            return {name: db.execute('SELECT * FROM "'+name+'" ORDER BY rowid').fetchall()
+                    for name, in db.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")}
+
+    def assert_round_trip(self, f, expected):
+        archive = f.backup(); original = archive.read_bytes()
+        digest = hashlib.sha256(original).hexdigest()
+        for _ in range(2):
+            result = f.run_tool('restore', archive)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(self.user_state(f), expected)
+            with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                self.assertEqual(db.execute('PRAGMA quick_check').fetchone(), ('ok',))
+            self.assertEqual(archive.read_bytes(), original)
+            self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(), digest)
+
+    def test_json_user_choices_survive_backup_restore(self):
+        from test_personal_backup import PersonalBackup
+        for enabled, uri in (('true','https://example.com/jsonsub/'),
+                             ('false','https://example.com/jsonsub/'),
+                             ('false','https://custom.example/export?name=mine'),
+                             ('false',''), ('true','https://custom.example/export/'),
+                             ('true',''), (None,''), (None,None),
+                             ('false','https://example.com/jsonsub?name='),
+                             (None,'https://example.com/jsonsub?name='),
+                             ('true','https://example.com/jsonsub?name=')):
+            with self.subTest(enabled=enabled, uri=uri):
+                f = PersonalBackup('runTest'); f.setUp(); self.addCleanup(f.doCleanups)
+                with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                    db.execute('DELETE FROM settings WHERE key=?', ('subJsonEnable',))
+                    if enabled is not None:
+                        db.execute('INSERT INTO settings VALUES(?,?)', ('subJsonEnable', enabled))
+                    if uri is None: db.execute("DELETE FROM settings WHERE key='subJsonURI'")
+                    else: db.execute('UPDATE settings SET value=? WHERE key=?', (uri,'subJsonURI'))
+                expected = self.user_state(f)
+                if enabled == 'true' and uri == 'https://example.com/jsonsub?name=':
+                    expected['settings'] = [(k,'https://example.com/jsonsub/' if k=='subJsonURI' else v)
+                                            for k,v in expected['settings']]
+                self.assert_round_trip(f, expected)
+
+    def test_vision_user_state_is_not_project_ownership(self):
+        from test_personal_backup import PersonalBackup
+        for scenario in ('disabled','edited','extra-host','no-host','deleted'):
+            with self.subTest(scenario=scenario):
+                f = PersonalBackup('runTest'); f.setUp(); self.addCleanup(f.doCleanups); f.seed_vision()
+                with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                    iid = db.execute("SELECT id FROM inbounds WHERE tag='inbound-12000'").fetchone()[0]
+                    if scenario == 'disabled': db.execute('UPDATE inbounds SET enable=0 WHERE id=?',(iid,))
+                    if scenario == 'edited':
+                        stream = json.loads(db.execute('SELECT stream_settings FROM inbounds WHERE id=?',(iid,)).fetchone()[0])
+                        stream['tlsSettings'].update(serverName='user.example', alpn=['h2','http/1.1'])
+                        db.execute('UPDATE inbounds SET remark=?,tag=?,stream_settings=? WHERE id=?',
+                                   ('user vision','user-tag',json.dumps(stream),iid))
+                        db.execute("UPDATE hosts SET address='user.example',port=2443,sni='user.example',alpn='[\"h2\"]' WHERE inbound_id=?",(iid,))
+                    if scenario == 'extra-host':
+                        db.execute('INSERT INTO hosts SELECT * FROM hosts WHERE inbound_id=?',(iid,))
+                    if scenario in ('no-host','deleted'): db.execute('DELETE FROM hosts WHERE inbound_id=?',(iid,))
+                    if scenario == 'deleted': db.execute('DELETE FROM inbounds WHERE id=?',(iid,))
+                    db.execute("UPDATE clients SET uuid='synthetic-preserved-client'")
+                    db.execute('INSERT INTO settings VALUES(?,?)', ('xrayTemplateConfig',json.dumps({
+                        'outbounds':[{'tag':'user-direct','protocol':'freedom'}],
+                        'routing':{'rules':[{'type':'field','inboundTag':['user-tag'],'outboundTag':'user-direct'}]}})))
+                self.assert_round_trip(f, self.user_state(f))
+
+    def test_modified_missing_encryption_is_not_an_old_managed_identity(self):
+        f = self.fixture
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            for iid, text, stream_json in db.execute("SELECT id,settings,stream_settings FROM inbounds WHERE protocol='vless'").fetchall():
+                settings = json.loads(text); settings.pop('encryption',None)
+                stream = json.loads(stream_json); stream['userField'] = 'preserved'
+                db.execute('UPDATE inbounds SET tag=?,remark=?,settings=?,stream_settings=? WHERE id=?',
+                           ('user-'+str(iid),'user profile',json.dumps(settings),json.dumps(stream),iid))
+            db.execute("UPDATE hosts SET address='custom.example',port=2443")
+            db.execute("DELETE FROM inbounds WHERE protocol='trojan'")
+            db.execute("DELETE FROM hosts WHERE remark='trojan'")
+        self.assert_round_trip(f, self.user_state(f))
+
+    def test_user_paths_with_matching_nginx_routes_are_preserved(self):
+        f = self.fixture
+        replacements = (('/panel/', '/my-panel_v2/'),
+                        ('/subscription', '/feeds/public'), ('/jsonsub', '/exports/json'))
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            for key, value in (('webBasePath','/my-panel_v2/'), ('subPath','/feeds/public/'),
+                               ('subJsonPath','/exports/json/'), ('subJsonURI','https://custom.example/json/')):
+                db.execute('UPDATE settings SET value=? WHERE key=?',(value,key))
+        for name in ('/etc/nginx/nginx.conf','/etc/nginx/snippets/includes.conf'):
+            path = f.path(name); text = path.read_text()
+            for old, new in replacements: text = text.replace(old,new)
+            path.write_text(text)
+        self.assert_round_trip(f, self.user_state(f))
+
+    def test_vision_artifact_security_is_independent_of_editable_inbounds(self):
+        f = self.fixture; f.seed_vision()
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            db.execute("DELETE FROM inbounds WHERE tag='inbound-12000'")
+        archive = f.backup(); digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        original = self.user_state(f)
+        site = f.path('/etc/nginx/sites-available/vision.conf')
+        stream = f.path('/etc/nginx/stream-enabled/stream.conf')
+        hook = f.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision')
+        cases = {str(hook): (hook.read_bytes()+b'echo untrusted\n','Invalid staged Vision hook'),
+                 str(f.path('/etc/letsencrypt/live/vision.example.com/privkey.pem')):
+                     (f.path('/etc/letsencrypt/live/example.com/privkey.pem').read_bytes(),'Certificate/private key mismatch'),
+                 str(site): (site.read_bytes().replace(b'listen 127.0.0.1:',b'listen 0.0.0.0:'),'Invalid plaintext Vision fallback'),
+                 str(stream): (stream.read_bytes().replace(b'server 127.0.0.1:',b'server 192.0.2.1:'),'Vision SNI mapping mismatch')}
+        services = json.loads((f.root/'services.json').read_text())
+        for name, (data, error) in cases.items():
+            with self.subTest(artifact=Path(name).name):
+                candidate = self.modified(archive, {'files/'+name.lstrip('/'): data})
+                (f.root/'commands').write_text('')
+                result = f.run_tool('restore',candidate)
+                self.assert_untouched(result, services)
+                self.assertIn(error,result.stderr)
+                self.assertEqual(self.user_state(f), original)
+                self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
+
+    def test_missing_user_tls_file_cannot_fall_back_to_target(self):
+        f = self.fixture; f.seed_vision()
+        local_only = f.path('/etc/administrator-only/cert.pem')
+        local_only.parent.mkdir()
+        local_only.write_bytes(f.path('/etc/letsencrypt/live/vision.example.com/fullchain.pem').read_bytes())
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            iid = db.execute("SELECT id FROM inbounds WHERE tag='inbound-12000'").fetchone()[0]
+            stream = json.loads(db.execute('SELECT stream_settings FROM inbounds WHERE id=?',(iid,)).fetchone()[0])
+            stream['tlsSettings']['certificates'][0]['certificateFile'] = str(local_only)
+            db.execute('UPDATE inbounds SET stream_settings=? WHERE id=?',(json.dumps(stream),iid))
+        archive = f.backup(); state = self.user_state(f)
+        services = json.loads((f.root/'services.json').read_text()); (f.root/'commands').write_text('')
+        result = f.run_tool('restore',archive)
+        self.assert_untouched(result, services)
+        self.assertIn('Missing staged file',result.stderr)
+        self.assertEqual(self.user_state(f),state)
+
     def test_old_managed_vless_encryption_is_normalized_only_in_staging(self):
         f = self.fixture
         with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
@@ -583,6 +717,14 @@ class AuditRecovery(unittest.TestCase):
             self.assertTrue(all(json.loads((f.root/'services.json').read_text())[name]=='active'
                                 for name in ('x-ui','nginx','mtr-backend','certbot.timer')))
 
+    def test_user_grpc_service_is_not_a_legacy_route_migration(self):
+        f = self.fixture; iid = self.legacy_grpc()
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            stream = json.loads(db.execute('SELECT stream_settings FROM inbounds WHERE id=?',(iid,)).fetchone()[0])
+            stream['grpcSettings']['serviceName'] = '/10004/userService'
+            db.execute('UPDATE inbounds SET stream_settings=?,enable=0 WHERE id=?',(json.dumps(stream),iid))
+        self.assert_round_trip(f, self.user_state(f))
+
     def test_ambiguous_legacy_grpc_identity_fails_before_mutation(self):
         f=self.fixture; self.legacy_grpc()
         with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
@@ -604,9 +746,7 @@ class AuditRecovery(unittest.TestCase):
         original = f.path('/etc/x-ui/x-ui.db').read_bytes()
         services = json.loads((f.root/'services.json').read_text())
         for sql in ("INSERT INTO hosts SELECT * FROM hosts WHERE remark='ws'",
-                    "DELETE FROM hosts WHERE remark='ws'",
-                    "UPDATE inbounds SET tag='custom-tag' WHERE id=(SELECT inbound_id FROM hosts WHERE remark='ws')",
-                    "UPDATE hosts SET address='custom.example' WHERE remark='xhttp'"):
+                    "INSERT INTO inbounds SELECT * FROM inbounds WHERE tag='inbound-8443'"):
             with self.subTest(sql=sql):
                 dbfile = Path(f.temp.name)/'ambiguous.db'; dbfile.write_bytes(original)
                 with sqlite3.connect(dbfile) as db: db.execute(sql)
@@ -628,7 +768,7 @@ class AuditRecovery(unittest.TestCase):
             result = f.run_tool('restore',bad)
             self.assert_untouched(result,services)
             self.assertIn('Unexpected REALITY panel location',result.stderr)
-        for value in (None, '/panel/unsafe/', '/panel/duplicate/'):
+        for value in (None, '/panel/../unsafe/', '/panel/duplicate/'):
             dbfile = Path(f.temp.name)/'invalid-path.db'; shutil.copy2(f.path('/etc/x-ui/x-ui.db'),dbfile)
             with sqlite3.connect(dbfile) as db:
                 if value is None: db.execute("DELETE FROM settings WHERE key='webBasePath'")
@@ -798,9 +938,9 @@ class AuditRecovery(unittest.TestCase):
             with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
                 self.assertEqual(db.execute("SELECT value FROM settings WHERE key='webListen'").fetchone()[0],'127.0.0.1')
                 values = dict(db.execute('SELECT key,value FROM settings'))
-                self.assertEqual(values['subJsonEnable'],'true')
+                self.assertEqual(values['subJsonEnable'],'false')
                 self.assertEqual(values['subJsonPath'],'/jsonsub/')
-                self.assertEqual(values['subJsonURI'],'https://example.com/jsonsub/')
+                self.assertEqual(values['subJsonURI'],'https://example.com/jsonsub?name=')
             includes = f.path('/etc/nginx/snippets/includes.conf').read_text()
             self.assertEqual(includes.count('proxy_pass https://127.0.0.1:10003;'),7)
             self.assertNotIn('proxy_pass http://127.0.0.1:10003;',includes)
@@ -824,9 +964,9 @@ class AuditRecovery(unittest.TestCase):
         result = f.run_tool('restore',archive)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
-            self.assertEqual(db.execute("SELECT value FROM settings WHERE key='subJsonEnable'").fetchall(),[('true',)])
+            self.assertEqual(db.execute("SELECT value FROM settings WHERE key='subJsonEnable'").fetchall(),[])
             self.assertEqual(db.execute("SELECT value FROM settings WHERE key='subJsonURI'").fetchone()[0],
-                             'https://example.com/jsonsub/')
+                             'https://example.com/jsonsub?name=')
         self.assertEqual(f.path('/etc/nginx/snippets/includes.conf').read_bytes(),shared)
         self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
         with tarfile.open(archive) as src:
@@ -836,11 +976,10 @@ class AuditRecovery(unittest.TestCase):
         f = self.fixture; archive = f.backup()
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         original = f.path('/etc/x-ui/x-ui.db').read_bytes()
-        cases = ["UPDATE settings SET value='https://custom.example/jsonsub?name=' WHERE key='subJsonURI'",
-                 "UPDATE settings SET value='https://example.com/jsonsub?name=custom' WHERE key='subJsonURI'",
-                 "UPDATE settings SET value='false' WHERE key='subJsonEnable'",
-                 "INSERT INTO settings VALUES('subJsonEnable','true')",
-                 "DELETE FROM settings WHERE key='subJsonURI'"]
+        # Custom/disabled values are covered by round trips; duplicates and malformed booleans are corruption.
+        cases = ["INSERT INTO settings VALUES('subJsonEnable','true')",
+                 "INSERT INTO settings VALUES('subJsonURI','https://custom.example/')",
+                 "UPDATE settings SET value='not-a-boolean' WHERE key='subJsonEnable'"]
         for sql in cases:
             with self.subTest(sql=sql):
                 dbfile = Path(f.temp.name)/'bad-json.db'; dbfile.write_bytes(original)

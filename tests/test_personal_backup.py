@@ -607,7 +607,7 @@ class PersonalBackup(unittest.TestCase):
         archive = self.backup()
         original = self.path('/etc/x-ui/x-ui.db').read_bytes()
         for remark, fault in (('vision',None),('🇷🇺 XTLS',None),('🇫🇮 XTLS',None),('🌐 XTLS',None),
-                              ('🌐 XTLS','ambiguous'),('🌐 XTLS','forged')):
+                              ('🌐 XTLS','additional-host'),('🌐 XTLS','edited-inbound')):
             with self.subTest(remark=remark, fault=fault):
                 edited = Path(self.temp.name)/'edited.db'; edited.write_bytes(original)
                 with sqlite3.connect(edited) as db:
@@ -617,23 +617,20 @@ class PersonalBackup(unittest.TestCase):
                     row.update(id=200,remark='🇷🇺 XTLS',tag='administrator-inbound',port=12002)
                     db.execute('INSERT INTO inbounds ('+','.join(columns)+') VALUES ('+','.join('?' for _ in columns)+')',
                                [row[k] for k in columns])
-                    if fault == 'ambiguous':
+                    if fault == 'additional-host':
                         db.execute("INSERT INTO hosts(inbound_id,address,port,security,sni,alpn,allow_insecure) VALUES(200,'vision.example.com',443,'same','vision.example.com','[\"http/1.1\"]',0)")
-                    elif fault == 'forged':
-                        db.execute("UPDATE inbounds SET protocol='trojan' WHERE tag='inbound-12000'")
+                    elif fault == 'edited-inbound':
+                        db.execute("UPDATE inbounds SET protocol='trojan',enable=0 WHERE tag='inbound-12000'")
                 candidate = self.changed_archive(archive, db=edited.read_bytes())
                 marker = self.path('/etc/x-ui/preserved'); marker.write_text('target state')
                 (self.root/'commands').write_text('')
                 result = self.run_tool('restore',candidate)
-                if fault:
-                    self.assertNotEqual(result.returncode,0)
-                    self.assertEqual(marker.read_text(),'target state')
-                    self.assertFalse(any(c[:2]==['systemctl','stop'] for c in self.commands()))
-                else:
-                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-                    with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
-                        self.assertEqual(db.execute("SELECT remark FROM inbounds WHERE tag='inbound-12000'").fetchone()[0],remark)
-                        self.assertEqual(db.execute("SELECT remark FROM inbounds WHERE tag='administrator-inbound'").fetchone()[0],'🇷🇺 XTLS')
+                # Additional Hosts and a user-edited protocol do not establish ownership.
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                with sqlite3.connect(edited) as before, sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as after:
+                    for table in ('inbounds','hosts'):
+                        self.assertEqual(after.execute('SELECT * FROM '+table).fetchall(),
+                                         before.execute('SELECT * FROM '+table).fetchall())
 
     def test_installer_integration(self):
         tuning = function('tune_system')
