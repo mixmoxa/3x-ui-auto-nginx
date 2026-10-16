@@ -48,10 +48,7 @@ class SecuritySystemd(unittest.TestCase):
             self.fail('Requires the existing disposable offline systemd guest')
         from test_personal_xhttp import function, SOURCE
         run=lambda *a: subprocess.check_output(a,text=True,stderr=subprocess.STDOUT,timeout=30)
-        if not Path('/usr/sbin/ufw').exists():
-            packages=list(Path('/opt/xui-ci/apt').glob('ufw_*.deb'))
-            self.assertEqual(len(packages),1)
-            run('dpkg','-i',str(packages[0]))
+        ufw_present=Path('/usr/sbin/ufw').exists()
         units=('ssh.service','ssh.socket')
         initial={unit:subprocess.run(['systemctl','is-active','--quiet',unit]).returncode==0 for unit in units}
         before={str(p):p.read_bytes() for p in Path('/etc/ssh').rglob('*') if p.is_file()}
@@ -67,6 +64,8 @@ class SecuritySystemd(unittest.TestCase):
             stubs='''msg_err() { echo "$*" >&2; }; msg_warn() { :; }
 # External DNS is outside this offline SSH regression; retain a real local NSS lookup.
 getent() { command getent passwd root; }
+# APT is simulated: satisfy only this unrelated availability check, never operate a firewall.
+ufw() { echo 'Unexpected firewall operation in SSH regression' >&2; return 99; }
 fixture_sshd() { /usr/sbin/sshd -f "$SSH_TEST_CONFIG" "$@"; }
 systemctl() {
     if [[ "$SCENARIO" == manager && -e "$UPGRADE_MARKER" && "$1" == --system ]]; then
@@ -138,6 +137,7 @@ apt_system() {
                     if initial[unit]: run('systemctl','start',unit)
                 self.assertTrue(before=={str(p):p.read_bytes() for p in Path('/etc/ssh').rglob('*') if p.is_file()},
                                 'OS preparation changed production SSH configuration/keys')
+                self.assertEqual(Path('/usr/sbin/ufw').exists(),ufw_present,'SSH fixture changed package state')
     def test_zz_restore_scoped_ufw_and_runtime_sysctl_in_guest(self):
         if Path('/proc/1/comm').read_text().strip() != 'systemd':
             self.fail('Requires the existing disposable systemd VM')
