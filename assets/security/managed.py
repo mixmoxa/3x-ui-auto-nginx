@@ -2,8 +2,6 @@
 
 Host DNS and security state are deliberately excluded from portable Backup v3.
 """
-import configparser
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -109,59 +107,21 @@ def global_servers(dns):
     return global_block[1].split() if global_block else []
 
 
-def preflight(root=Path('/')):
-    for filename in FILES:
+def preflight(root=Path('/'), files=FILES, services=SERVICES):
+    for filename in files:
         path = root / filename.lstrip('/')
         if path.is_symlink() or (path.exists() and (not path.is_file() or not path.read_text().startswith(MARKER))):
             raise ValueError('Unowned project configuration path: ' + filename)
         if path.exists() and (path.stat().st_uid != 0 or path.stat().st_mode & 0o022):
             raise ValueError('Unsafe owner/permissions of project configuration: ' + filename)
-    # Never overwrite administrator jails, including a later *.local override.
-    jails = list((root / 'etc/fail2ban/jail.d').glob('*.local')) + list((root / 'etc/fail2ban/jail.d').glob('*.conf')) + [root / 'etc/fail2ban/jail.local', root / 'etc/fail2ban/jail.conf']
-    package_jails = None
-    for path in jails:
-        if path.exists() and str(path).endswith('90-3x-ui-auto-nginx.local'):
-            continue
-        if path.exists():
-            text = path.read_text()
-            if re.search(r'^\s*\[\s*(sshd|DEFAULT)\s*\]', text, re.M):
-                if path.suffix == '.conf':
-                    if package_jails is None:
-                        package_jails = dict(re.findall(r'^ (/\S+) ([a-f0-9]{32})(?: .*?)?$',
-                            command('dpkg-query', '-W', '-f=${Conffiles}', 'fail2ban', check=False), re.M))
-                    name = '/' + str(path.relative_to(root))
-                    if not path.is_symlink() and package_jails.get(name) == hashlib.md5(path.read_bytes()).hexdigest():
-                        continue  # Unmodified distro jail; do not mistake it for an administrator override.
-                raise ValueError('Administrator SSH/DEFAULT Fail2ban jail present; preserved')
-    for service in SERVICES:
+    for service in services:
         if command('systemctl', 'is-enabled', service, check=False) not in ('enabled', 'disabled', 'static', 'not-found', ''):
             raise ValueError('Custom/masked service enable state preserved: ' + service)
     info = dict(line.strip().split('=', 1) for line in (root / 'etc/os-release').read_text().splitlines() if '=' in line)
     os_id, version = (info.get(k, '').strip('"') for k in ('ID', 'VERSION_ID'))
     if (os_id, version) not in (('ubuntu', '24.04'), ('ubuntu', '26.04'), ('debian', '13')):
         raise ValueError('Unsupported OS for VPS Security')
-    apt_file = root / FILES[1].lstrip('/')
-    current = apt_config(os_id)
-    previous = current.replace('Automatic-Reboot "true";\nUnattended-Upgrade::Automatic-Reboot-WithUsers "true";\nUnattended-Upgrade::Automatic-Reboot-Time "04:38";', 'Automatic-Reboot "false";')
-    legacy = previous.replace('// Add the required distro security origin; retain administrator/distro origins.',
-                             '// Reset effective origins in this final managed drop-in; preserve administrator files.\n'
-                             '#clear Unattended-Upgrade::Allowed-Origins;\n#clear Unattended-Upgrade::Origins-Pattern;')
-    canonical=(current, previous, legacy)
-    canonical += tuple(text.replace('APT::Periodic::Enable "1";\n','') for text in canonical)
-    if apt_file.exists() and apt_file.read_text() not in canonical:
-        raise ValueError('Administrator changes in managed APT drop-in preserved; refusing replacement')
-    for tool in ('systemctl', 'apt-config', 'journalctl', '/usr/sbin/sshd'):
-        if not shutil.which(tool):
-            raise ValueError('Security diagnostic tool unavailable: ' + tool)
-    effective = command('/usr/sbin/sshd', '-T')
-    listen = ''
-    if command('systemctl', 'is-active', 'ssh.socket', check=False) == 'active':
-        listen = command('systemctl', 'show', 'ssh.socket', '-p', 'Listen', '--value')
-    ports = ssh_ports(effective, listen)
-    if not command('journalctl', '-n', '1', '--no-pager', check=False) and not (root / 'var/log/auth.log').is_file():
-        raise ValueError('No SSH journaling/log backend')
-    origins = apt_origins(command('apt-config', 'dump'))
-    return os_id, effective, ports, origins
+    return os_id
 
 
 class Transaction:
@@ -170,7 +130,8 @@ class Transaction:
         self.temp = tempfile.TemporaryDirectory(prefix='xui-security-')
         os.chmod(self.temp.name, 0o700)
         self.saved = {}
-        for index, filename in enumerate((*files, '/etc/resolv.conf')):
+        paths = (*files, '/etc/resolv.conf') if FILES[-1] in files else files
+        for index, filename in enumerate(paths):
             path = root / filename.lstrip('/')
             backup = Path(self.temp.name) / str(index)
             if path.exists() or path.is_symlink():
@@ -270,7 +231,7 @@ class Transaction:
                 raise ValueError('Configuration rollback not verified')
 
 
-def verify(ports, os_id, previous_origins=frozenset()):
+def verify_fail2ban(ports):
     # No SSH policy is edited here; validate configuration, not its text rendering.
     command('/usr/sbin/sshd', '-t')
     # The distro unit uses Type=simple: restart can return before its socket/jail.
@@ -289,6 +250,9 @@ def verify(ports, os_id, previous_origins=frozenset()):
     dump = command('fail2ban-client', '-d')
     if not all(str(p) in dump for p in ports):
         raise ValueError('SSH jail ports not effective')
+
+
+def verify_apt(os_id, previous_origins):
     apt = command('apt-config', 'dump')
     for setting in ('Automatic-Reboot "true";', 'Automatic-Reboot-WithUsers "true";', 'Automatic-Reboot-Time "04:38";'):
         if 'Unattended-Upgrade::' + setting not in apt:
@@ -306,7 +270,6 @@ def verify(ports, os_id, previous_origins=frozenset()):
         timers = command('systemctl', 'show', service, '-p', 'TimersCalendar', '-p', 'RandomizedDelayUSec')
         if f'{hour}:00' not in timers or 'RandomizedDelayUSec=0' not in timers:
             raise ValueError('APT timer not effective')
-    verify_dns()
 
 
 def verify_dns():
@@ -328,7 +291,7 @@ def verify_dns():
 
 def prepare_dns(root=Path('/'), state=None):
     # Capture DNS and service state BEFORE package maintainer scripts can change it.
-    preflight(root)
+    preflight(root, files=FILES[-1:], services=SERVICES[-1:])
     command('getent', 'ahosts', 'debian.org')
     txn = Transaction(root, services=('systemd-resolved.service',), files=FILES[-1:])
     try:
@@ -346,8 +309,6 @@ def prepare_dns(root=Path('/'), state=None):
         command('systemctl','restart','systemd-resolved.service')
         stage='strict DoT verification'
         verify_dns()
-        stage='post-configuration readiness'
-        preflight(root)
         return {'status':'configured', 'dot':'configured', 'warnings':[DOT_WARNING]}
     except Exception as error:
         status='failed_rolled_back'; rollback_error=''
@@ -381,18 +342,52 @@ def rollback_dns_checkpoint(state, root=Path('/')):
 
 
 def configure(root=Path('/')):
-    # Repeat the same read-only compatibility check immediately before writes.
-    os_id, effective, ports, previous_origins = preflight(root)
-    warnings = [DOT_WARNING]
-    if password_warning(effective):
-        warnings.append('SSH PASSWORD AUTHENTICATION IS ENABLED. SSH policy was preserved; review it separately.')
-    warnings.append('sshd -T covers the default context; administrator Match rules may permit other password authentication.')
-    txn = Transaction(root)
+    # DNS was prepared before cleanup. Neither component may change its files/service.
+    result = {'status': 'partial', 'warnings': []}
+    txn = None
+    stage = 'APT preflight'
     try:
-        stage='installing Security dependencies'
+        os_id = preflight(root, files=FILES[1:4], services=SERVICES[1:3])
+        origins = apt_origins(command('apt-config', 'dump'))
+        txn = Transaction(root, files=FILES[1:4], services=SERVICES[1:3])
+        stage = 'installing unattended-upgrades'
         command('apt-get', '-o', 'DPkg::Lock::Timeout=300', '-o', 'Dpkg::Options::=--force-confdef',
-                '-o', 'Dpkg::Options::=--force-confold', '--no-remove', 'install', '-y', '--no-install-recommends', 'fail2ban', 'python3-systemd', 'unattended-upgrades', 'nftables')
-        stage='configuring SSH Fail2ban jail'
+                '-o', 'Dpkg::Options::=--force-confold', '--no-remove', 'install', '-y', '--no-install-recommends', 'unattended-upgrades')
+        stage = 'configuring APT policy and timers'
+        txn.write(FILES[1], apt_config(os_id))
+        txn.write(FILES[2], timer('02:30')); txn.write(FILES[3], timer('02:50'))
+        command('systemctl', 'daemon-reload')
+        for service in SERVICES[1:3]:
+            command('systemctl', 'enable', service)
+            command('systemctl', 'restart', service)
+        stage = 'verifying APT policy and timers'
+        verify_apt(os_id, origins)
+        result['apt'] = 'configured'
+    except Exception as error:
+        status = 'failed_rolled_back'; rollback_error = ''
+        try:
+            if txn is not None: txn.rollback()
+        except Exception as failure:
+            status = 'failed_unverified'; rollback_error = '; rollback error: ' + str(failure)
+        result['apt'] = status
+        result['warnings'].append('APT failed during '+stage+': '+str(error)+'; rollback='+status+rollback_error+'; continuing other components. Package changes remain.')
+    finally:
+        if txn is not None: txn.temp.cleanup()
+
+    txn = None
+    stage = 'Fail2ban preflight'
+    try:
+        preflight(root, files=FILES[:1], services=SERVICES[:1])
+        effective = command('/usr/sbin/sshd', '-T')
+        listen = command('systemctl', 'show', 'ssh.socket', '-p', 'Listen', '--value') if command('systemctl', 'is-active', 'ssh.socket', check=False) == 'active' else ''
+        ports = ssh_ports(effective, listen)
+        if password_warning(effective):
+            result['warnings'].append('SSH PASSWORD AUTHENTICATION IS ENABLED. SSH policy was preserved; review it separately.')
+        txn = Transaction(root, files=FILES[:1], services=SERVICES[:1])
+        stage = 'installing Fail2ban dependencies'
+        command('apt-get', '-o', 'DPkg::Lock::Timeout=300', '-o', 'Dpkg::Options::=--force-confdef',
+                '-o', 'Dpkg::Options::=--force-confold', '--no-remove', 'install', '-y', '--no-install-recommends', 'fail2ban', 'python3-systemd', 'nftables')
+        stage = 'configuring SSH Fail2ban jail'
         backend = 'systemd' if command('journalctl', '-n', '1', '--no-pager', check=False) else 'auto'
         if backend == 'auto' and not (root / 'var/log/auth.log').is_file():
             raise ValueError('No SSH journaling/log backend')
@@ -404,31 +399,25 @@ maxretry = 5
 findtime = 1800
 bantime = 3600
 ''')
-        stage='configuring APT policy and timers'
-        txn.write(FILES[1], apt_config(os_id))
-        txn.write(FILES[2], timer('02:30')); txn.write(FILES[3], timer('02:50'))
-        stage='applying strict system DNS'
-        txn.write(FILES[4], DOT)
-        resolv = root / 'etc/resolv.conf'
-        resolv.unlink(); resolv.symlink_to('/run/systemd/resolve/stub-resolv.conf')
-        stage='starting managed Security services'
         command('systemctl', 'daemon-reload')
-        for service in SERVICES:
-            command('systemctl', 'enable', service)
-            command('systemctl', 'restart', service)
-        stage='verifying effective Security and DNS'
-        verify(ports, os_id, previous_origins)
-        return {'status': 'configured', 'dot': 'configured', 'warnings': warnings}
+        command('systemctl', 'enable', 'fail2ban.service')
+        command('systemctl', 'restart', 'fail2ban.service')
+        stage = 'verifying SSH Fail2ban jail'
+        verify_fail2ban(ports)
+        result['fail2ban'] = 'configured'
     except Exception as error:
-        status = 'failed_rolled_back'; rollback_error=''
+        status = 'failed_rolled_back'; rollback_error = ''
         try:
-            txn.rollback()
+            if txn is not None: txn.rollback()
             command('/usr/sbin/sshd', '-t')
         except Exception as failure:
-            status = 'failed_unverified'; rollback_error='; rollback error: '+str(failure)
-        return {'status': status, 'dot': status, 'warnings': warnings + ['VPS Security failed during '+stage+': '+str(error)+'; rollback='+status+rollback_error]}
+            status = 'failed_unverified'; rollback_error = '; rollback error: ' + str(failure)
+        result['fail2ban'] = status
+        result['warnings'].append('Fail2ban failed during '+stage+': '+str(error)+'; rollback='+status+rollback_error+'; other components retained. Package changes remain.')
     finally:
-        txn.temp.cleanup()
+        if txn is not None: txn.temp.cleanup()
+    if result['apt'] == result['fail2ban'] == 'configured': result['status'] = 'configured'
+    return result
 
 
 if __name__ == '__main__':

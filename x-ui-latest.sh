@@ -527,17 +527,16 @@ prepare_system_dns() {
         printf '%s' "$output" | python3 -c 'import json,sys; [print("[!] DNS preparation: "+w,file=sys.stderr) for w in json.load(sys.stdin)["warnings"]]'
         if [[ "$status" == failed_rolled_back ]]; then
             DNS_PREPARED=n
-            SECURITY_RESULT=failed_rolled_back
-            msg_warn 'DoT unavailable; original DNS restored. Continuing core installation without VPS Security. Inspect the DNS failure above.'
+            DOT_RESULT=failed_rolled_back
+            msg_warn 'DoT unavailable; original DNS restored. Continuing core, Fail2ban and APT installation. Inspect the DNS failure above.'
             verify_base_os
             return $?
         fi
+        DOT_RESULT=failed_unverified
         return 1
     fi
-    if ! output=$(python3 "$PANEL_STAGE/managed-security.py" --preflight); then
-        printf '%s' "$output" | python3 -c 'import json,sys; [print("[!] Security readiness: "+w,file=sys.stderr) for w in json.load(sys.stdin)["warnings"]]'
-        return 1
-    fi
+    DOT_RESULT=configured
+    printf '%s' "$output" | python3 -c 'import json,sys; [print("[!] "+w) for w in json.load(sys.stdin)["warnings"]]'
     verify_base_os
 }
 
@@ -1715,10 +1714,8 @@ EOF
 # SYSTEM TUNING (BBR + kernel params)
 # ─────────────────────────────────────────────────────────────────────────────
 tune_system() {
-    local managed_file=/etc/sysctl.d/99-3x-ui-pro.conf
+    local managed_file=/etc/sysctl.d/99-3x-ui-pro.conf assignment key skipped='' bbr=n
     local params=(
-        "net.core.default_qdisc=fq"
-        "net.ipv4.tcp_congestion_control=bbr"
         "fs.file-max=2097152"
         "net.ipv4.tcp_timestamps=1"
         "net.ipv4.tcp_sack=1"
@@ -1728,11 +1725,33 @@ tune_system() {
         "net.ipv4.tcp_rmem=4096 87380 16777216"
         "net.ipv4.tcp_wmem=4096 65536 16777216"
     )
-    mkdir -p /etc/sysctl.d &&
-        printf '%s\n' "${params[@]}" > "$managed_file" &&
-        chown root:root "$managed_file" &&
-        chmod 0644 "$managed_file" &&
-        sysctl -p "$managed_file"
+    TUNING_RESULT=partially_skipped
+    mkdir -p /etc/sysctl.d && : > "$managed_file" &&
+        chown root:root "$managed_file" && chmod 0644 "$managed_file" || {
+        msg_warn 'Sysctl: cannot prepare managed tuning file; core installation continues.'; return 0;
+    }
+    # Module loading is optional; actual kernel support is checked below.
+    if command -v modprobe >/dev/null; then modprobe tcp_bbr 2>/dev/null || :; fi
+    if sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr; then
+        bbr=y
+        params=("net.core.default_qdisc=fq" "net.ipv4.tcp_congestion_control=bbr" "${params[@]}")
+    else skipped='BBR/fq'; fi
+    for assignment in "${params[@]}"; do
+        key=${assignment%%=*}
+        if [[ "$key" == net.ipv4.tcp_congestion_control && "$bbr" != y ]] ||
+           ! sysctl -n "$key" >/dev/null 2>&1 || ! sysctl -q -w "$assignment"; then
+            [[ "$key" != net.core.default_qdisc ]] || bbr=n
+            skipped+=" $key"
+            continue
+        fi
+        printf '%s\n' "$assignment" >> "$managed_file" || {
+            msg_warn 'Sysctl: cannot persist tuning; core installation continues.'; return 0;
+        }
+    done
+    if [[ -n "$skipped" ]]; then
+        msg_warn "Sysctl: unsupported or unavailable tuning skipped:$skipped; core installation continues."
+    else TUNING_RESULT=applied; fi
+    return 0
 }
 
 install_backup_tool() {
@@ -2376,7 +2395,7 @@ show_results() {
     msg_inf '============================================================'
     msg_inf " [i] Base OS                ${BASE_OS_RESULT:-not_prepared} (full upgrade is not rollbackable)"
     msg_inf " [i] Local timezone         $(timedatectl show -p Timezone --value)"
-    if [[ "${SECURITY_RESULT:-not_requested}" == configured ]]; then
+    if [[ "${APT_RESULT:-not_requested}" == configured ]]; then
         msg_inf ' [i] APT schedule           update 02:30 / upgrade 02:50; reboot 04:38, including logged-in users'
     fi
     [[ ! -e /var/run/reboot-required ]] || msg_warn ' [!] Reboot required; post-reboot acceptance pending'
@@ -2427,10 +2446,18 @@ show_results() {
         configured) msg_ok " [✓] AmneziaWG              Configured (UDP/8443)" ;;
         failed) msg_warn " [!] AmneziaWG              Not configured" ;;
     esac
-    case "${SECURITY_RESULT:-not_requested}" in
-        configured) msg_ok ' [✓] VPS Security + DoT     Configured (global DoT; link/VPN DNS retained)' ;;
-        failed_rolled_back) msg_warn ' [!] VPS Security + DoT     Failed — rolled back / unchanged' ;;
-        failed_unverified) msg_warn ' [!] VPS Security + DoT     Failed — rollback not verified' ;;
+    local component state
+    for component in "Global DoT:${DOT_RESULT:-not_requested}" "Fail2ban:${F2BAN_RESULT:-not_requested}" "APT security:${APT_RESULT:-not_requested}"; do
+        state=${component#*:}; component=${component%%:*}
+        case "$state" in
+            configured) msg_ok " [✓] $component — Configured" ;;
+            failed_rolled_back) msg_warn " [!] $component — Failed, rolled back / unchanged" ;;
+            failed_unverified) msg_warn " [!] $component — Failed, rollback not verified" ;;
+        esac
+    done
+    case "${TUNING_RESULT:-}" in
+        applied) msg_ok ' [✓] Kernel tuning — Applied' ;;
+        partially_skipped) msg_warn ' [!] Kernel tuning — Partially skipped; core unaffected' ;;
     esac
     case "${SWAP_RESULT:-not_requested}" in
         created) msg_ok ' [✓] SWAP 1 GiB             Created and enabled' ;;
@@ -2611,7 +2638,9 @@ preflight_integrated_features() {
         }
         # Reuse the existing authenticated local HTTPS/CSRF implementation.
         AWG_HELPER="$PANEL_STAGE/managed-amneziawg.py"
-        curl -fsSL --connect-timeout 15 --max-time 60 "$GITHUB_RAW/assets/amneziawg/managed.py" -o "$AWG_HELPER" || return 1
+        if [[ ! -s "$AWG_HELPER" ]]; then
+            curl -fsSL --connect-timeout 15 --max-time 60 "$GITHUB_RAW/assets/amneziawg/managed.py" -o "$AWG_HELPER" || { msg_err "Panel API helper download failed; stopped before cleanup."; return 1; }
+        fi
     fi
     local feature
     for feature in security vision client; do
@@ -2620,20 +2649,13 @@ preflight_integrated_features() {
             vision) [[ "${INSTALL_VISION:-n}" == y || -e /etc/nginx/sites-available/vision.conf || -e /etc/nginx/sites-available/vision-acme.conf ]] || continue ;;
             client) [[ "${CREATE_CLIENT:-n}" == y ]] || continue ;;
         esac
-        curl -fsSL --connect-timeout 15 --max-time 60 "$GITHUB_RAW/assets/$feature/managed.py" -o "$PANEL_STAGE/managed-$feature.py" || return 1
-        python3 - "$PANEL_STAGE/managed-$feature.py" <<'PYCHECK' || return 1
+        curl -fsSL --connect-timeout 15 --max-time 60 "$GITHUB_RAW/assets/$feature/managed.py" -o "$PANEL_STAGE/managed-$feature.py" || { msg_err "$feature helper download failed; stopped before cleanup."; return 1; }
+        python3 - "$PANEL_STAGE/managed-$feature.py" <<'PYCHECK' || { msg_err "$feature helper syntax is invalid; stopped before cleanup."; return 1; }
 import ast, sys
 ast.parse(open(sys.argv[1]).read())
 PYCHECK
     done
     preflight_vision_artifacts || return 1
-    if [[ "${INSTALL_SECURITY:-n}" == y ]]; then
-        local security_preflight
-        if ! security_preflight=$(python3 "$PANEL_STAGE/managed-security.py" --preflight); then
-            printf '%s' "$security_preflight" | python3 -c 'import json,sys; [print("[!] Security preflight: "+w, file=sys.stderr) for w in json.load(sys.stdin)["warnings"]]'
-            return 1
-        fi
-    fi
     [[ "${INSTALL_VISION:-n}" == y ]] || return 0
     get_server_ip
     python3 - "$vision_domain" "$domain" "$reality_domain" "$IP4" "$IP6" <<'PYDOMAIN' || return 1
@@ -2745,23 +2767,13 @@ install_vision() {
 }
 
 install_security() {
-    # Do not reapply a DoT configuration that already failed and was rolled back.
-    [[ "${SECURITY_RESULT:-}" != failed_rolled_back ]] || return 1
-    local output
-    SECURITY_RESULT=failed_unverified
+    local output values
+    F2BAN_RESULT=failed_unverified APT_RESULT=failed_unverified
     output=$(python3 "$PANEL_STAGE/managed-security.py")
-    SECURITY_RESULT=$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])') || return 1
+    values=$(printf '%s' "$output" | python3 -c 'import json,sys; r=json.load(sys.stdin); print(r["fail2ban"],r["apt"])') || return 1
+    read -r F2BAN_RESULT APT_RESULT <<< "$values"
     printf '%s' "$output" | python3 -c 'import json,sys; [print("[!] "+w) for w in json.load(sys.stdin)["warnings"]]'
-    if [[ "$SECURITY_RESULT" == configured ]]; then DNS_FINALIZED=y; return 0; fi
-    local failed_security=$SECURITY_RESULT
-    if [[ "${DNS_PREPARED:-n}" == y ]]; then
-        if rollback_system_dns; then
-            [[ "$failed_security" == failed_unverified ]] || SECURITY_RESULT=failed_rolled_back
-        else
-            SECURITY_RESULT=failed_unverified
-        fi
-    fi
-    return 1
+    [[ "$F2BAN_RESULT" == configured && "$APT_RESULT" == configured && "${DOT_RESULT:-not_requested}" == configured ]]
 }
 
 install_initial_client() {
@@ -2784,7 +2796,7 @@ main() {
     preflight_base_os || { msg_err 'Base OS preflight failed; existing deployment was not removed.'; exit 1; }
     preflight_panel_release || { msg_err "Release preflight failed; existing deployment was not removed."; exit 1; }
     preflight_amneziawg || { msg_err "AmneziaWG preflight failed; existing deployment was not removed."; exit 1; }
-    preflight_integrated_features || { msg_err 'Optional feature preflight failed; existing deployment was not removed.'; exit 1; }
+    preflight_integrated_features || { msg_err 'Feature preparation stopped before cleanup; see the component error above.'; exit 1; }
     setup_swap || { SWAP_RESULT=skipped; SWAP_REASON='setup failed'; }
     prepare_base_os || { msg_err 'OS preparation failed; deployment was not removed, package changes may remain.'; exit 1; }
     prepare_system_dns || { msg_err 'DNS preparation failed; existing deployment was not removed.'; exit 1; }
@@ -2818,7 +2830,7 @@ main() {
     install_clash_sub || { msg_err "Clash template download/setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
     install_fake_site || { msg_err "Cover site download/setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
     install_diagnostics || { msg_err "Diagnostics download/setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
-    tune_system || { msg_err "System tuning failed (exit $?). See the cause above; installation stopped."; exit 1; }
+    tune_system || { TUNING_RESULT=partially_skipped; msg_warn "Kernel tuning failed; core installation continues."; }
     install_backup_tool || { msg_err "Backup tool setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
     setup_certificate_renewal || { msg_err "Certificate renewal setup failed."; exit 1; }
 
@@ -2827,10 +2839,10 @@ main() {
     fi
     x-ui restart || { msg_err "3X-UI restart failed (exit $?). Installation stopped."; exit 1; }
     check_installation || { msg_err "Installation failed mandatory health checks."; exit 1; }
+    DNS_FINALIZED=y  # Core is ready; later optional failures must not undo working DNS.
 
     local install_result=0
     VISION_RESULT=not_requested
-    SECURITY_RESULT=${SECURITY_RESULT:-not_requested}
     CLIENT_RESULT=not_requested
     if [[ "${INSTALL_VISION:-n}" == y ]]; then
         install_vision || install_result=1
@@ -2844,7 +2856,7 @@ main() {
     if [[ "$INSTALL_AGH" == y ]]; then
         install_adguard || install_result=1
     fi
-    # A verified DNS rollback skips Security; core credentials still reach the result.
+    # Fail2ban and APT are independent of the earlier DoT result.
     if [[ "${INSTALL_SECURITY:-n}" == y ]]; then
         install_security || install_result=1
     fi

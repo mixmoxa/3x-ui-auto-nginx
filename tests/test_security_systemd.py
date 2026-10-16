@@ -446,7 +446,6 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
             run('ip','link','set','xui-test','up')
             seen, errors, stop = [], [], threading.Event()
             fail_tls=threading.Event()
-            route_policy=threading.Event()
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); context.load_cert_chain(cert, key)
             servers = []
             for ip in ('1.1.1.1', '1.0.0.1', '8.8.8.8', '8.8.4.4'):
@@ -533,11 +532,6 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                 if args==('systemctl','restart','systemd-resolved.service'):
                     plain_at_restart.append(len(plain_seen))
                 result=production_command(*args,**kwargs)
-                if args==('systemctl','restart','systemd-resolved.service') and route_policy.is_set():
-                    # Model a provider/VPN retaining its real link policy.
-                    run('resolvectl','dns','xui-test',link_dns)
-                    run('resolvectl','domain','xui-test',link_domain)
-                    run('resolvectl','default-route','xui-test','yes')
                 return result
             security.command=command
             # An offline local APT repository contains real distro resolved/UFW
@@ -566,7 +560,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
             expected_origins = security.apt_origins(run('apt-config', 'dump'))
             self.assertTrue(stock_origins <= expected_origins)
             files_before = {str(p): p.read_bytes() for p in Path('/etc/apt/apt.conf.d').glob('*') if p.is_file()}
-            prepared_os=security.preflight()[0]
+            prepared_os=security.preflight()
             self.assertEqual({str(p): p.read_bytes() for p in Path('/etc/apt/apt.conf.d').glob('*') if p.is_file()}, files_before)
             effective = run('/usr/sbin/sshd', '-T')
             before = {p: p.read_bytes() for p in Path('/etc/ssh').rglob('*') if p.is_file()}
@@ -589,6 +583,21 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
             self.assertIn('203.0.113.7',run('getent','ahosts','debian.org'))
             self.assertEqual(Path('/etc/systemd/resolved.conf').read_bytes(),original_policy)
             self.assertEqual(Path('/etc/network/interfaces').read_bytes(),original_network)
+            # Failed DoT with verified native DNS recovery cannot block the
+            # independently requested APT timers and SSH jail.
+            independent=security.Transaction()
+            try:
+                fail_tls.set()
+                independent_result=security.configure()
+                self.assertEqual(independent_result['status'],'configured',independent_result)
+                self.assertEqual(independent_result['apt'],'configured')
+                self.assertEqual(independent_result['fail2ban'],'configured')
+                self.assertEqual(Path('/etc/resolv.conf').read_bytes(),original_dns)
+                security.verify_fail2ban([22])
+                security.verify_apt(prepared_os,expected_origins)
+            finally:
+                fail_tls.clear(); independent.rollback(); independent.temp.cleanup()
+            print('REAL DoT failure / verified original DNS / independent Fail2ban and APT: PASS',flush=True)
             # A different provider also passes real preparation and round-trip
             # rollback; no Google/Cloudflare ownership classification remains.
             other_dns=b'nameserver 9.9.9.9\n'
@@ -626,7 +635,8 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                 self.assertEqual(disabled.read_bytes(),disabled_policy)
                 if result['status'] != 'configured': print('TLS queries observed:',len(seen),'server errors:',errors,flush=True)
                 self.assertEqual(result['status'], 'configured', result)
-                self.assertEqual(result['dot'], 'configured')
+                self.assertEqual(result['apt'], 'configured')
+                self.assertEqual(result['fail2ban'], 'configured')
                 self.assertTrue(expected_origins <= security.apt_origins(run('apt-config','dump')))
                 self.assertEqual(admin.read_text(),'Unattended-Upgrade::Origins-Pattern { "origin=Provider,label=Provider-Security"; };\n')
                 self.assertTrue(seen, 'No actual TLS DNS query observed')
@@ -692,12 +702,13 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                     run('resolvectl','domain','xui-test',link_domain)
                     run('resolvectl','default-route','xui-test','yes')
                     before_tls=len(seen)
-                    route_policy.set()
-                    try: route_result=security.configure()
-                    finally: route_policy.clear()
+                    restarts=len(plain_at_restart)
+                    route_result=security.configure()
+                    security.verify_dns()
+                    self.assertEqual(len(plain_at_restart),restarts,'Final Security step restarted prepared DNS')
                     self.assertEqual(route_result['status'],'configured',route_result)
                     self.assertGreater(len(seen),before_tls,'No actual TLS DNS query with retained link policy')
-                    self.assertTrue(any('link/VPN' in w and 'unencrypted' in w for w in route_result['warnings']))
+                    self.assertTrue(any('link/VPN' in w and 'unencrypted' in w for w in success['warnings']))
                     self.assertIn(link_domain,run('resolvectl','domain','xui-test'))
                     self.assertIn(link_dns,run('resolvectl','dns','xui-test'))
                     self.assertIn('yes',run('resolvectl','default-route','xui-test'))
@@ -705,6 +716,24 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                     self.assertEqual({p:p.read_bytes() for p in before},before)
                 run('resolvectl','revert','xui-test')
                 print('REAL AdGuard Home HTTPS upstream + global DoT / provider search / VPN route preservation: PASS',flush=True)
+                # A controlled failure of the real Fail2ban restart must
+                # preserve already functioning DoT and APT timers.
+                restart_failure=[False]
+                def fail_jail(*args,**kwargs):
+                    if args==('systemctl','restart','fail2ban.service') and not restart_failure[0]:
+                        restart_failure[0]=True
+                        raise ValueError('controlled Fail2ban restart failure')
+                    return command(*args,**kwargs)
+                security.command=fail_jail
+                try: partial=security.configure()
+                finally: security.command=command
+                self.assertTrue(restart_failure[0])
+                self.assertEqual(partial['status'],'partial',partial)
+                self.assertEqual(partial['fail2ban'],'failed_rolled_back',partial)
+                self.assertEqual(partial['apt'],'configured',partial)
+                security.verify_dns(); security.verify_apt(prepared_os,expected_origins)
+                security.verify_fail2ban([22])
+                print('REAL independent Fail2ban failure / own rollback / DoT and APT retained: PASS',flush=True)
                 # Real socket activation overrides sshd's configured port. This
                 # fixture changes only its socket; production must merely detect it.
                 socket_drop = Path('/etc/systemd/system/ssh.socket.d/99-xui-ci.conf')
@@ -737,11 +766,13 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                 capture.terminate(); capture.wait(timeout=10)
                 snapshot.rollback()
                 self.assertEqual(run('/usr/sbin/sshd','-T'),effective)
-                # Invoke production rollback after a real unavailable TLS upstream,
-                # rather than relying only on a manually restored snapshot.
+                # A late unavailable TLS upstream does not couple final APT/SSH
+                # setup to DNS. Explicit DNS recovery still uses its checkpoint.
                 failed = security.configure()
-                self.assertEqual(failed['status'],'failed_rolled_back',failed)
-                self.assertTrue(all(not Path(name).exists() for name in security.FILES[:-1]))
+                self.assertEqual(failed['status'],'configured',failed)
+                self.assertEqual(failed['apt'],'configured',failed)
+                self.assertEqual(failed['fail2ban'],'configured',failed)
+                self.assertTrue(all(Path(name).is_file() for name in security.FILES[:-1]))
                 self.assertEqual(Path(security.FILES[-1]).read_text(),security.DOT)
                 self.assertEqual(os.readlink('/etc/resolv.conf'),'/run/systemd/resolve/stub-resolv.conf')
                 self.assertEqual(run('/usr/sbin/sshd','-T'),effective)

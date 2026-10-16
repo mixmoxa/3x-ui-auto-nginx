@@ -92,7 +92,7 @@ Kurulum aracı ek sunucu korumasını otomatik olarak yapılandırır: SSH parol
 
 - **1 GiB swap.** Etkin swap yoksa, dosya sistemi destekleniyorsa ve en az 4 GiB boş alan varsa kurulum aracı swap dosyasını oluşturup etkinleştirir. Mevcut swap ayarları değiştirilmez. Koşullar sağlanmazsa kurulum durdurulmadan bu adım atlanır.
 - **SSH koruması — Fail2ban.** Gerçek SSH dinleme portlarına göre tekrarlanan başarısız giriş denemelerini sınırlar. Mevcut SSH kimlik doğrulama ayarlarını değiştirmez.
-- **Şifreli DNS (DoT).** Genel Cloudflare ve Google DNS sunucuları `systemd-resolved` üzerinden zorunlu DNS-over-TLS kullanır. Arayüz/VPN DNS yolları ve arama alanları korunur; bunların sorguları şifrelenmeden kalabilir. DoT hazırlığı başarısız olur ve önceki DNS başarıyla geri yüklenirse ana kurulum VPS Security olmadan devam eder; sonuç ekranı hatayı bildirir ve çıkış kodu sıfırdan farklı olur.
+- **Şifreli DNS (DoT).** Genel Cloudflare ve Google DNS sunucuları `systemd-resolved` üzerinden zorunlu DNS-over-TLS kullanır. Arayüz/VPN DNS yolları ve arama alanları korunur; bunların sorguları şifrelenmeden kalabilir. DoT hazırlığı başarısız olur ve önceki DNS başarıyla geri yüklenirse ana kurulum, Fail2ban ve otomatik güncellemeler DoT’den bağımsız olarak devam eder; sonuç ekranı hatayı bildirir ve çıkış kodu sıfırdan farklı olur.
 - **Otomatik güvenlik güncellemeleri.** Paket listeleri 02:30'da güncellenir, güvenlik güncellemeleri 02:50'de yüklenir.
 - **Otomatik yeniden başlatma — 04:38.** Güncellemeler yeniden başlatma gerektiriyorsa sunucu bu saatte, **aktif kullanıcı oturumları olsa bile** yeniden başlatılır; mevcut bağlantılar kesilebilir.
 

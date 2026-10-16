@@ -658,13 +658,19 @@ class PersonalBackup(unittest.TestCase):
         self.assertNotIn('/etc/sysctl.conf', tuning)
         self.assertNotIn('sysctl --system', tuning)
         self.assertIn('/etc/sysctl.d/99-3x-ui-pro.conf', tuning)
-        run = relocated(tuning, self.root) + '\ntune_system\n'
+        # Supported-kernel fixture; unavailable keys/BBR are covered separately.
+        (self.root/'runtime-sysctl.json').write_text(json.dumps({'net.ipv4.tcp_available_congestion_control':'reno cubic bbr'}))
+        run = 'msg_warn() { echo "$*" >&2; };\n' + relocated(tuning, self.root) + '\ntune_system; echo TUNING=$TUNING_RESULT\n'
         result = subprocess.run(['bash', '-eu', '-c', run], env=self.env, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         path = self.path('/etc/sysctl.d/99-3x-ui-pro.conf')
         self.assertEqual(path.read_text().splitlines(), PARAMS)
+        self.assertIn('TUNING=applied',result.stdout)
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o644)
-        self.assertEqual([c for c in self.commands() if c[0] == 'sysctl'], [['sysctl', '-p', str(path)]])
+        self.assertEqual([c for c in self.commands() if c[0] == 'sysctl'],
+                         [['sysctl','-n','net.ipv4.tcp_available_congestion_control']] +
+                         [call for line in PARAMS for call in
+                          (['sysctl','-n',line.split('=',1)[0]],['sysctl','-q','-w',line])])
         tool = function('install_backup_tool')
         self.assertIn('${GITHUB_RAW}/assets/backup/x-ui-backup.sh', tool)
         self.assertNotIn('mozaroc', tool)
