@@ -68,6 +68,19 @@ python3() { if [[ "$*" == *--render-acme* ]]; then echo '# ACME fixture'; else p
                 self.assertNotIn('AmneziaWG:',text); self.assertNotIn('AdGuard Home:',text)
                 # Ignore the fixture's final variable dump when checking displayed credentials.
                 self.assertNotIn(output['url'],text.split('REMAINING=')[0])
+        for dot,f2ban,apt in (('configured','configured','configured'),('failed_rolled_back','configured','configured'),
+                              ('configured','failed_unverified','configured'),('configured','configured','failed_rolled_back')):
+            result=subprocess.run(['bash','-eu','-c',stubs+function('show_results')+
+                '\ndomain=panel.example; reality_domain=cover.example; panel_path=panel; config_username=fixture-user; config_password=fixture-pass; show_results'],
+                env={**os.environ,'DOT_RESULT':dot,'F2BAN_RESULT':f2ban,'APT_RESULT':apt,'TUNING_RESULT':'partially_skipped'},capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            for label,state in (('Global DoT',dot),('Fail2ban',f2ban),('APT security',apt)):
+                line=next(line for line in result.stdout.splitlines() if label+' — ' in line)
+                self.assertEqual('Configured' in line,state=='configured')
+                if state=='failed_unverified': self.assertIn('rollback not verified',line)
+            self.assertIn('Kernel tuning — Partially skipped',result.stdout)
+            self.assertIn('fixture-user',result.stdout); self.assertIn('fixture-pass',result.stdout)
+
 
     def test_apt_progress_is_live_and_preserves_failure_status(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -205,11 +218,11 @@ mv() { echo mv >> "$CALLS"; [[ "$CASE" != fstab ]] || return 1; command mv "$@";
                 value=actual_stat(path,*args,**kwargs)
                 fields=list(value); fields[4]=0; fields[5]=0; return os.stat_result(fields)
             with patch.object(Path,'stat',stat), patch.object(security.shutil,'which',side_effect=lambda name:name), patch.object(security,'command',side_effect=command):
-                self.assertEqual(security.preflight(root)[0],'ubuntu')
+                self.assertEqual(security.preflight(root),'ubuntu')
                 self.assertEqual(resolv.read_text(),original)
                 other='nameserver 9.9.9.9\nsearch provider.example\noptions rotate\n'
                 resolv.write_text(other)
-                self.assertEqual(security.preflight(root)[0],'ubuntu')
+                self.assertEqual(security.preflight(root),'ubuntu')
                 self.assertEqual(resolv.read_text(),other)
                 resolv.write_text(original)
                 with patch.object(security,'verify_dns',side_effect=ValueError('TLS unavailable')):
@@ -219,6 +232,88 @@ mv() { echo mv >> "$CALLS"; [[ "$CASE" != fstab ]] || return 1; command mv "$@";
                 self.assertFalse(resolv.is_symlink()); self.assertEqual(resolv.read_text(),original)
                 self.assertFalse((root/security.FILES[4].lstrip('/')).exists())
                 self.assertEqual(global_policy.read_text(),original_policy)
+
+    def test_security_components_are_independent_of_dns_and_each_other(self):
+        for fault in ('none','fail2ban','apt'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as directory:
+                security=helper('security'); root=Path(directory); (root/'etc').mkdir()
+                (root/'etc/os-release').write_text('ID=ubuntu\nVERSION_ID="26.04"\n')
+                resolv=root/'etc/resolv.conf'; resolv.write_text('nameserver 9.9.9.9\nsearch tech0.ru\n')
+                policy=root/security.FILES[-1].lstrip('/'); policy.parent.mkdir(parents=True)
+                policy.write_text(security.DOT)
+                original=(resolv.read_bytes(),policy.read_bytes()); calls=[]; reached=[]
+                states={service:['inactive','disabled'] for service in security.SERVICES}
+                states['systemd-resolved.service']=['active','enabled']
+                apt='APT::Periodic::Enable "1";\nAPT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\nUnattended-Upgrade::Automatic-Reboot "true";\nUnattended-Upgrade::Automatic-Reboot-WithUsers "true";\nUnattended-Upgrade::Automatic-Reboot-Time "04:38";\nUnattended-Upgrade::Origins-Pattern:: "origin=Ubuntu,archive=${distro_codename}-security";'
+                def command(*args,**kwargs):
+                    calls.append(args)
+                    if args[0] in ('resolvectl','busctl') or 'systemd-resolved' in args or args[-1]=='systemd-resolved.service' and args[1] not in ('is-active','is-enabled'):
+                        raise AssertionError('Final Security step touched prepared DNS')
+                    if args[0]=='apt-get':
+                        component='fail2ban' if 'fail2ban' in args else 'apt'
+                        reached.append(component)
+                        if fault==component: raise ValueError('controlled '+component+' package failure')
+                    if args[0]=='/usr/sbin/sshd': return 'port 22'
+                    if args[0]=='journalctl': return 'SSH journal'
+                    if args[0]=='apt-config': return apt
+                    if args[0]=='fail2ban-client':
+                        if args[1]=='get': return {'maxretry':'5','findtime':'1800','bantime':'3600'}[args[-1]]
+                        return 'port 22'
+                    if args[:2]==('systemctl','show'): return ('02:50' if args[2]=='apt-daily-upgrade.timer' else '02:30')+':00\nRandomizedDelayUSec=0'
+                    if args[0]=='systemctl' and args[-1] in states:
+                        state=states[args[-1]]
+                        if args[1]=='is-active': return state[0]
+                        if args[1]=='is-enabled': return state[1]
+                        if args[1] in ('restart','stop'): state[0]='active' if args[1]=='restart' else 'inactive'
+                        if args[1] in ('enable','disable'): state[1]='enabled' if args[1]=='enable' else 'disabled'
+                    return ''
+                actual_stat=Path.stat
+                def stat(path,*a,**kw):
+                    fields=list(actual_stat(path,*a,**kw)); fields[4]=0; fields[5]=0; return os.stat_result(fields)
+                with patch.object(Path,'stat',stat), patch.object(security.shutil,'which',side_effect=lambda x:x), patch.object(security,'command',side_effect=command):
+                    result=security.configure(root)
+                self.assertEqual(result.get('apt'),'failed_rolled_back' if fault=='apt' else 'configured',result)
+                self.assertEqual(result.get('fail2ban'),'failed_rolled_back' if fault=='fail2ban' else 'configured',result)
+                self.assertEqual(result['status'],'configured' if fault=='none' else 'partial',result)
+                self.assertEqual(set(reached),{'apt','fail2ban'})
+                self.assertFalse(resolv.is_symlink()); self.assertEqual((resolv.read_bytes(),policy.read_bytes()),original)
+                self.assertEqual(states['systemd-resolved.service'],['active','enabled'])
+                for name in security.FILES[1:4]: self.assertEqual((root/name.lstrip('/')).exists(),fault!='apt')
+                self.assertEqual((root/security.FILES[0].lstrip('/')).exists(),fault!='fail2ban')
+                if fault!='apt': self.assertEqual(states['apt-daily.timer'],['active','enabled'])
+                if fault!='none': self.assertTrue(any('controlled '+fault in w and 'rollback=failed_rolled_back' in w for w in result['warnings']))
+
+    def test_sysctl_tuning_skips_unsupported_kernel_settings(self):
+        for bbr in (False,True):
+            with self.subTest(bbr=bbr), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory); calls=root/'calls'; config=root/'etc/sysctl.d/99-3x-ui-pro.conf'
+                script=function('tune_system').replace('/etc/sysctl.d',str(root/'etc/sysctl.d'))
+                mocks=r'''
+msg_warn() { echo "$*"; }
+chown() { :; } # Private nonroot fixture; production still requires root ownership.
+modprobe() { return 1; }
+sysctl() {
+    echo "$*" >> "$CALLS"
+    if [[ "$1" == -n ]]; then
+        [[ "$2" != fs.file-max ]] || return 1
+        if [[ "$2" == net.ipv4.tcp_available_congestion_control ]]; then
+            if [[ "$BBR" == yes ]]; then echo 'reno cubic bbr'; else echo 'reno cubic'; fi
+        else echo 1; fi
+    elif [[ "$*" == *'-w '* ]]; then
+        [[ "$*" != *tcp_sack* ]] || return 1
+    else return 1; fi
+}
+'''
+                result=subprocess.run(['bash','-eu','-c',mocks+script+'\ntune_system; echo RESULT=$TUNING_RESULT; echo CORE_CONTINUES'],
+                    env={**os.environ,'CALLS':str(calls),'BBR':'yes' if bbr else 'no'},capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertIn('CORE_CONTINUES',result.stdout); self.assertIn('RESULT=partially_skipped',result.stdout)
+                text=config.read_text()
+                self.assertNotIn('fs.file-max',text); self.assertNotIn('tcp_sack',text)
+                self.assertIn('net.core.rmem_max=16777216',text)
+                self.assertEqual('tcp_congestion_control=bbr' in text,bbr)
+                self.assertEqual('default_qdisc=fq' in text,bbr)
+                self.assertNotIn('-p ',calls.read_text())
 
     def test_new_nightly_update_and_reboot_policy(self):
         security=helper('security')
@@ -230,7 +325,7 @@ mv() { echo mv >> "$CALLS"; [[ "$CASE" != fstab ]] || return 1; command mv "$@";
         self.assertIn('02:30:00',security.timer('02:30'))
         self.assertIn('02:50:00',security.timer('02:50'))
 
-    def test_late_security_failure_restores_initial_dns_checkpoint(self):
+    def test_component_failure_preserves_dns_and_original_checkpoint(self):
         import inspect
         security=helper('security')
         with tempfile.TemporaryDirectory() as directory:
@@ -262,8 +357,11 @@ mv() { echo mv >> "$CALLS"; [[ "$CASE" != fstab ]] || return 1; command mv "$@";
                 # the real missing rollback on the pre-checkpoint implementation.
                 options={'state':checkpoint} if 'state' in inspect.signature(security.prepare_dns).parameters else {}
                 self.assertEqual(security.prepare_dns(root,**options)['status'],'configured')
-                with patch.object(security,'verify',side_effect=ValueError('late TLS failure')):
-                    self.assertTrue(security.configure(root)['status'].startswith('failed'))
+                with patch.object(security,'verify_apt'), patch.object(security,'verify_fail2ban',side_effect=ValueError('controlled jail failure')):
+                    result=security.configure(root)
+                self.assertEqual(result['apt'],'configured',result)
+                self.assertEqual(result['fail2ban'],'failed_rolled_back',result)
+                self.assertTrue(resolv.is_symlink(),'Fail2ban failure must retain prepared DNS')
                 if hasattr(security,'rollback_dns_checkpoint'):
                     metadata=checkpoint/'state.json'; saved_metadata=metadata.read_text()
                     data=json.loads(saved_metadata); data['states']['ssh.service']=['active','enabled']
@@ -329,7 +427,7 @@ mv() { echo mv >> "$CALLS"; [[ "$CASE" != fstab ]] || return 1; command mv "$@";
                     self.assertLess(result.stdout.index('REPORT'),result.stdout.index('sudo reboot'))
                     self.assertEqual('Post-reboot acceptance is pending' in result.stdout, code==0)
 
-    def test_security_readonly_preflight_blocks_cleanup_for_known_conflicts(self):
+    def test_unrelated_security_configuration_does_not_block_core_preparation(self):
         from test_personal_backup import relocated
         cases = ('jail', 'jail-conf', 'disabled-apt', 'compatible', 'declined')
         for case in cases:
@@ -360,14 +458,8 @@ mv() { echo mv >> "$CALLS"; [[ "$CASE" != fstab ]] || return 1; command mv "$@";
                 result=subprocess.run(['bash','-eu','-c',script],env=env,capture_output=True,text=True)
                 after={str(p.relative_to(root)):os.readlink(p) if p.is_symlink() else p.read_bytes() for p in (root/'etc').rglob('*') if p.is_file() or p.is_symlink()}
                 self.assertEqual(before,after)
-                if case in ('compatible','declined','disabled-apt'):
-                    self.assertEqual(result.returncode,19,result.stderr)
-                    self.assertIn('CLEANUP',result.stdout)
-                else:
-                    self.assertEqual(result.returncode,1,result.stderr)
-                    self.assertNotIn('CLEANUP',result.stdout)
-                    self.assertNotIn('DESTRUCTION',result.stdout)
-                    self.assertIn('preflight',result.stderr.lower())
+                self.assertEqual(result.returncode,19,result.stderr)
+                self.assertIn('CLEANUP',result.stdout)
 
     def test_selected_security_overrides_disabled_periodic_apt(self):
         security=helper('security')
@@ -375,8 +467,8 @@ mv() { echo mv >> "$CALLS"; [[ "$CASE" != fstab ]] || return 1; command mv "$@";
         for key in ('Enable','Update-Package-Lists','Unattended-Upgrade'):
             with self.subTest(key=key):
                 self.assertEqual(security.apt_origins('APT::Periodic::'+key+' "0";'),set())
-        # A project marker cannot authorize removal of administrator origins
-        # appended to the managed file itself.
+        # Managed-file text need not match one canonical serialization. Effective
+        # origin preservation is checked by verify_apt(), not a text preflight.
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory); (root/'etc').mkdir()
             (root/'etc/os-release').write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
@@ -397,7 +489,7 @@ mv() { echo mv >> "$CALLS"; [[ "$CASE" != fstab ]] || return 1; command mv "$@";
                 if args[:2]==('systemctl','is-enabled'): return 'enabled'
                 return ''
             with patch.object(Path,'stat',stat), patch.object(security.shutil,'which',side_effect=lambda name:name), patch.object(security,'command',side_effect=command):
-                with self.assertRaisesRegex(ValueError,'APT.*preserved'): security.preflight(root)
+                self.assertEqual(security.preflight(root),'ubuntu')
                 self.assertIn('origin=Provider',owned.read_text())
                 current=security.apt_config('ubuntu')
                 previous=current.replace('Automatic-Reboot "true";\nUnattended-Upgrade::Automatic-Reboot-WithUsers "true";\nUnattended-Upgrade::Automatic-Reboot-Time "04:38";', 'Automatic-Reboot "false";')
@@ -440,8 +532,11 @@ mv() { echo mv >> "$CALLS"; [[ "$CASE" != fstab ]] || return 1; command mv "$@";
     def test_runtime_security_repeats_preflight_before_any_mutation(self):
         security=helper('security')
         with patch.object(security,'preflight',side_effect=ValueError('State changed')), patch.object(security,'command') as command, patch.object(security,'Transaction') as transaction:
-            with self.assertRaisesRegex(ValueError,'State changed'): security.configure()
-            command.assert_not_called(); transaction.assert_not_called()
+            result=security.configure()
+            self.assertEqual(result['apt'],'failed_rolled_back',result)
+            self.assertEqual(result['fail2ban'],'failed_rolled_back',result)
+            self.assertTrue(all('State changed' in warning for warning in result['warnings']))
+            command.assert_called_once_with('/usr/sbin/sshd','-t'); transaction.assert_not_called()
 
     def test_apt_dropin_preserves_effective_admin_and_distro_origins(self):
         security=helper('security')
@@ -564,25 +659,29 @@ mv() { echo mv >> "$CALLS"; [[ "$CASE" != fstab ]] || return 1; command mv "$@";
 msg_err() { echo "$*" >&2; }; msg_warn() { echo "$*" >&2; }; systemctl() { :; }; x-ui() { :; }
 python3() {
     if [[ "$*" == *--prepare-dns* ]]; then
-        printf '{"status":"%s","warnings":["controlled DoT unavailable"]}' "$DNS_CASE"; return 1
+        printf '{"status":"%s","warnings":["controlled DoT unavailable"]}' "$DNS_CASE"; [[ "$DNS_CASE" == configured ]]; return $?
     fi
-    if [[ "$1" != -c ]]; then echo UNEXPECTED_SECURITY_RECONFIGURATION >&2; return 99; fi
+    if [[ "$1" != -c ]]; then echo SECURITY_COMPONENTS_REACHED >&2; printf '{"status":"%s","apt":"%s","fail2ban":"%s","warnings":[]}' "$COMPONENT_STATUS" "$APT_CASE" "$F2BAN_CASE"; [[ "$COMPONENT_STATUS" == configured ]]; return $?; fi
     command python3 "$@"
 }
-show_results() { echo "FINAL:$SECURITY_RESULT:$config_username:$config_password"; }
+show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_username:$config_password"; echo "FINALIZED=$DNS_FINALIZED"; }
 '''
         script=stubs+function('prepare_system_dns')+'\n'+function('install_security')+'\n'+function('main')+'\nmain'
-        for status in ('failed_rolled_back','failed_unverified'):
-            with self.subTest(status=status):
+        for status,apt,f2ban in (('configured','configured','configured'),('failed_rolled_back','configured','configured'),
+                                  ('failed_unverified','configured','configured'),('configured','configured','failed_rolled_back'),
+                                  ('configured','failed_rolled_back','configured')):
+            with self.subTest(dot=status,apt=apt,fail2ban=f2ban):
                 result=subprocess.run(['bash','-u','-c',script],capture_output=True,text=True,timeout=10,
-                    env={**os.environ,'DNS_CASE':status,'INSTALL_SECURITY':'y','INSTALL_VISION':'n',
+                    env={**os.environ,'DNS_CASE':status,'APT_CASE':apt,'F2BAN_CASE':f2ban,
+                         'COMPONENT_STATUS':'configured' if apt==f2ban=='configured' else 'partial','INSTALL_SECURITY':'y','INSTALL_VISION':'n',
                          'INSTALL_AWG':'n','INSTALL_AGH':'n','CREATE_CLIENT':'n','PANEL_STAGE':'/private-fixture',
                          'config_username':'fixture-user','config_password':'fixture-password'})
-                self.assertNotEqual(result.returncode,0,'Requested Security failure must remain visible to automation')
-                self.assertNotIn('UNEXPECTED_SECURITY_RECONFIGURATION',result.stderr)
-                if status=='failed_rolled_back':
+                self.assertEqual(result.returncode,0 if status==apt==f2ban=='configured' else 1,result.stderr)
+                if status!='failed_unverified':
                     self.assertIn('install_panel',result.stdout)
-                    self.assertIn('FINAL:failed_rolled_back:fixture-user:fixture-password',result.stdout)
+                    self.assertIn('SECURITY_COMPONENTS_REACHED',result.stderr)
+                    self.assertIn(f'FINAL:{status}:{f2ban}:{apt}:fixture-user:fixture-password',result.stdout)
+                    self.assertIn('FINALIZED=y',result.stdout)
                 else:
                     self.assertNotIn('cleanup_adguard',result.stdout)
                     self.assertNotIn('FINAL:',result.stdout)
@@ -649,12 +748,12 @@ show_results() { echo "FINAL:$SECURITY_RESULT:$config_username:$config_password"
             if args[:2]==('resolvectl','dns'): return dns
             return ''
         with patch.object(security,'command',side_effect=command):
-            security.verify([22],'ubuntu')
+            security.verify_fail2ban([22])
         self.assertEqual(len(attempts),3)
         self.assertIn(('/usr/sbin/sshd','-t'),ssh_checks)
         invalid[0]=True
         with patch.object(security,'command',side_effect=command), self.assertRaisesRegex(ValueError,'Invalid SSH configuration'):
-            security.verify([22],'ubuntu')
+            security.verify_fail2ban([22])
 
     def test_effective_dot_native_dns_output_wraps_long_server_list(self):
         security = helper('security')

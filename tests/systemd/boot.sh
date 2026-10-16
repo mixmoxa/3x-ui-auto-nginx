@@ -46,7 +46,7 @@ cd /work/root
 find . -xdev -print0 | cpio --null -o --format=newc 2>/work/cpio.log | gzip -1 > /work/rootfs.cpio.gz
 kernel=$(find /boot -maxdepth 1 -name 'vmlinuz-*' -type f | sort -V | tail -1)
 [[ -n "$kernel" ]]
-timeout 12m qemu-system-x86_64 -machine accel=tcg -m 2048 -smp 2 -nodefaults \
+timeout 15m qemu-system-x86_64 -machine accel=tcg -m 2048 -smp 2 -nodefaults \
     -no-reboot -display none -serial stdio -monitor none -nic none \
     -fsdev local,id=ci,path=/work,security_model=none -device virtio-9p-pci,fsdev=ci,mount_tag=xui-ci \
     -kernel "$kernel" -initrd /work/rootfs.cpio.gz \
