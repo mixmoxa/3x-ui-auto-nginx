@@ -42,6 +42,102 @@ def nightly_after_cold_boot():
 
 
 class SecuritySystemd(unittest.TestCase):
+    def test_base_os_post_upgrade_ssh_health(self):
+        if (Path('/proc/1/comm').read_text().strip() != 'systemd' or
+                not Path('/opt/xui-ci/apt/xui-ci-upgrade-1.deb').is_file()):
+            self.fail('Requires the existing disposable offline systemd guest')
+        from test_personal_xhttp import function, SOURCE
+        run=lambda *a: subprocess.check_output(a,text=True,stderr=subprocess.STDOUT,timeout=30)
+        ufw_present=Path('/usr/sbin/ufw').exists()
+        units=('ssh.service','ssh.socket')
+        initial={unit:subprocess.run(['systemctl','is-active','--quiet',unit]).returncode==0 for unit in units}
+        before={str(p):p.read_bytes() for p in Path('/etc/ssh').rglob('*') if p.is_file()}
+        runtime=Path('/run/sshd')
+        names=('ensure_sshd_runtime_dir','check_systemd_manager','preflight_base_os','verify_base_os','prepare_base_os')
+        shell='\n'.join(function(n) for n in names if n+'() {' in SOURCE)
+        # Real sshd validates a private config; production SSH configuration is never edited.
+        shell=shell.replace('/usr/sbin/sshd','fixture_sshd')
+        with tempfile.TemporaryDirectory(prefix='os-ssh-health-') as directory:
+            root=Path(directory); config=root/'sshd.conf'; marker=root/'upgrade-reached'
+            foreign=root/'foreign'; foreign.mkdir(); (foreign/'sentinel').write_bytes(b'keep')
+            config_bytes=b'HostKey /etc/ssh/ssh_host_ed25519_key\nLogLevel INFO\n'
+            stubs='''msg_err() { echo "$*" >&2; }; msg_warn() { :; }
+# External DNS is outside this offline SSH regression; retain a real local NSS lookup.
+getent() { command getent passwd root; }
+# APT is simulated: satisfy only this unrelated availability check, never operate a firewall.
+ufw() { echo 'Unexpected firewall operation in SSH regression' >&2; return 99; }
+fixture_sshd() { /usr/sbin/sshd -f "$SSH_TEST_CONFIG" "$@"; }
+systemctl() {
+    if [[ "$SCENARIO" == manager && -e "$UPGRADE_MARKER" && "$1" == --system ]]; then
+        echo 'controlled systemd manager unavailable' >&2; return 1
+    fi
+    command systemctl "$@"
+}
+apt_system() {
+    [[ "$*" == '-y dist-upgrade' ]] || return 0
+    touch "$UPGRADE_MARKER"
+    case "$SCENARIO" in
+        missing-runtime) rmdir /run/sshd ;;
+        symlink) rmdir /run/sshd; ln -s "$FOREIGN_DIR" /run/sshd ;;
+        file) rmdir /run/sshd; printf keep > /run/sshd ;;
+        invalid-config) printf '\\nXuiInvalidOption yes\\n' >> "$SSH_TEST_CONFIG" ;;
+        inactive-unit) command systemctl stop ssh.service ssh.socket ;;
+        valid-render-change) sed -i 's/LogLevel INFO/LogLevel VERBOSE/' "$SSH_TEST_CONFIG" ;;
+    esac
+    if [[ "$SCENARIO" == symlink || "$SCENARIO" == file ]]; then
+        stat -c '%d:%i:%u:%g:%a' /run/sshd > "$UPGRADE_MARKER.identity"
+    fi
+}
+'''
+            try:
+                for unit in units:
+                    for case in ('missing-runtime','symlink','file','invalid-config','manager',
+                                 'inactive-unit','valid-render-change'):
+                        with self.subTest(unit=unit,case=case):
+                            run('systemctl','stop',*units)
+                            run('systemctl','reset-failed',*units)
+                            if runtime.is_symlink() or runtime.is_file(): runtime.unlink()
+                            run('install','-d','-o','root','-g','root','-m','0755',str(runtime))
+                            run('systemctl','start',unit)
+                            config.write_bytes(config_bytes); marker.unlink(missing_ok=True)
+                            result=subprocess.run(['bash','-eu','-c',shell+'\n'+stubs+
+                                '\npreflight_base_os; prepare_base_os'],env={**os.environ,
+                                'SCENARIO':case,'SSH_TEST_CONFIG':str(config),'UPGRADE_MARKER':str(marker),
+                                'FOREIGN_DIR':str(foreign)},capture_output=True,text=True,timeout=45)
+                            self.assertTrue(marker.exists(),'Must reach the simulated APT upgrade: '+result.stderr)
+                            if case in ('missing-runtime','valid-render-change'):
+                                self.assertEqual(result.returncode,0,result.stderr)
+                                info=runtime.stat()
+                                self.assertFalse(runtime.is_symlink())
+                                self.assertEqual((info.st_uid,info.st_gid,info.st_mode & 0o7777),(0,0,0o755))
+                                run('/usr/sbin/sshd','-t','-f',str(config))
+                                run('systemctl','is-active','--quiet',unit)
+                            else:
+                                self.assertNotEqual(result.returncode,0)
+                                message={'symlink':'Unsafe OpenSSH runtime path','file':'Unsafe OpenSSH runtime path',
+                                         'invalid-config':'OpenSSH configuration validation failed',
+                                         'manager':'systemd manager is unavailable',
+                                         'inactive-unit':'Original SSH activation unit is not active'}[case]
+                                self.assertIn(message,result.stderr)
+                            if case=='symlink':
+                                self.assertTrue(runtime.is_symlink())
+                                self.assertEqual(runtime.readlink(),foreign)
+                            if case=='file': self.assertTrue(runtime.read_bytes()==b'keep')
+                            if case in ('symlink','file'):
+                                info=runtime.lstat()
+                                self.assertEqual(f'{info.st_dev}:{info.st_ino}:{info.st_uid}:{info.st_gid}:{info.st_mode & 0o7777:o}',
+                                                 Path(str(marker)+'.identity').read_text().strip())
+                            self.assertEqual(sorted(p.name for p in foreign.iterdir()),['sentinel'])
+                            self.assertTrue((foreign/'sentinel').read_bytes()==b'keep')
+            finally:
+                if runtime.is_symlink() or runtime.is_file(): runtime.unlink()
+                run('install','-d','-o','root','-g','root','-m','0755',str(runtime))
+                run('systemctl','stop',*units)
+                for unit in reversed(units):
+                    if initial[unit]: run('systemctl','start',unit)
+                self.assertTrue(before=={str(p):p.read_bytes() for p in Path('/etc/ssh').rglob('*') if p.is_file()},
+                                'OS preparation changed production SSH configuration/keys')
+                self.assertEqual(Path('/usr/sbin/ufw').exists(),ufw_present,'SSH fixture changed package state')
     def test_zz_restore_scoped_ufw_and_runtime_sysctl_in_guest(self):
         if Path('/proc/1/comm').read_text().strip() != 'systemd':
             self.fail('Requires the existing disposable systemd VM')
@@ -474,7 +570,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
             effective = run('/usr/sbin/sshd', '-T')
             before = {p: p.read_bytes() for p in Path('/etc/ssh').rglob('*') if p.is_file()}
             from test_personal_xhttp import function
-            shell='\n'.join(function(n) for n in ('apt_system','preflight_base_os','verify_base_os','prepare_base_os'))
+            shell='\n'.join(function(n) for n in ('apt_system','ensure_sshd_runtime_dir','check_systemd_manager','preflight_base_os','verify_base_os','prepare_base_os'))
             run('bash','-eu','-c','msg_err() { echo "$*" >&2; }; msg_warn() { echo "$*"; };\n'+shell+'\npreflight_base_os; prepare_base_os')
             self.assertEqual(run('dpkg-query','-W','-f=${Version}','xui-ci-upgrade'),'2')
             self.assertTrue(run('dpkg-query','-W','-f=${db:Status-Abbrev}','xui-ci-retained').startswith('ii'))
