@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Managed 3x-ui Auto Nginx backup: same-host rollback or clean-host recovery, same OS/arch.
-# Usage: x-ui-backup {backup|restore <archive>|list|update-hooks}
+# Usage: x-ui-backup {backup|restore <archive>|extract <archive> <new-directory>|list|update-hooks}
 set -Eeuo pipefail
 umask 077
 
@@ -180,13 +180,16 @@ quick_check() {
 # Validate before extraction. Only managed paths and their parent directories are
 # accepted; links cannot redirect extraction or target arbitrary OS/security files.
 validate_archive() {
-    gzip -t -- "$1" || die 'Archive gzip integrity check failed.'
-    python3 - "$1" "$DB" "$XRAY_DIR" "${REQUIRED_PATHS[@]}" -- \
+    local -a runner=()
+    if [[ ${2:-restore} == extract ]]; then runner=(exec)
+    else gzip -t -- "$1" || die 'Archive gzip integrity check failed.'; fi
+    "${runner[@]}" python3 - "$1" "${2:-restore}" "${3:-}" "$DB" "$XRAY_DIR" "${REQUIRED_PATHS[@]}" -- \
         "${RUNTIME_PATHS[@]:0:2}" "${TREE_PATHS[@]}" -- \
         /usr/bin/x-ui "${EXTRA_PATHS[@]}" <<'PY'
-import ipaddress, json, posixpath, sys, tarfile
+import errno, gzip, ipaddress, json, os, posixpath, shutil, signal, stat, sys, tarfile
+from contextlib import contextmanager
 from pathlib import PurePosixPath
-archive, db, xray_dir, *paths = sys.argv[1:]
+archive, mode, output, db, xray_dir, *paths = sys.argv[1:]
 split = paths.index('--')
 required, paths = paths[:split], paths[split + 1:]
 split = paths.index('--')
@@ -216,39 +219,143 @@ def permitted(name, directory):
         return False
     path = name[6:]
     return managed(path) or (directory and any(p.startswith(path + '/') for p in allowed))
+# Recovery uses only ordinary file streams. Never resolve archived links or modes.
+DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+@contextmanager
+def directory(base, parts, create=False, owned=None):
+    fd = os.dup(base)
+    try:
+        for part in parts:
+            created = False
+            if create:
+                try:
+                    os.mkdir(part, 0o700, dir_fd=fd)
+                    created = True
+                except FileExistsError:
+                    pass
+            child = os.open(part, DIRECTORY_FLAGS, dir_fd=fd)
+            if created:
+                info = os.fstat(child)
+                owned.add((info.st_dev, info.st_ino))
+            os.close(fd)
+            fd = child
+        yield fd
+    finally:
+        os.close(fd)
+
+def extract_files(tar, members, target):
+    target = os.path.abspath(target)
+    parts = PurePosixPath(target).parts[1:]
+    if not parts:
+        fail('Output must be a new directory')
+    base = os.open('/', DIRECTORY_FLAGS)
+    files_written = links_skipped = 0
+    owned = set()
+    try:
+        # Pin each ancestor and refuse symlinks, including in the user output path.
+        with directory(base, parts[:-1]) as parent:
+            fd = None
+            complete = False
+            try:
+                os.mkdir(parts[-1], 0o700, dir_fd=parent)  # Atomic refusal if it exists.
+                fd = os.open(parts[-1], DIRECTORY_FLAGS, dir_fd=parent)
+                identity = os.fstat(fd)
+                for name, member in members.items():
+                    if member.issym() or member.islnk():
+                        links_skipped += 1
+                        continue
+                    path = PurePosixPath(name).parts
+                    if member.isdir():
+                        with directory(fd, path, create=True, owned=owned):
+                            pass
+                        continue
+                    with directory(fd, path[:-1], create=True, owned=owned) as destination:
+                        file_fd = os.open(path[-1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                          0o600, dir_fd=destination)
+                        info = os.fstat(file_fd)
+                        owned.add((info.st_dev, info.st_ino))
+                        with os.fdopen(file_fd, 'wb') as out, tar.extractfile(member) as source:
+                            shutil.copyfileobj(source, out, 1024 * 1024)
+                    files_written += 1
+                with directory(base, parts) as current_fd:
+                    current = os.fstat(current_fd)
+                if (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
+                    fail('Output directory changed during extraction')
+                complete = True
+            finally:
+                if fd is not None:
+                    try:
+                        if not complete:
+                            # Clean through the pinned private root, never a replaced output path.
+                            for _, dirs, files, child_fd in os.fwalk('.', topdown=False, follow_symlinks=False, dir_fd=fd):
+                                for name in files:
+                                    info = os.stat(name, dir_fd=child_fd, follow_symlinks=False)
+                                    if (info.st_dev, info.st_ino) in owned:
+                                        os.unlink(name, dir_fd=child_fd)
+                                for name in dirs:
+                                    info = os.stat(name, dir_fd=child_fd, follow_symlinks=False)
+                                    if (info.st_dev, info.st_ino) not in owned:
+                                        continue
+                                    if stat.S_ISLNK(info.st_mode):
+                                        os.unlink(name, dir_fd=child_fd)
+                                    else:
+                                        try:
+                                            os.rmdir(name, dir_fd=child_fd)
+                                        except OSError as exc:
+                                            if exc.errno not in (errno.ENOTEMPTY, errno.EEXIST):
+                                                raise
+                            current = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
+                            if (current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino):
+                                os.rmdir(parts[-1], dir_fd=parent)
+                    finally:
+                        os.close(fd)
+    finally:
+        os.close(base)
+    print('Extracted data: ' + target)
+    print('Files: ' + str(files_written))
+    print('Skipped links: ' + str(links_skipped))
+    print('WARNING: Data contains secrets and private keys; keep it private.')
+
+if mode == 'extract':
+    def interrupted(signum, frame):
+        raise InterruptedError('Recovery extraction interrupted')
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGINT, interrupted)
 try:
-    with tarfile.open(archive, 'r:gz') as tar:
-        metadata = tar.getmember('meta.json')
-        if not metadata.isfile() or metadata.size > 16384:
-            fail('Invalid metadata file')
-        meta = json.load(tar.extractfile(metadata))
-        if isinstance(meta, dict) and type(meta.get('format_version')) is int and meta['format_version'] == 2:
-            fail('Legacy backup format 2 is not supported by this release. Restore it with the matching older x-ui-backup version.')
-        if not isinstance(meta, dict):
-            fail('Metadata must be an object')
-        if type(meta.get('adguard_home')) is not bool:
-            fail('Missing boolean adguard_home metadata')
-        if 'service_states' in meta:
-            states = meta['service_states']
-            services = {'x-ui', 'nginx', 'mtr-backend', 'certbot.timer'}
-            if meta['adguard_home']: services.add('AdGuardHome')
-            if not isinstance(states, dict) or set(states) != services:
-                fail('Invalid service-state metadata: expected managed services only')
-            for state in states.values():
-                if (not isinstance(state, dict) or set(state) != {'active', 'enabled'} or
-                    state['active'] not in ('active', 'inactive', 'failed') or type(state['enabled']) is not bool):
-                    fail('Invalid service-state metadata: expected active/inactive/failed and boolean enabled')
+    with open(archive, 'rb') as raw, gzip.GzipFile(fileobj=raw) as compressed, \
+            tarfile.open(fileobj=compressed, mode='r:') as tar:
         agh_tree = '/opt/AdGuardHome'.lstrip('/')
         agh_helper = '/usr/local/lib/3x-ui-pro/managed-adguard.sh'.lstrip('/')
         agh_snippet = '/etc/nginx/snippets/x-ui-auto-optional/adguard.conf'.lstrip('/')
-        if meta['adguard_home']:
-            if meta.get('adguard_version') != 'v0.107.79' or meta.get('adguard_arch') not in ('amd64', 'arm64') or meta['adguard_arch'] != meta.get('arch'):
-                fail('Invalid AdGuard Home release metadata')
-            required += ['files/' + p for p in (agh_tree, agh_tree + '/AdGuardHome', agh_tree + '/AdGuardHome.yaml', agh_tree + '/managed.json', agh_helper, agh_snippet)]
+        if mode != 'extract':
+            metadata = tar.getmember('meta.json')
+            if not metadata.isfile() or metadata.size > 16384:
+                fail('Invalid metadata file')
+            meta = json.load(tar.extractfile(metadata))
+            if isinstance(meta, dict) and type(meta.get('format_version')) is int and meta['format_version'] == 2:
+                fail('Legacy backup format 2 is not supported by this release. Restore it with the matching older x-ui-backup version.')
+            if not isinstance(meta, dict):
+                fail('Metadata must be an object')
+            if type(meta.get('adguard_home')) is not bool:
+                fail('Missing boolean adguard_home metadata')
+            if 'service_states' in meta:
+                states = meta['service_states']
+                services = {'x-ui', 'nginx', 'mtr-backend', 'certbot.timer'}
+                if meta['adguard_home']: services.add('AdGuardHome')
+                if not isinstance(states, dict) or set(states) != services:
+                    fail('Invalid service-state metadata: expected managed services only')
+                for state in states.values():
+                    if (not isinstance(state, dict) or set(state) != {'active', 'enabled'} or
+                        state['active'] not in ('active', 'inactive', 'failed') or type(state['enabled']) is not bool):
+                        fail('Invalid service-state metadata: expected active/inactive/failed and boolean enabled')
+            if meta['adguard_home']:
+                if meta.get('adguard_version') != 'v0.107.79' or meta.get('adguard_arch') not in ('amd64', 'arm64') or meta['adguard_arch'] != meta.get('arch'):
+                    fail('Invalid AdGuard Home release metadata')
+                required += ['files/' + p for p in (agh_tree, agh_tree + '/AdGuardHome', agh_tree + '/AdGuardHome.yaml', agh_tree + '/managed.json', agh_helper, agh_snippet)]
         members = {}
         for member in tar:
             name = clean(member.name)
-            if not meta['adguard_home'] and (name == 'files/' + agh_tree or name.startswith('files/' + agh_tree + '/') or name in ('files/' + agh_helper, 'files/' + agh_snippet)):
+            if mode != 'extract' and not meta['adguard_home'] and (name == 'files/' + agh_tree or name.startswith('files/' + agh_tree + '/') or name in ('files/' + agh_helper, 'files/' + agh_snippet)):
                 fail('AdGuard Home state prohibited when metadata is false')
             if name.startswith('files/' + agh_tree + '/') and not (member.isfile() or member.isdir()):
                 fail('AdGuard Home tree cannot contain archive links')
@@ -283,32 +390,39 @@ try:
                 target = members.get(clean(member.linkname))
                 if not target or not target.isfile():
                     fail('Invalid hard link')
-        for name in ['meta.json', *required]:
-            if name not in members:
-                fail('Archive is missing required managed state')
-            if name in required and not (members[name].isdir() if name[6:] in trees else members[name].isfile()):
-                fail('Required managed state has the wrong file type')
-        for name in ('meta.json', 'files/' + db.lstrip('/')):
-            if not members[name].isfile():
-                fail('Metadata and DB must be regular files')
-        xray_prefix = 'files/' + xray_dir.lstrip('/') + '/xray-linux-'
-        if not any(name.startswith(xray_prefix) and member.isfile() and member.mode & 0o111
-                   for name, member in members.items()):
-            fail('Archive is missing the Xray executable')
-        if members['meta.json'].size > 16384:
-            fail('Unexpected metadata size')
-        meta = json.load(tar.extractfile(members['meta.json']))
-        if not isinstance(meta, dict):
-            fail('Metadata must be an object')
-        keys = ('created', 'hostname', 'os_id', 'os_version', 'arch', 'x_ui_version', 'xray_version', 'source_ipv4')
-        if type(meta.get('format_version')) is not int or meta['format_version'] != 3:
-            fail('Unsupported backup format; expected format_version=3')
-        if any(not isinstance(meta.get(k), str) for k in keys):
-            fail('Incomplete backup metadata')
-        if meta['source_ipv4']:
-            ipaddress.IPv4Address(meta['source_ipv4'])
-except (ValueError, OSError, tarfile.TarError, KeyError, UnicodeError) as exc:
-    print('[FAIL] Invalid or unsafe backup archive: ' + str(exc), file=sys.stderr)
+        if mode == 'extract':
+            # tar stops at its end marker; still validate the entire gzip stream/CRC.
+            while compressed.read(1024 * 1024):
+                pass
+            extract_files(tar, members, output)
+        else:
+            for name in ['meta.json', *required]:
+                if name not in members:
+                    fail('Archive is missing required managed state')
+                if name in required and not (members[name].isdir() if name[6:] in trees else members[name].isfile()):
+                    fail('Required managed state has the wrong file type')
+            for name in ('meta.json', 'files/' + db.lstrip('/')):
+                if not members[name].isfile():
+                    fail('Metadata and DB must be regular files')
+            xray_prefix = 'files/' + xray_dir.lstrip('/') + '/xray-linux-'
+            if not any(name.startswith(xray_prefix) and member.isfile() and member.mode & 0o111
+                       for name, member in members.items()):
+                fail('Archive is missing the Xray executable')
+            if members['meta.json'].size > 16384:
+                fail('Unexpected metadata size')
+            meta = json.load(tar.extractfile(members['meta.json']))
+            if not isinstance(meta, dict):
+                fail('Metadata must be an object')
+            keys = ('created', 'hostname', 'os_id', 'os_version', 'arch', 'x_ui_version', 'xray_version', 'source_ipv4')
+            if type(meta.get('format_version')) is not int or meta['format_version'] != 3:
+                fail('Unsupported backup format; expected format_version=3')
+            if any(not isinstance(meta.get(k), str) for k in keys):
+                fail('Incomplete backup metadata')
+            if meta['source_ipv4']:
+                ipaddress.IPv4Address(meta['source_ipv4'])
+except (ValueError, OSError, EOFError, tarfile.TarError, KeyError, UnicodeError) as exc:
+    label = 'Recovery extraction failed' if mode == 'extract' else 'Invalid or unsafe backup archive'
+    print('[FAIL] ' + label + ': ' + str(exc), file=sys.stderr)
     sys.exit(1)
 PY
 }
@@ -1920,6 +2034,11 @@ cmd_list() {
 }
 
 main() {
+    if [[ ${1:-} == extract ]]; then
+        [[ $# == 3 && -n "$2" && -n "$3" ]] || die 'Usage: x-ui-backup extract <archive> <new-directory>'
+        validate_archive "$2" extract "$3"
+        return
+    fi
     require_root
     export LC_ALL=C
     trap cleanup EXIT
@@ -1931,7 +2050,7 @@ main() {
         restore) cmd_restore "${2:-}" ;;
         list) cmd_list ;;
         update-hooks) cmd_update_hooks ;;
-        *) die 'Usage: x-ui-backup {backup|restore <archive>|list|update-hooks}' ;;
+        *) die 'Usage: x-ui-backup {backup|restore <archive>|extract <archive> <new-directory>|list|update-hooks}' ;;
     esac
 }
 

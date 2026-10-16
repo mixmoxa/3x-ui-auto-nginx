@@ -243,6 +243,14 @@ Archives are saved in `/var/backups/x-ui/`.
 
 > **Backups contain sensitive data:** the client database, passwords, and certificate private keys. Keep a copy **off the VPS** and restore only trusted archives.
 
+If Restore is unavailable, extract the files for manual recovery without installing packages or running services. Only Bash, Python 3, and access to the archive and destination are needed; root is not required:
+
+```bash
+x-ui-backup extract /path/to/archive.tar.gz ./recovered-backup
+```
+
+The destination must be new; original paths are preserved under `files/` and links are skipped. The data contains secrets: review it before copying anything over a running server.
+
 [Recovery on a new VPS](#restore-on-new-vps).
 
 ## 🔐 Security
