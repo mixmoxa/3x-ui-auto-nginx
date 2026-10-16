@@ -502,7 +502,7 @@ python3() { echo "python3 $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != python-import ]]
 '''
         required = {"openssl", "procps", "iproute2", "tar", "gzip", "tzdata", "ca-certificates",
                     "curl", "wget", "jq", "bash", "sudo", "nginx-full", "certbot",
-                    "sqlite3", "ufw", "netcat-openbsd", "mtr", "python3", "python3-configobj", "python3-cryptography", "libcap2-bin"}
+                    "sqlite3", "ufw", "netcat-openbsd", "mtr-tiny", "python3", "python3-configobj", "python3-cryptography", "libcap2-bin"}
         self.assertRegex(function("main"), r"install_packages\s*\|\|.*exit 1")
         for failure in ("", "apt", "sysctl", "ip", "nginx", "python-import"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
@@ -514,7 +514,7 @@ python3() { echo "python3 $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != python-import ]]
                 if not failure:
                     calls = log.read_text().splitlines()
                     packages = next(c.split()[c.split().index('install')+1:] for c in calls if ' install curl ' in c)
-                    self.assertTrue(all('--no-remove' in c for c in calls if c.startswith('apt-get ')))
+                    self.assertTrue(all('--no-remove' not in c for c in calls if c.startswith('apt-get ')))
                     self.assertTrue(required.issubset(packages))
                     self.assertNotIn("cron", packages)
                     self.assertNotIn("python3-certbot-nginx", packages)

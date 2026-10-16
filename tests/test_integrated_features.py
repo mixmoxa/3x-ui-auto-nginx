@@ -388,7 +388,7 @@ sysctl() {
         self.assertLess(main.index('show_results'),main.index('finish_initial_reboot'))
         preparation=function('prepare_base_os')
         self.assertIn('dist-upgrade',preparation)
-        self.assertIn('--no-remove',function('apt_system'))
+        self.assertNotIn('--no-remove',function('apt_system'))
         self.assertIn('--force-confold',function('apt_system'))
         self.assertIn('DPkg::Lock::Timeout',function('apt_system'))
 
