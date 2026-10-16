@@ -33,6 +33,8 @@ FILES = ('/etc/fail2ban/jail.d/90-3x-ui-auto-nginx.local',
          '/etc/systemd/system/apt-daily.timer.d/90-3x-ui-auto-nginx.conf',
          '/etc/systemd/system/apt-daily-upgrade.timer.d/90-3x-ui-auto-nginx.conf',
          '/etc/systemd/resolved.conf.d/90-3x-ui-auto-nginx.conf')
+DOT_WARNING = ('Global DoT does not override link/VPN DNS routes or search domains; '
+               'queries using link DNS may be unencrypted. Inspect resolvectl status.')
 SERVICES = ('fail2ban.service', 'apt-daily.timer', 'apt-daily-upgrade.timer', 'systemd-resolved.service')
 
 
@@ -99,17 +101,6 @@ Unattended-Upgrade::Origins-Pattern { "''' + origins + '''"; };
 
 def apt_origins(dump):
     return set(re.findall(r'Unattended-Upgrade::(Allowed-Origins|Origins-Pattern):: "([^"\n]+)";', dump))
-
-
-def dns_routes(dns, domains):
-    for line in domains.splitlines():
-        if line.startswith('Link ') and line.partition(':')[2].strip():
-            raise ValueError('Interface/VPN DNS route overrides global DoT; preserved')
-    for line in dns.splitlines():
-        if line.startswith('Link '):
-            addresses = line.partition(':')[2].split()
-            if any(address.split('#')[0] in ('127.0.0.1', '::1', '127.0.0.53') for address in addresses):
-                raise ValueError('Local interface DNS may create a resolver loop; preserved')
 
 
 def global_servers(dns):
@@ -279,9 +270,9 @@ class Transaction:
                 raise ValueError('Configuration rollback not verified')
 
 
-def verify(ports, effective, os_id, previous_origins=frozenset()):
-    if command('/usr/sbin/sshd', '-T') != effective:
-        raise ValueError('Effective SSH policy changed')
+def verify(ports, os_id, previous_origins=frozenset()):
+    # No SSH policy is edited here; validate configuration, not its text rendering.
+    command('/usr/sbin/sshd', '-t')
     # The distro unit uses Type=simple: restart can return before its socket/jail.
     for attempt in range(10):
         try:
@@ -319,7 +310,6 @@ def verify(ports, effective, os_id, previous_origins=frozenset()):
 
 
 def verify_dns():
-    dns_routes(command('resolvectl', 'dns'), command('resolvectl', 'domain'))
     mode = command('busctl', 'get-property', 'org.freedesktop.resolve1',
                    '/org/freedesktop/resolve1', 'org.freedesktop.resolve1.Manager', 'DNSOverTLS')
     if mode != 's "yes"':
@@ -329,8 +319,8 @@ def verify_dns():
     if global_dns != ['1.1.1.1#one.one.one.one', '1.0.0.1#one.one.one.one', '8.8.8.8#dns.google', '8.8.4.4#dns.google']:
         raise ValueError('Effective TLS names/DNS servers differ')
     command('resolvectl', 'flush-caches')
-    # Strict mode + authenticated global servers + no competing link routes:
-    # resolved cannot answer these uncached queries by falling back to plaintext.
+    # Check resolver functionality without removing provider/VPN DNS policy.
+    # Strict TLS applies to global servers, not necessarily to link-routed queries.
     command('resolvectl', 'query', '--cache=no', 'cloudflare.com')
     command('resolvectl', 'query', '--cache=no', 'debian.org')
     command('getent', 'ahosts', 'debian.org')
@@ -358,7 +348,7 @@ def prepare_dns(root=Path('/'), state=None):
         verify_dns()
         stage='post-configuration readiness'
         preflight(root)
-        return {'status':'configured', 'dot':'configured', 'warnings':[]}
+        return {'status':'configured', 'dot':'configured', 'warnings':[DOT_WARNING]}
     except Exception as error:
         status='failed_rolled_back'; rollback_error=''
         try:
@@ -393,7 +383,7 @@ def rollback_dns_checkpoint(state, root=Path('/')):
 def configure(root=Path('/')):
     # Repeat the same read-only compatibility check immediately before writes.
     os_id, effective, ports, previous_origins = preflight(root)
-    warnings = []
+    warnings = [DOT_WARNING]
     if password_warning(effective):
         warnings.append('SSH PASSWORD AUTHENTICATION IS ENABLED. SSH policy was preserved; review it separately.')
     warnings.append('sshd -T covers the default context; administrator Match rules may permit other password authentication.')
@@ -427,14 +417,13 @@ bantime = 3600
             command('systemctl', 'enable', service)
             command('systemctl', 'restart', service)
         stage='verifying effective Security and DNS'
-        verify(ports, effective, os_id, previous_origins)
+        verify(ports, os_id, previous_origins)
         return {'status': 'configured', 'dot': 'configured', 'warnings': warnings}
     except Exception as error:
         status = 'failed_rolled_back'; rollback_error=''
         try:
             txn.rollback()
-            if command('/usr/sbin/sshd', '-T') != effective:
-                raise ValueError('SSH policy rollback differs')
+            command('/usr/sbin/sshd', '-t')
         except Exception as failure:
             status = 'failed_unverified'; rollback_error='; rollback error: '+str(failure)
         return {'status': status, 'dot': status, 'warnings': warnings + ['VPS Security failed during '+stage+': '+str(error)+'; rollback='+status+rollback_error]}

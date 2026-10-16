@@ -241,7 +241,7 @@ confirm_destructive_reinstall() {
     msg_warn '  Existing installation detected'
     msg_warn '============================================================'
     for category in "${EXISTING_INSTALL_CATEGORIES[@]}"; do msg_warn " [!] $category"; done
-    printf '\nContinuing will run a full OS dist-upgrade (services may restart),\nremove the current 3X-UI deployment and replace nginx configuration.\nThe OS upgrade cannot be rolled back. Copy a backup off-host first.\n\n'
+    printf '\nContinuing will run a full OS dist-upgrade (services may restart),\nremove data in project-managed installation paths and replace nginx configuration.\nUse a clean dedicated VPS; this is a full rebuild, not an update.\nThe OS upgrade cannot be rolled back. Copy a backup off-host first.\n\n'
     printf 'Type YES to remove the existing deployment and continue: '
     if ! IFS= read -r answer || [[ "$answer" != YES ]]; then
         msg_err 'Cancelled. Existing deployment was not changed.'
@@ -524,8 +524,14 @@ prepare_system_dns() {
     DNS_PREPARED=y
     if ! output=$(python3 "$PANEL_STAGE/managed-security.py" --prepare-dns "$PANEL_STAGE/dns-checkpoint"); then
         status=$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])') || status=failed_unverified
-        [[ "$status" != failed_rolled_back ]] || DNS_PREPARED=n
         printf '%s' "$output" | python3 -c 'import json,sys; [print("[!] DNS preparation: "+w,file=sys.stderr) for w in json.load(sys.stdin)["warnings"]]'
+        if [[ "$status" == failed_rolled_back ]]; then
+            DNS_PREPARED=n
+            SECURITY_RESULT=failed_rolled_back
+            msg_warn 'DoT unavailable; original DNS restored. Continuing core installation without VPS Security. Inspect the DNS failure above.'
+            verify_base_os
+            return $?
+        fi
         return 1
     fi
     if ! output=$(python3 "$PANEL_STAGE/managed-security.py" --preflight); then
@@ -2370,7 +2376,7 @@ show_results() {
     msg_inf '============================================================'
     msg_inf " [i] Base OS                ${BASE_OS_RESULT:-not_prepared} (full upgrade is not rollbackable)"
     msg_inf " [i] Local timezone         $(timedatectl show -p Timezone --value)"
-    if [[ "${INSTALL_SECURITY:-n}" == y ]]; then
+    if [[ "${SECURITY_RESULT:-not_requested}" == configured ]]; then
         msg_inf ' [i] APT schedule           update 02:30 / upgrade 02:50; reboot 04:38, including logged-in users'
     fi
     [[ ! -e /var/run/reboot-required ]] || msg_warn ' [!] Reboot required; post-reboot acceptance pending'
@@ -2422,7 +2428,7 @@ show_results() {
         failed) msg_warn " [!] AmneziaWG              Not configured" ;;
     esac
     case "${SECURITY_RESULT:-not_requested}" in
-        configured) msg_ok ' [✓] VPS Security + DoT     Configured (strict system TLS DNS)' ;;
+        configured) msg_ok ' [✓] VPS Security + DoT     Configured (global DoT; link/VPN DNS retained)' ;;
         failed_rolled_back) msg_warn ' [!] VPS Security + DoT     Failed — rolled back / unchanged' ;;
         failed_unverified) msg_warn ' [!] VPS Security + DoT     Failed — rollback not verified' ;;
     esac
@@ -2739,6 +2745,8 @@ install_vision() {
 }
 
 install_security() {
+    # Do not reapply a DoT configuration that already failed and was rolled back.
+    [[ "${SECURITY_RESULT:-}" != failed_rolled_back ]] || return 1
     local output
     SECURITY_RESULT=failed_unverified
     output=$(python3 "$PANEL_STAGE/managed-security.py")
@@ -2822,7 +2830,7 @@ main() {
 
     local install_result=0
     VISION_RESULT=not_requested
-    SECURITY_RESULT=not_requested
+    SECURITY_RESULT=${SECURITY_RESULT:-not_requested}
     CLIENT_RESULT=not_requested
     if [[ "${INSTALL_VISION:-n}" == y ]]; then
         install_vision || install_result=1
@@ -2836,7 +2844,7 @@ main() {
     if [[ "$INSTALL_AGH" == y ]]; then
         install_adguard || install_result=1
     fi
-    # DNS was prepared and verified before cleanup; repeat runtime checks here.
+    # A verified DNS rollback skips Security; core credentials still reach the result.
     if [[ "${INSTALL_SECURITY:-n}" == y ]]; then
         install_security || install_result=1
     fi

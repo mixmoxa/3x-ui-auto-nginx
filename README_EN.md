@@ -92,7 +92,7 @@ Choosing `Y` enables:
 
 - **1 GiB swap.** If no swap is active, the filesystem is supported and at least 4 GiB is free, the installer creates and enables a swap file. Existing swap settings remain unchanged. If these conditions are not met, this step is skipped without stopping installation.
 - **SSH protection — Fail2ban.** Limits repeated unsuccessful logins using the actual SSH ports. Existing SSH authentication settings are not changed.
-- **Encrypted DNS (DoT).** System DNS uses `systemd-resolved` and strict DNS-over-TLS with Cloudflare and Google resolvers. It never silently falls back to unencrypted queries if those resolvers are unavailable.
+- **Encrypted DNS (DoT).** Global Cloudflare and Google resolvers use strict DNS-over-TLS through `systemd-resolved`. Interface/VPN DNS routes and search domains are preserved; their queries may remain unencrypted. If DoT preparation fails and the original DNS is successfully restored, core installation continues without VPS Security; the final result reports the failure and exits nonzero.
 - **Automatic security updates.** Package lists are updated at 02:30, with security updates installed at 02:50.
 - **Automatic reboot — 04:38.** If updates require a reboot, it occurs at the scheduled time, **even when users are connected**. This may interrupt active connections.
 

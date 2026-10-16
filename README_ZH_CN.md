@@ -92,7 +92,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 - **1 GiB swap。** 如果没有启用的 swap、文件系统受支持且至少有 4 GiB 可用空间，安装程序会创建并启用 swap 文件。现有 swap 设置不会被修改。如果不满足条件，将跳过此步骤而不中断安装。
 - **SSH 防护 — Fail2ban。** 根据实际 SSH 监听端口限制反复失败的登录尝试，不修改现有的 SSH 身份验证设置。
-- **加密 DNS（DoT）。** 系统 DNS 通过 `systemd-resolved` 使用强制 DNS-over-TLS，解析服务器为 Cloudflare 和 Google。加密 DNS 不可用时不会自动退回明文查询。
+- **加密 DNS（DoT）。** 全局 Cloudflare 和 Google DNS 服务器通过 `systemd-resolved` 使用严格的 DNS-over-TLS。接口/VPN 的 DNS 路由和搜索域保持不变；其查询可能仍未加密。如果 DoT 准备失败但原有 DNS 已成功恢复，核心组件将继续安装，不安装 VPS Security；最终结果会报告失败并返回非零退出码。
 - **自动安全更新。** 02:30 更新软件包列表，02:50 安装安全更新。
 - **自动重启 — 04:38。** 如果更新要求重启，系统将在指定时间重启，**即使用户仍有活动会话**，连接也可能因此中断。
 
