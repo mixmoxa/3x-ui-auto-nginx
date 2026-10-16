@@ -623,7 +623,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
             self.assertEqual(Path('/etc/network/interfaces').read_bytes(),original_network)
             self.assertTrue(seen,'No authenticated TLS query during preparation')
             self.assertEqual(len(plain_seen),plain_at_restart[-1],'Plaintext DNS after strict preparation')
-            print('REAL minimal OS / residual resolved.conf preserved / full no-remove upgrade / missing UFW / DNS preparation and rollback: PASS',flush=True)
+            print('REAL minimal OS / residual resolved.conf preserved / full upgrade / missing UFW / DNS preparation and rollback: PASS',flush=True)
             # Snapshot before applying the production security function, restore afterwards.
             snapshot = security.Transaction()
             self.addCleanup(snapshot.temp.cleanup)

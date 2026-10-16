@@ -369,7 +369,7 @@ apt_system() {
             apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef \
             -o Dpkg::Options::=--force-confold -o Acquire::Retries=3 \
             -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
-            --no-remove "$@" 2>&1 | tee "$output"; then
+            "$@" 2>&1 | tee "$output"; then
             statuses=("${PIPESTATUS[@]}")
         else
             statuses=("${PIPESTATUS[@]}")
@@ -509,7 +509,7 @@ verify_base_os() {
 prepare_base_os() {
     msg_warn 'Preparing OS: full dist-upgrade; package changes cannot be rolled back.'
     apt_system -o APT::Update::Error-Mode=any update || { msg_err "APT list refresh failed (exit $?). Package changes are not rolled back."; return 1; }
-    # Simulation and execution both reject any package removal.
+    # Show the full upgrade plan before applying it with normal APT safeguards.
     apt_system -s -y dist-upgrade || { msg_err "Full upgrade simulation failed (exit $?). No deployment cleanup was performed."; return 1; }
     apt_system -y dist-upgrade || { msg_err "Full OS upgrade failed (exit $?). Package changes are not rolled back."; return 1; }
     apt_system -y --no-install-recommends install curl wget jq python3 openssl \
@@ -567,7 +567,7 @@ install_packages() {
         [[ "$version" == "20" || "$version" == "22" ]] && echo "System: Ubuntu $version"
 
         apt_system -o APT::Update::Error-Mode=any update || { msg_err "APT list refresh failed (exit $?). Package changes are not rolled back."; return 1; }
-        apt_system -y install curl wget jq bash sudo nginx-full certbot sqlite3 ufw netcat-openbsd mtr python3 python3-configobj python3-cryptography libcap2-bin openssl procps iproute2 tar gzip tzdata ca-certificates || return 1
+        apt_system -y install curl wget jq bash sudo nginx-full certbot sqlite3 ufw netcat-openbsd mtr-tiny python3 python3-configobj python3-cryptography libcap2-bin openssl procps iproute2 tar gzip tzdata ca-certificates || return 1
         systemctl daemon-reload && systemctl enable --now nginx || return 1
     fi
 
