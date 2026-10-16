@@ -221,10 +221,18 @@ def permitted(name, directory):
     return managed(path) or (directory and any(p.startswith(path + '/') for p in allowed))
 # Recovery uses only ordinary file streams. Never resolve archived links or modes.
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+def trusted_output_parent(fd):
+    info = os.fstat(fd)
+    # Only root/current UID may rename entries. Sticky shared parents (e.g. /tmp)
+    # protect our entries too; a non-sticky writable ancestor does not.
+    if info.st_uid not in (0, os.geteuid()) or (info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX):
+        fail('Untrusted output ancestor: use directories owned by root/current user without shared write access, or sticky parents')
 @contextmanager
-def directory(base, parts, create=False, owned=None):
+def directory(base, parts, create=False, owned=None, trusted_parents=False):
     fd = os.dup(base)
     try:
+        if trusted_parents:
+            trusted_output_parent(fd)
         for part in parts:
             created = False
             if create:
@@ -239,6 +247,8 @@ def directory(base, parts, create=False, owned=None):
                 owned.add((info.st_dev, info.st_ino))
             os.close(fd)
             fd = child
+            if trusted_parents:
+                trusted_output_parent(fd)
         yield fd
     finally:
         os.close(fd)
@@ -253,13 +263,20 @@ def extract_files(tar, members, target):
     owned = set()
     try:
         # Pin each ancestor and refuse symlinks, including in the user output path.
-        with directory(base, parts[:-1]) as parent:
+        with directory(base, parts[:-1], trusted_parents=True) as parent:
             fd = None
             complete = False
             try:
                 os.mkdir(parts[-1], 0o700, dir_fd=parent)  # Atomic refusal if it exists.
-                fd = os.open(parts[-1], DIRECTORY_FLAGS, dir_fd=parent)
-                identity = os.fstat(fd)
+                opened = os.open(parts[-1], DIRECTORY_FLAGS, dir_fd=parent)
+                try:
+                    identity = os.fstat(opened)
+                    if identity.st_uid != os.geteuid() or stat.S_IMODE(identity.st_mode) != 0o700:
+                        fail('Output directory must be owned by the current user with mode 0700')
+                    fd = opened  # Only a trusted private root may be written to or cleaned.
+                finally:
+                    if fd is None:
+                        os.close(opened)
                 for name, member in members.items():
                     if member.issym() or member.islnk():
                         links_skipped += 1

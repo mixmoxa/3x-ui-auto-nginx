@@ -219,6 +219,62 @@ class RecoveryExtract(unittest.TestCase):
                 self.assertFalse(self.output.exists(), 'Partial secrets must be cleaned')
                 (self.bin / 'python3').unlink(); (self.bin / 'python3').symlink_to(sys.executable)
 
+    def test_output_root_swapped_between_mkdir_and_open_is_not_used_or_cleaned(self):
+        for kind in ('public', 'foreign-owner'):
+            with self.subTest(kind=kind):
+                self.output = self.root / ('recovered-' + kind)
+                foreign = self.root / ('foreign-' + kind); foreign.mkdir(mode=0o700)
+                foreign.chmod(0o777 if kind == 'public' else 0o700)
+                (foreign / 'sentinel').write_bytes(b'keep')
+                before = foreign.stat()
+                moved = self.root / ('created-' + kind)
+                marker = self.root / ('mkdir-swap-' + kind)
+                self.python_fault(
+                    'mkdir_original = os.mkdir\nfstat_original = os.fstat\n'
+                    'def swap(path, mode=0o777, *, dir_fd=None):\n'
+                    '    result = mkdir_original(path, mode, dir_fd=dir_fd)\n'
+                    f'    if path == {self.output.name!r} and not Path({str(marker)!r}).exists():\n'
+                    f'        Path({str(self.output)!r}).rename({str(moved)!r})\n'
+                    f'        Path({str(foreign)!r}).rename({str(self.output)!r})\n'
+                    f'        Path({str(marker)!r}).touch()\n'
+                    '    return result\n'
+                    'def reported_owner(fd):\n    info = fstat_original(fd)\n'
+                    f'    if {kind!r} == "foreign-owner" and info.st_ino == {before.st_ino}:\n'
+                    '        fields = list(info); fields[4] = os.geteuid() + 1\n'
+                    '        return os.stat_result(fields)\n    return info\n'
+                    'os.mkdir = swap\nos.fstat = reported_owner')
+                result = self.run_extract()
+                self.assertTrue(marker.exists(), 'Swap occurred exactly after the root mkdir')
+                self.assertEqual(sorted(p.name for p in self.output.iterdir()), ['sentinel'],
+                                 'Never write secrets into, or clean, the substituted directory')
+                self.assertTrue((self.output / 'sentinel').read_bytes() == b'keep')
+                after = self.output.stat()
+                self.assertEqual((after.st_dev, after.st_ino, after.st_uid, after.st_gid, after.st_mode),
+                                 (before.st_dev, before.st_ino, before.st_uid, before.st_gid, before.st_mode))
+                self.assertEqual(list(moved.iterdir()), [])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Output directory must be owned by the current user with mode 0700', result.stderr)
+                (self.bin / 'python3').unlink(); (self.bin / 'python3').symlink_to(sys.executable)
+
+    def test_untrusted_writable_output_ancestors_are_rejected(self):
+        parent = self.root / 'writable'; parent.mkdir()
+        for permissions in (0o777, 0o770):
+            with self.subTest(permissions=permissions):
+                parent.chmod(permissions)
+                nested = parent / 'private'; nested.mkdir(mode=0o700, exist_ok=True)
+                result = self.run_extract(nested / 'recovered')
+                self.assertFalse((nested / 'recovered').exists(), 'Reject before output creation')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Untrusted output ancestor', result.stderr)
+
+    def test_trusted_sticky_parent_allows_private_output(self):
+        parent = self.root / 'sticky'; parent.mkdir(); parent.chmod(0o1777)
+        self.output = parent / 'recovered'
+        result = self.run_extract()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.output.stat().st_uid, os.geteuid())
+        self.assertEqual(stat.S_IMODE(self.output.stat().st_mode), 0o700)
+
     def test_swapped_output_child_cannot_redirect_writes_or_cleanup(self):
         foreign = self.root / 'foreign'; foreign.mkdir(); (foreign / 'sentinel').write_bytes(b'keep')
         marker = self.root / 'swap-reached'
