@@ -531,12 +531,61 @@ mv() { echo mv >> "$CALLS"; [[ "$CASE" != fstab ]] || return 1; command mv "$@";
             self.assertTrue(security.password_warning(policy))
         self.assertFalse(security.password_warning('passwordauthentication yes\nauthenticationmethods publickey'))
 
-    def test_dns_route_conflicts_preserve_interface_policy(self):
+    def test_dns_routes_preserve_interface_policy_and_warn(self):
         security = helper('security')
-        security.dns_routes('Global: 1.1.1.1#one.one.one.one\nLink 2 (eth0): 8.8.8.8', 'Global: ~.\nLink 2 (eth0):')
-        for domains in ('Link 2 (eth0): ~.', 'Link 3 (vpn): ~corp.example', 'Link 2 (eth0): example.com'):
-            with self.assertRaises(ValueError): security.dns_routes('', domains)
-        with self.assertRaises(ValueError): security.dns_routes('Link 3 (vpn): 127.0.0.1', '')
+        dns='Global: 1.1.1.1#one.one.one.one 1.0.0.1#one.one.one.one 8.8.8.8#dns.google 8.8.4.4#dns.google\nLink 2 (eth0): 10.0.0.1'
+        for domains in ('Link 2 (eth0): tech0.ru', 'Link 3 (vpn): ~corp.example', 'Link 3 (vpn): ~.'):
+            with self.subTest(domains=domains):
+                calls=[]
+                def command(*args,**kwargs):
+                    calls.append(args)
+                    if args==('resolvectl','dns'): return dns
+                    if args==('resolvectl','domain'): return domains
+                    if args==('resolvectl','status'): return 'DefaultRoute setting: yes'
+                    if args[0]=='busctl': return 's "yes"'
+                    return ''
+                with patch.object(security,'command',side_effect=command):
+                    security.verify_dns()
+                self.assertIn(('resolvectl','query','--cache=no','cloudflare.com'),calls)
+                self.assertIn(('resolvectl','query','--cache=no','debian.org'),calls)
+                self.assertIn(('getent','ahosts','debian.org'),calls)
+                self.assertFalse(any(a[0]=='resolvectl' and a[1] in ('revert','default-route') or
+                                     a[0]=='resolvectl' and a[1] in ('dns','domain') and len(a)>2 for a in calls))
+
+    def test_optional_dns_failure_continues_core_only_after_verified_rollback(self):
+        names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
+               'select_adguard','select_client','preflight_base_os','preflight_panel_release','preflight_amneziawg',
+               'preflight_integrated_features','setup_swap','prepare_base_os','verify_base_os','cleanup_adguard','clean_previous_install',
+               'install_packages','setup_firewall','get_server_ip','setup_acme_http','get_ssl_certs','install_panel',
+               'configure_nginx','configure_xui_db','install_clash_sub','install_fake_site','install_diagnostics','tune_system',
+               'install_backup_tool','setup_certificate_renewal','check_installation','finish_initial_reboot')
+        stubs='\n'.join(n+'() { echo '+n+'; };' for n in names)
+        stubs+=r'''
+msg_err() { echo "$*" >&2; }; msg_warn() { echo "$*" >&2; }; systemctl() { :; }; x-ui() { :; }
+python3() {
+    if [[ "$*" == *--prepare-dns* ]]; then
+        printf '{"status":"%s","warnings":["controlled DoT unavailable"]}' "$DNS_CASE"; return 1
+    fi
+    if [[ "$1" != -c ]]; then echo UNEXPECTED_SECURITY_RECONFIGURATION >&2; return 99; fi
+    command python3 "$@"
+}
+show_results() { echo "FINAL:$SECURITY_RESULT:$config_username:$config_password"; }
+'''
+        script=stubs+function('prepare_system_dns')+'\n'+function('install_security')+'\n'+function('main')+'\nmain'
+        for status in ('failed_rolled_back','failed_unverified'):
+            with self.subTest(status=status):
+                result=subprocess.run(['bash','-u','-c',script],capture_output=True,text=True,timeout=10,
+                    env={**os.environ,'DNS_CASE':status,'INSTALL_SECURITY':'y','INSTALL_VISION':'n',
+                         'INSTALL_AWG':'n','INSTALL_AGH':'n','CREATE_CLIENT':'n','PANEL_STAGE':'/private-fixture',
+                         'config_username':'fixture-user','config_password':'fixture-password'})
+                self.assertNotEqual(result.returncode,0,'Requested Security failure must remain visible to automation')
+                self.assertNotIn('UNEXPECTED_SECURITY_RECONFIGURATION',result.stderr)
+                if status=='failed_rolled_back':
+                    self.assertIn('install_panel',result.stdout)
+                    self.assertIn('FINAL:failed_rolled_back:fixture-user:fixture-password',result.stdout)
+                else:
+                    self.assertNotIn('cleanup_adguard',result.stdout)
+                    self.assertNotIn('FINAL:',result.stdout)
 
     def test_security_refuses_unsupported_service_enable_state_without_mutation(self):
         security=helper('security'); calls=[]
@@ -582,10 +631,13 @@ mv() { echo mv >> "$CALLS"; [[ "$CASE" != fstab ]] || return 1; command mv "$@";
         self.assertNotIn('UTC', security.timer('02'))
 
     def test_security_waits_for_sshd_jail_after_asynchronous_service_start(self):
-        security=helper('security'); attempts=[]; effective='port 22\n'
+        security=helper('security'); attempts=[]; effective='port 22\n'; ssh_checks=[]; invalid=[False]
         dns='Global: 1.1.1.1#one.one.one.one 1.0.0.1#one.one.one.one 8.8.8.8#dns.google 8.8.4.4#dns.google'
         def command(*args,**kwargs):
-            if args[0]=='/usr/sbin/sshd': return effective
+            if args[0]=='/usr/sbin/sshd':
+                ssh_checks.append(args)
+                if args[1]=='-t' and invalid[0]: raise ValueError('Invalid SSH configuration')
+                return effective+'loglevel VERBOSE\n'
             if args[:2]==('fail2ban-client','status'):
                 attempts.append(1)
                 if len(attempts)<3: raise ValueError('Socket not ready')
@@ -597,8 +649,12 @@ mv() { echo mv >> "$CALLS"; [[ "$CASE" != fstab ]] || return 1; command mv "$@";
             if args[:2]==('resolvectl','dns'): return dns
             return ''
         with patch.object(security,'command',side_effect=command):
-            security.verify([22],effective,'ubuntu')
+            security.verify([22],'ubuntu')
         self.assertEqual(len(attempts),3)
+        self.assertIn(('/usr/sbin/sshd','-t'),ssh_checks)
+        invalid[0]=True
+        with patch.object(security,'command',side_effect=command), self.assertRaisesRegex(ValueError,'Invalid SSH configuration'):
+            security.verify([22],'ubuntu')
 
     def test_effective_dot_native_dns_output_wraps_long_server_list(self):
         security = helper('security')

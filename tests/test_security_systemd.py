@@ -534,9 +534,10 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                     plain_at_restart.append(len(plain_seen))
                 result=production_command(*args,**kwargs)
                 if args==('systemctl','restart','systemd-resolved.service') and route_policy.is_set():
-                    # Model a provider/VPN reapplying its real link route.
-                    run('resolvectl','dns','xui-test','127.0.0.1')
-                    run('resolvectl','domain','xui-test','~.')
+                    # Model a provider/VPN retaining its real link policy.
+                    run('resolvectl','dns','xui-test',link_dns)
+                    run('resolvectl','domain','xui-test',link_domain)
+                    run('resolvectl','default-route','xui-test','yes')
                 return result
             security.command=command
             # An offline local APT repository contains real distro resolved/UFW
@@ -685,17 +686,25 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                 run('resolvectl','query','--cache=no','system-with-adguard.example')
                 self.assertGreater(len(seen),before_dot)
                 self.assertEqual(len(doh_queries),before_doh,'System resolved unexpectedly routed into AGH')
-                managed_before={name:Path(name).read_bytes() for name in security.FILES}
-                run('resolvectl','dns','xui-test','127.0.0.1'); run('resolvectl','domain','xui-test','~.')
-                route_policy.set()
-                try: route_failure=security.configure()
-                finally: route_policy.clear()
-                self.assertEqual(route_failure['status'],'failed_rolled_back',route_failure)
-                self.assertTrue(any('Interface/VPN DNS route' in warning for warning in route_failure['warnings']))
-                self.assertEqual({name:Path(name).read_bytes() for name in security.FILES},managed_before)
-                self.assertIsNone(agh.poll())
+                for link_domain in ('tech0.ru','~corp.example'):
+                    link_dns='8.8.8.8'
+                    run('resolvectl','dns','xui-test',link_dns)
+                    run('resolvectl','domain','xui-test',link_domain)
+                    run('resolvectl','default-route','xui-test','yes')
+                    before_tls=len(seen)
+                    route_policy.set()
+                    try: route_result=security.configure()
+                    finally: route_policy.clear()
+                    self.assertEqual(route_result['status'],'configured',route_result)
+                    self.assertGreater(len(seen),before_tls,'No actual TLS DNS query with retained link policy')
+                    self.assertTrue(any('link/VPN' in w and 'unencrypted' in w for w in route_result['warnings']))
+                    self.assertIn(link_domain,run('resolvectl','domain','xui-test'))
+                    self.assertIn(link_dns,run('resolvectl','dns','xui-test'))
+                    self.assertIn('yes',run('resolvectl','default-route','xui-test'))
+                    self.assertIsNone(agh.poll())
+                    self.assertEqual({p:p.read_bytes() for p in before},before)
                 run('resolvectl','revert','xui-test')
-                print('REAL AdGuard Home HTTPS upstream + system DoT coexistence / loop refusal: PASS',flush=True)
+                print('REAL AdGuard Home HTTPS upstream + global DoT / provider search / VPN route preservation: PASS',flush=True)
                 # Real socket activation overrides sshd's configured port. This
                 # fixture changes only its socket; production must merely detect it.
                 socket_drop = Path('/etc/systemd/system/ssh.socket.d/99-xui-ci.conf')
