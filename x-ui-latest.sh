@@ -443,6 +443,36 @@ setup_swap() {
     return 0
 }
 
+ensure_sshd_runtime_dir() {
+    local directory=/run/sshd config=/usr/lib/tmpfiles.d/openssh-server.conf
+    [[ ! -L "$directory" && ( ! -e "$directory" || -d "$directory" ) ]] || {
+        msg_err 'Unsafe OpenSSH runtime path: /run/sshd must be a real directory, not a symlink or file.'; return 1;
+    }
+    if [[ -f "$config" ]]; then
+        systemd-tmpfiles --create --prefix="$directory" "$config" || {
+            msg_err 'Could not prepare OpenSSH runtime directory through systemd-tmpfiles.'; return 1;
+        }
+    fi
+    [[ ! -L "$directory" && ( ! -e "$directory" || -d "$directory" ) ]] || {
+        msg_err 'Unsafe OpenSSH runtime path after tmpfiles: /run/sshd.'; return 1;
+    }
+    if [[ ! -d "$directory" || "$(stat -c '%u:%g:%a' -- "$directory")" != 0:0:755 ]]; then
+        install -d -o root -g root -m 0755 -- "$directory" || {
+            msg_err 'Could not restore OpenSSH runtime directory ownership/permissions.'; return 1;
+        }
+    fi
+    [[ ! -L "$directory" && -d "$directory" && "$(stat -c '%u:%g:%a' -- "$directory")" == 0:0:755 ]] || {
+        msg_err 'OpenSSH runtime directory verification failed: expected root:root mode 0755.'; return 1;
+    }
+}
+
+check_systemd_manager() {
+    local version
+    if ! version=$(systemctl --system show --property=Version --value) || [[ -z "$version" ]]; then
+        msg_err 'systemd manager is unavailable after package operations; cannot safely continue configuration.'; return 1
+    fi
+}
+
 preflight_base_os() {
     local audit binary
     for binary in apt-get apt-config dpkg systemctl timedatectl getent /usr/sbin/sshd; do
@@ -450,24 +480,26 @@ preflight_base_os() {
     done
     audit=$(dpkg --audit) || return 1
     [[ -z "$audit" ]] || { msg_err 'Incomplete dpkg state; repair it before installation.'; return 1; }
-    BASE_SSH_POLICY=$(/usr/sbin/sshd -T) || return 1
-    systemctl is-active --quiet ssh.service || systemctl is-active --quiet ssh.socket || {
-        msg_err 'No active SSH service/socket; refusing OS preparation.'; return 1;
-    }
-    BASE_SSH_LISTEN=''
+    ensure_sshd_runtime_dir || return 1
+    /usr/sbin/sshd -t || { msg_err 'OpenSSH configuration validation failed before OS preparation.'; return 1; }
     if systemctl is-active --quiet ssh.socket; then
-        BASE_SSH_LISTEN=$(systemctl show ssh.socket -p Listen --value) || return 1
+        BASE_SSH_UNIT=ssh.socket
+    elif systemctl is-active --quiet ssh.service; then
+        BASE_SSH_UNIT=ssh.service
+    else
+        msg_err 'No active SSH service/socket; refusing OS preparation.'; return 1;
     fi
     getent ahosts debian.org >/dev/null || { msg_err 'Initial libc DNS resolution failed.'; return 1; }
 }
 
 verify_base_os() {
     local binary
-    [[ "$(/usr/sbin/sshd -T)" == "$BASE_SSH_POLICY" ]] || { msg_err 'Effective SSH policy changed during OS preparation.'; return 1; }
-    systemctl is-active --quiet ssh.service || systemctl is-active --quiet ssh.socket || return 1
-    if [[ -n "$BASE_SSH_LISTEN" ]]; then
-        [[ "$(systemctl show ssh.socket -p Listen --value)" == "$BASE_SSH_LISTEN" ]] && systemctl is-active --quiet ssh.socket || return 1
-    fi
+    check_systemd_manager || return 1
+    ensure_sshd_runtime_dir || return 1
+    /usr/sbin/sshd -t || { msg_err 'OpenSSH configuration validation failed after OS preparation.'; return 1; }
+    systemctl is-active --quiet "$BASE_SSH_UNIT" || {
+        msg_err "Original SSH activation unit is not active after OS preparation: $BASE_SSH_UNIT."; return 1;
+    }
     for binary in curl wget jq python3 openssl ip ss ufw; do
         command -v "$binary" >/dev/null || return 1
     done
