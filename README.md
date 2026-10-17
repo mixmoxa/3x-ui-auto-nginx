@@ -341,6 +341,10 @@ SSH, настройки ОС и базовый firewall остаются отв�
 
 Собственные разработки и изменения xPROMSx распространяются под [GNU GPL-3.0-only](LICENSE). Copyright (C) 2026 xPROMSx contributors. Лицензия охватывает только наши права на эти материалы; она не перелицензирует унаследованный код и не подтверждает GPL-статус всего репозитория. Область действия нашей лицензии и сведения о сторонних компонентах приведены в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
+## 🖥️ Флаги стран в Windows 11
+
+Если при открытии панели **3x-ui** в **Chrome, Edge или Brave** на Windows 11 вместо флагов стран отображаются буквенные коды (`FI`, `DE`, `US`), воспользуйтесь нашим небольшим проектом [**Flag Emojis Windows Installer**](https://github.com/xPROMSx/flag-emojis-windows-installer). Он помогает вернуть отображение флагов, сохраняя оригинальный шрифт Windows и возможность отката.
+
 <a id="-support-development"></a>
 <a id="support-development"></a>
 
