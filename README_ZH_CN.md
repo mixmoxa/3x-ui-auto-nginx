@@ -296,6 +296,12 @@ SSH、系统配置及基础防火墙仍由管理员负责。对于 v2 备份，�
 
 xPROMSx 贡献者原创的开发内容和修改部分以 [GNU GPL-3.0-only](LICENSE) 授权。Copyright (C) 2026 xPROMSx contributors. 此许可仅适用于贡献者有权授权的内容，不会自动为继承代码重新授权，也不意味着整个仓库均采用 GPL。许可范围及第三方组件声明详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
+<a id="windows-flag-emojis"></a>
+
+## 🖥️ Windows 11 中的国家旗帜
+
+如果在 Windows 11 上使用 **Chrome、Edge 或 Brave** 打开 **3x-ui** 面板时，国家旗帜显示为双字母代码（`FI`、`DE`、`US`），可以试试我们的小工具 [**Flag Emojis Windows Installer**](https://github.com/xPROMSx/flag-emojis-windows-installer)。它可以恢复国旗表情的正常显示，保留 Windows 原始字体，并支持卸载后恢复原有设置。
+
 ## ❤️ 支持开发
 
 如果这个项目对你有帮助，欢迎自愿[支持项目开发](docs/SUPPORT_ZH_CN.md)。无论是否捐赠，项目及其所有功能始终免费且开源。
