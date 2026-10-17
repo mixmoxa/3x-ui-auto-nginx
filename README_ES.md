@@ -296,6 +296,12 @@ El panel oficial procede de [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui).
 
 Las contribuciones originales y modificaciones de xPROMSx se distribuyen bajo [GNU GPL-3.0-only](LICENSE). Copyright (C) 2026 xPROMSx contributors. Esta licencia solo cubre los derechos que nos corresponden sobre esos materiales; no cambia la licencia del código heredado ni significa que todo el repositorio esté sujeto a GPL. Consulta el [alcance de la licencia y los avisos de terceros](THIRD_PARTY_NOTICES.md).
 
+<a id="windows-flag-emojis"></a>
+
+## 🖥️ Banderas de países en Windows 11
+
+Si al abrir el panel de **3x-ui** en **Chrome, Edge o Brave** con Windows 11 aparecen códigos de dos letras (`FI`, `DE`, `US`) en lugar de las banderas, puedes utilizar nuestro pequeño proyecto [**Flag Emojis Windows Installer**](https://github.com/xPROMSx/flag-emojis-windows-installer). Permite mostrar las banderas, conserva la fuente original de Windows y ofrece la posibilidad de revertir los cambios.
+
 ## ❤️ Apoya el desarrollo
 
 Si este proyecto te resulta útil, puedes [apoyar su desarrollo de forma voluntaria](docs/SUPPORT_ES.md). El proyecto y todas sus funciones siguen siendo gratuitos y de código abierto, dones o no.

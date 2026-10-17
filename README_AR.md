@@ -296,6 +296,12 @@ x-ui-backup restore /root/<archive>.tar.gz
 
 تُتاح مساهمات xPROMSx الأصلية وتعديلاته بموجب [GNU GPL-3.0-only](LICENSE). Copyright (C) 2026 xPROMSx contributors. ينطبق الترخيص فقط على الحقوق التي نملكها في هذه المواد، ولا يعيد ترخيص الشيفرة الموروثة أو يثبت أن المستودع بأكمله خاضع لـ GPL. راجع [إشعارات المكونات الخارجية ونطاق الترخيص](THIRD_PARTY_NOTICES.md).
 
+<a id="windows-flag-emojis"></a>
+
+## 🖥️ أعلام الدول في Windows 11
+
+إذا ظهرت رموز الدول (`FI` و`DE` و`US`) بدلًا من أعلامها عند فتح لوحة **3x-ui** في **Chrome أو Edge أو Brave** على Windows 11، يمكنك استخدام مشروعنا الصغير [**Flag Emojis Windows Installer**](https://github.com/xPROMSx/flag-emojis-windows-installer). يساعد على إظهار الأعلام، ويحافظ على خط Windows الأصلي، ويتيح التراجع عن التغييرات.
+
 ## ❤️ دعم التطوير
 
 إذا كان المشروع مفيدًا لك، يمكنك [دعم تطويره طوعًا](docs/SUPPORT_AR.md). يبقى المشروع وجميع ميزاته مجانيًا ومفتوح المصدر سواء تبرعت أم لا.

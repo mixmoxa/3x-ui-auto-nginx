@@ -296,6 +296,12 @@ Resmî panel [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui) projesinden sa�
 
 xPROMSx tarafından geliştirilen özgün katkılar ve değişiklikler [GNU GPL-3.0-only](LICENSE) kapsamında sunulur. Copyright (C) 2026 xPROMSx contributors. Bu lisans yalnızca söz konusu materyaller üzerinde sahip olduğumuz hakları kapsar; devralınmış kodu yeniden lisanslamaz veya deponun tamamının GPL kapsamında olduğunu göstermez. Ayrıntılar için [lisans kapsamına ve üçüncü taraf bildirimlerine](THIRD_PARTY_NOTICES.md) bakın.
 
+<a id="windows-flag-emojis"></a>
+
+## 🖥️ Windows 11'de ülke bayrakları
+
+Windows 11'de **3x-ui** panelini **Chrome, Edge veya Brave** ile açtığınızda ülke bayrakları yerine iki harfli kodlar (`FI`, `DE`, `US`) görüyorsanız, küçük yan projemiz [**Flag Emojis Windows Installer**](https://github.com/xPROMSx/flag-emojis-windows-installer) size yardımcı olabilir. Bayrakların görüntülenmesini sağlar, Windows'un özgün yazı tipini korur ve yapılan değişiklikleri geri alma imkânı sunar.
+
 ## ❤️ Geliştirmeyi destekleyin
 
 Bu proje işinize yarıyorsa [geliştirilmesine gönüllü olarak destek olabilirsiniz](docs/SUPPORT_TR.md). Bağış yapıp yapmamanızdan bağımsız olarak proje ve tüm özellikleri ücretsiz ve açık kaynaklı kalır.
