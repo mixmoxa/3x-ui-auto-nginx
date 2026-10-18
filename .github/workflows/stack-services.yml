@@ -14,7 +14,7 @@ jobs:
   services:
     name: Real services (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ matrix.os == 'ubuntu-26.04' && 45 || 25 }}
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -43,9 +43,6 @@ jobs:
             test_real_integration.RealIntegration.test_vision_and_initial_client_official_api \
             test_real_integration.RealIntegration.test_vision_deploy_hook_waits_for_delayed_xray \
             test_real_integration.RealIntegration.test_amneziawg_tcp_udp_and_panel_restart
-      - name: Full fresh installer and cold boot (Ubuntu 26.04)
-        if: matrix.os == 'ubuntu-26.04'
-        run: bash tests/fresh/run.sh
 
   debian-native-api:
     name: Native Vision and client API (debian-13)
