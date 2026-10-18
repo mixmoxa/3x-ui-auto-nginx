@@ -42,7 +42,7 @@ CI checks every tracked shell script with `bash -n` and ShellCheck **error-only*
 
 Every confirmed bug must follow: **reproducing RED regression test → fix → same test PASS → full suite PASS**.
 
-Fast regression (`nonroot`/`root`) uses fixtures, fault injection and negative paths. Real integration uses nginx, pinned/checksummed Xray from the verified 3x-ui baseline, the real private-state x-ui subscription backend and Mihomo. The integration suite downloads verified official binaries automatically; there are no silent missing-binary skips or repository secrets. For offline runs, `INTEGRATION_ARTIFACTS` may point to downloaded `x-ui.tar.gz`, `x-ui.sha256` and `mihomo.gz`, plus each `x-ui-linux-armv5/armv6/armv7.tar.gz` archive and its `.sha256` sidecar for the verified-baseline ARM checks; the same hash verification remains mandatory. All listeners and state stay local/temporary, and child processes have bounded cleanup. GitHub jobs have 25-minute deadlines.
+Fast regression (`nonroot`/`root`) uses fixtures, fault injection and negative paths. Real integration uses nginx, pinned/checksummed Xray from the verified 3x-ui baseline, the real private-state x-ui subscription backend and Mihomo. The integration suite downloads verified official binaries automatically; there are no silent missing-binary skips or repository secrets. For offline runs, `INTEGRATION_ARTIFACTS` may point to downloaded `x-ui.tar.gz`, `x-ui.sha256` and `mihomo.gz`, plus each `x-ui-linux-armv5/armv6/armv7.tar.gz` archive and its `.sha256` sidecar for the verified-baseline ARM checks; the same hash verification remains mandatory. All listeners and state stay local/temporary, and child processes have bounded cleanup. Most GitHub jobs have 25-minute deadlines; the full fresh-install Ubuntu 26.04 job has a 45-minute deadline.
 
 Real services (`services`) runs on native `ubuntu-24.04` and `ubuntu-26.04` hosted runners. It verifies pinned official AdGuard Home v0.107.79, loopback DNS, nginx TLS DoH/admin, and Certbot HTTP-01 issuance/renewal against pinned Pebble v2.10.1 with validation enabled and local DNS. No public DNS, Let's Encrypt or secrets are used. Both native jobs also run the pinned official panel’s embedded AmneziaWG TCP/UDP, client export, restart and cryptographic-negative test; no kernel module or external VPN server is installed. `SERVICES_ARTIFACTS` can supply `agh.tar.gz` and `pebble.tar.gz` offline; both pinned hashes are still checked before execution.
 
@@ -57,7 +57,26 @@ See [v2 audit scope](docs/V2_AUDIT.md) for option states, ownership, portable Re
 
 The repository owner must add the exact checks `Real services (ubuntu-24.04)` and `Real services (ubuntu-26.04)` to branch protection/rulesets for required enforcement. Existing protected check names stay unchanged; this PR does not modify repository settings.
 
-Live VPS acceptance is still required for public DNS, Let's Encrypt, systemd boot, kernel firewall behavior, reboot and full external-network acceptance. Do not run `x-ui-latest.sh` to test syntax: it removes an existing installation. CI does not certify real network/client acceptance. Use a disposable VPS for live checks.
+Live VPS acceptance is still required for public DNS, Let's Encrypt, provider kernel/firewall behavior, external-network acceptance and full recovery. Do not run `x-ui-latest.sh` to test syntax: it removes an existing installation. The controlled VM test below covers fresh installation and cold boot, not arbitrary provider/VPS acceptance. Use a disposable VPS for live checks.
+
+## Full fresh installation acceptance
+
+The existing Ubuntu 26.04 required job also runs `bash tests/fresh/run.sh` (Docker,
+Python 3, Git and passwordless sudo required). It boots a minimal disk-based VM
+under QEMU TCG with 2 vCPU/4 GiB RAM, runs the unmodified installer `main()` with
+maximum options and one exact checkout SHA, then cold-boots the same disk.
+Actual installed services, subscriptions, restricted MTR HTTP and Xray/AWG data
+transfer are checked; TLS clients explicitly trust the temporary CA and reject
+wrong trust, SNI and credentials. Independent clean disk copies cover mandatory
+APT dependency failure and partial installation after verified DNS rollback.
+The existing canonical regression preserves STOP on unverified rollback.
+
+Only external DNS/DoT/filter/HTTP-01 services are controlled fixtures (real Pebble
+validation); official package/release downloads remain real. This does not test
+public Let's Encrypt, a provider's kernel/network or full disaster recovery.
+Raw installer logs, disks and private keys are never uploaded. The Ubuntu 26.04
+job has a 45-minute limit for this measured sequential workload; other job limits
+and required check names are unchanged.
 
 ## Verified upstream baseline and Canary
 
