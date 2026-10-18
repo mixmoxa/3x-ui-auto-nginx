@@ -307,7 +307,7 @@ def renewal():
     certificates = [Path('/etc/letsencrypt/live')/domain/'fullchain.pem' for domain in
                     ('panel.example.test','reality.example.test','vision.example.test')]
     before = [run('openssl','x509','-in',str(cert),'-noout','-serial') for cert in certificates]
-    result = subprocess.run(['certbot','renew','--force-renewal','--non-interactive',
+    result = subprocess.run(['certbot','renew','--force-renewal','--non-interactive','--no-random-sleep-on-renew',
         '--server','https://10.0.2.2:14000/dir'], capture_output=True,timeout=180)
     (ROOT/'renewal.private.log').write_bytes(result.stdout+result.stderr)
     assert result.returncode == 0, 'Installed Certbot renewal/deploy hooks failed'
