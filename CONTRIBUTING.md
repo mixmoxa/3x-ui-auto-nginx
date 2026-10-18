@@ -80,7 +80,7 @@ and required check names are unchanged.
 
 ## Verified upstream baseline and Canary
 
-`verified_panel_release()` in `x-ui-latest.sh` is the single version/digest source for production and real integration. The default is 3x-ui v3.10.0 / bundled Xray 26.10.10. Archive pins cover every supported download architecture; full transport integration currently covers **amd64 only**, with additional QEMU ARMv5/v6/v7 CLI, X25519 and config-validation checks. A pinned checksum does not certify architecture-specific runtime behavior.
+`verified_panel_release()` in `x-ui-latest.sh` is the single version/digest source for production and real integration. The default is 3x-ui v3.10.2 / bundled Xray 26.10.10. Archive pins cover every supported download architecture; full transport integration currently covers **amd64 only**, with additional QEMU ARMv5/v6/v7 CLI, X25519 and config-validation checks. A pinned checksum does not certify architecture-specific runtime behavior.
 
 The installer bootstraps only release-preflight dependencies, then verifies the selected official archive, sidecar and pinned/API digest and validates its layout **before managed cleanup**. Installation consumes that same private archive. Explicit `-version <tag>` requires a published stable release >= v3.8.0 with verifiable assets, and warns when outside the baseline. A manual version choice is not an automatic promotion.
 
@@ -91,7 +91,7 @@ A small Actions cache stores only the tested result, keyed by version, digest an
 For an explicit local candidate run (non-root, integration dependencies installed):
 
 ```bash
-python3 tests/upstream_canary.py probe --directory /tmp/xui-canary --version v3.10.0
+python3 tests/upstream_canary.py probe --directory /tmp/xui-canary --version v3.10.2
 NGINX_BIN=/usr/sbin/nginx python3 tests/upstream_canary.py run --directory /tmp/xui-canary
 python3 tests/upstream_canary.py report --directory /tmp/xui-canary
 ```

@@ -87,27 +87,57 @@ cp() { command cp "$@"; }
 
     def test_installed_310_unit_keeps_upstream_sandbox_and_seccomp(self):
         source=(ROOT/'x-ui-latest.sh').read_text()
-        with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory); local=root/'local'; local.mkdir(); stage=root/'stage'; (stage/'x-ui/bin').mkdir(parents=True)
-            for name in ('x-ui','x-ui.sh','bin/xray-linux-amd64'): (stage/'x-ui'/name).write_text('#!/bin/bash\nexit 0\n')
-            original='[Service]\nProtectSystem=full\nProtectHome=read-only\nNoNewPrivileges=yes\nReadWritePaths=-/etc/x-ui -/usr/local/x-ui -/var/log/x-ui\n[Install]\n'
-            (stage/'x-ui/x-ui.service.debian').write_text(original)
-            archive=root/'archive.tar.gz'
-            with tarfile.open(archive,'w:gz') as bundle: bundle.add(stage/'x-ui',arcname='x-ui')
-            body=function(source,'install_panel').replace('/usr/local',str(local)).replace('/etc/systemd/system/x-ui.service',str(root/'unit'))
-            script='msg_ok() { :; }; _arch() { echo amd64; }; systemctl() { :; }; install() { :; }; _panel_initial_config() { :; };\n'+body+'\ninstall_panel'
-            result=subprocess.run(['bash','-u','-c',script],env={**os.environ,'PANEL_TAG':'v3.10.0','PANEL_ARCHIVE':str(archive)},capture_output=True,text=True)
-            self.assertEqual(result.returncode,0,result.stderr)
-            unit=(root/'unit').read_text()
-            for directive in ('ProtectSystem=full','ProtectHome=read-only','NoNewPrivileges=yes','SystemCallFilter=@system-service','SystemCallErrorNumber=EPERM'):
-                self.assertIn(directive,unit)
-            self.assertIn('ReadWritePaths=-/etc/x-ui -/usr/local/x-ui -/var/log/x-ui',unit)
+        modern='ProtectSystem=full\nProtectHome=read-only\nNoNewPrivileges=yes\nSystemCallArchitectures=native\nReadWritePaths=-/etc/x-ui -/usr/local/x-ui -/var/log/x-ui\n'
+        cases=[('v3.9.0','',False),('v3.10.0',modern,True),('v3.10.2',modern,True),
+               ('v3.10.0',modern+'SystemCallFilter=@system-service\nSystemCallErrorNumber=EPERM\n',True),
+               ('v3.11.0',modern,True),('v3.10.2',modern+'SystemCallFilter=@system-service\n',True),
+               ('v3.10.2',modern+'SystemCallErrorNumber=EPERM\n',True)]
+        for tag,policy,hardened in cases:
+            with self.subTest(tag=tag,policy=policy), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory); local=root/'local'; local.mkdir(); stage=root/'stage'; (stage/'x-ui/bin').mkdir(parents=True)
+                for name in ('x-ui','x-ui.sh','bin/xray-linux-amd64'): (stage/'x-ui'/name).write_text('#!/bin/bash\nexit 0\n')
+                original='[Service]\n'+policy+'[Install]\n'
+                (stage/'x-ui/x-ui.service.debian').write_text(original)
+                archive=root/'archive.tar.gz'
+                with tarfile.open(archive,'w:gz') as bundle: bundle.add(stage/'x-ui',arcname='x-ui')
+                body=function(source,'install_panel').replace('/usr/local',str(local)).replace('/etc/systemd/system/x-ui.service',str(root/'unit'))
+                script='msg_ok() { :; }; _arch() { echo amd64; }; systemctl() { :; }; install() { :; }; _panel_initial_config() { :; };\n'+body+'\ninstall_panel'
+                result=subprocess.run(['bash','-u','-c',script],env={**os.environ,'PANEL_TAG':tag,'PANEL_ARCHIVE':str(archive)},capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stderr)
+                unit=(root/'unit').read_text()
+                if hardened:
+                    for directive in ('SystemCallFilter=@system-service','SystemCallErrorNumber=EPERM'):
+                        self.assertEqual(unit.splitlines().count(directive),1)
+                        unit=unit.replace(directive+'\n','')
+                    self.assertEqual(unit,'[Service]\n'+modern+'[Install]\n')
+                else:
+                    self.assertEqual(unit,original)
         # Only explicitly tested versions pass optional component preflights.
         for tag,allowed in (('v3.9.0',True),('v3.10.0',True),('v3.11.0',False)):
             for name in ('preflight_amneziawg','preflight_integrated_features'):
                 stubs='msg_err() { :; }; awg_port_available() { :; }; curl() { :; }; python3() { :; }; preflight_vision_artifacts() { :; };\n'
                 result=subprocess.run(['bash','-eu','-c',stubs+function(source,name)+'\n'+name],env={**os.environ,'PANEL_TAG':tag,'INSTALL_AWG':'y','CREATE_CLIENT':'y','INSTALL_SECURITY':'n','INSTALL_VISION':'n','PANEL_STAGE':'/fixture','GITHUB_RAW':'https://example.invalid'},capture_output=True,text=True)
                 self.assertEqual(result.returncode==0,allowed,(name,tag,result.stderr))
+
+    def test_optional_features_follow_verified_baseline_not_future_versions(self):
+        source=(ROOT/'x-ui-latest.sh').read_text()
+        for verified in ('v3.10.2','v3.11.0'):
+            for tag in ('v3.9.0','v3.10.0',verified,'v9.9.9'):
+                for name in ('preflight_amneziawg','preflight_integrated_features'):
+                    with self.subTest(verified=verified,tag=tag,feature=name), tempfile.TemporaryDirectory() as directory:
+                        root=Path(directory)
+                        stubs='''msg_err() { echo "$*" >&2; }; awg_port_available() { :; }; preflight_vision_artifacts() { :; }
+verified_panel_release() { printf '%s' "$MANIFEST"; }
+curl() { echo DOWNLOAD >> "$CALLS"; printf 'pass\n' > "${@: -1}"; }
+'''
+                        result=subprocess.run(['bash','-eu','-c',stubs+function(source,name)+'\n'+name],
+                            env={**os.environ,'MANIFEST':json.dumps({'version':verified}),'PANEL_TAG':tag,
+                                 'INSTALL_AWG':'y','CREATE_CLIENT':'y','INSTALL_SECURITY':'n','INSTALL_VISION':'n',
+                                 'PANEL_STAGE':str(root),'CALLS':str(root/'calls'),'GITHUB_RAW':'https://example.invalid'},
+                            capture_output=True,text=True)
+                        allowed=tag in ('v3.9.0','v3.10.0',verified)
+                        self.assertEqual(result.returncode==0,allowed,result.stderr)
+                        self.assertEqual((root/'calls').exists(),allowed)
 
 
     def test_preflight_failure_preserves_existing_managed_state(self):

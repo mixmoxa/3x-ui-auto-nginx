@@ -381,9 +381,10 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
             time.sleep(.1)
         else: self.fail('Sandboxed panel HTTPS not ready: '+run('journalctl','-u','x-ui','--no-pager','-n','40'))
         run('systemctl','is-active','--quiet','x-ui')
-        props=dict(line.split('=',1) for line in run('systemctl','show','x-ui','-p','ProtectSystem','-p','ProtectHome','-p','NoNewPrivileges','-p','SystemCallFilter','-p','ReadWritePaths','-p','CapabilityBoundingSet').splitlines())
+        props=dict(line.split('=',1) for line in run('systemctl','show','x-ui','-p','ProtectSystem','-p','ProtectHome','-p','NoNewPrivileges','-p','SystemCallFilter','-p','SystemCallErrorNumber','-p','ReadWritePaths','-p','CapabilityBoundingSet').splitlines())
         self.assertEqual(props['ProtectSystem'],'full'); self.assertEqual(props['ProtectHome'],'read-only')
         self.assertEqual(props['NoNewPrivileges'],'yes')
+        self.assertEqual(props['SystemCallErrorNumber'],'1')  # EPERM, as applied by PID 1.
         # Compare against PID 1's own compilation of the exact upstream policy;
         # CLI group dumps vary by systemd version and implicit @default rules.
         reference='xui-ci-filter-reference.service'

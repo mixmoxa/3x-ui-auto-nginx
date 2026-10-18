@@ -1119,16 +1119,16 @@ _panel_initial_config() {
 verified_panel_release() {
     cat <<'VERIFIED_RELEASE_JSON'
 {
-  "version": "v3.10.0",
+  "version": "v3.10.2",
   "xray": "26.10.10",
   "archives": {
-    "386": "514f7376806ed30b3b8166f36256b47e6101994ccb2e3eebd07f408ce542903b",
-    "amd64": "b647a3e7d6695600bdd18cbfd34959991be09d4b1ad1e05efa790c0cf69ca40d",
-    "arm64": "a0bb393989b96833c84460dff21c968a6263f4e09b7ceff93e0f92975aeadc16",
-    "armv5": "e6787c78c68260320016739a87f35513acf344ee11b23d48a476ef834c15ede6",
-    "armv6": "2dd4d186f5cb22d4afeceaf7bfdf255a825afdfbb4f3e284128dfac2011c612d",
-    "armv7": "f6d331215584c788f77943d7a5a9301d22a64d41f0bf8fac74956a550839a2ab",
-    "s390x": "769f11d45eb567a1f2f669b12bfeed445e07a038686b9f965ff2121306467203"
+    "386": "86279800adbc8cde68ff801ec6e486b974334d17c9b25347fee5aac2ec696464",
+    "amd64": "bfda7921984e7a72555c38d4e861c7a8b67b3686b658608937de99682f1452d0",
+    "arm64": "a867c65ce52ad49f6504dd4c9c395337dc92ba57ae478da4f1b7ddb624014ed5",
+    "armv5": "7c338d59e957410992a03d22669c31d86c0b176998ae176413d60013af358aa4",
+    "armv6": "fa842ac4845e51cf5c9cb8800cd0cd1b0ab091daa06c537866c7bb7eb3335206",
+    "armv7": "26a3b94597b55d7465be55e5ce72f96967444998096cb5dacdb53f36a96482f7",
+    "s390x": "6dc2c3af2c62e31025c78e53efeaba786d9e50966cd93527a285773ebbcc4e83"
   },
   "integration_architectures": [
     "amd64"
@@ -1297,10 +1297,15 @@ install_panel() {
     _panel_initial_config || return 1
 
     cp -f x-ui.service.debian /etc/systemd/system/x-ui.service || return 1
-    if [[ "$tag_version" == v3.10.0 ]]; then
-        # Supported OSes have systemd >=239. Keep upstream's seccomp policy in
-        # the already-owned unit so uninstall and Backup v3 need no new paths.
-        sed -i '/^\[Service\]$/a SystemCallFilter=@system-service\nSystemCallErrorNumber=EPERM' /etc/systemd/system/x-ui.service || return 1
+    if grep -qx 'NoNewPrivileges=yes' /etc/systemd/system/x-ui.service &&
+       grep -qx 'ProtectSystem=full' /etc/systemd/system/x-ui.service &&
+       grep -qx 'SystemCallArchitectures=native' /etc/systemd/system/x-ui.service; then
+        # Supported OSes have systemd >=239. Complete the upstream hardened
+        # policy in the owned unit, preserving any upstream seccomp directives.
+        grep -q '^SystemCallErrorNumber=' /etc/systemd/system/x-ui.service ||
+            sed -i '/^\[Service\]$/a SystemCallErrorNumber=EPERM' /etc/systemd/system/x-ui.service || return 1
+        grep -q '^SystemCallFilter=' /etc/systemd/system/x-ui.service ||
+            sed -i '/^\[Service\]$/a SystemCallFilter=@system-service' /etc/systemd/system/x-ui.service || return 1
     fi
     systemctl daemon-reload || return 1
 
@@ -2155,7 +2160,10 @@ prepare_awg_reinstall() {
 preflight_amneziawg() {
     AWG_REINSTALL=n
     [[ "${INSTALL_AWG:-n}" == y ]] || return 0
-    [[ "${PANEL_TAG:-}" == v3.9.0 || "${PANEL_TAG:-}" == v3.10.0 ]] || { msg_err "AmneziaWG 3.1 integration requires verified 3X-UI v3.9.0 or v3.10.0."; return 1; }
+    [[ "${PANEL_TAG:-}" == v3.9.0 || "${PANEL_TAG:-}" == v3.10.0 ||
+       ( -n "${PANEL_TAG:-}" && "$PANEL_TAG" == "$(verified_panel_release | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')" ) ]] || {
+        msg_err 'AmneziaWG 3.1 requires the verified baseline or historical 3X-UI v3.9.0/v3.10.0.'; return 1;
+    }
     local port_result=0
     awg_port_available || port_result=$?
     if (( port_result != 0 )); then
@@ -2633,8 +2641,9 @@ preflight_vision_artifacts() {
 
 preflight_integrated_features() {
     if [[ "${INSTALL_VISION:-n}" == y || "${CREATE_CLIENT:-n}" == y ]]; then
-        [[ "$PANEL_TAG" == v3.9.0 || "$PANEL_TAG" == v3.10.0 ]] || {
-            msg_err 'Vision and initial client require verified 3X-UI v3.9.0 or v3.10.0; select N with other versions.'; return 1;
+        [[ "$PANEL_TAG" == v3.9.0 || "$PANEL_TAG" == v3.10.0 ||
+           ( -n "$PANEL_TAG" && "$PANEL_TAG" == "$(verified_panel_release | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')" ) ]] || {
+            msg_err 'Vision and initial client require the verified baseline or historical 3X-UI v3.9.0/v3.10.0; select N with other versions.'; return 1;
         }
         # Reuse the existing authenticated local HTTPS/CSRF implementation.
         AWG_HELPER="$PANEL_STAGE/managed-amneziawg.py"
