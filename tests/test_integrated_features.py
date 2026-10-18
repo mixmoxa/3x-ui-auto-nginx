@@ -585,6 +585,30 @@ sysctl() {
         finally:
             instance.doCleanups()
 
+    def test_fresh_fixture_keeps_production_agh_health_dns_local(self):
+        import ast, base64, re, socket, struct
+        source = (ROOT/'tests/fresh/fixtures.py').read_text()
+        functions = [node for node in ast.parse(source).body
+                     if isinstance(node, ast.FunctionDef) and node.name in ('reply', 'answer')]
+        namespace = {'socket': socket, 'struct': struct}
+        exec(compile(ast.Module(body=functions, type_ignores=[]), 'fresh-dns', 'exec'), namespace)
+        # Use the actual install/Restore health question, not a test-only hostname.
+        managed = (ROOT/'assets/adguard/managed.sh').read_text()
+        encoded = re.search(r'\?dns=([A-Za-z0-9_-]+)', managed)[1]
+        question = base64.urlsafe_b64decode(encoded+'='*(-len(encoded)%4))
+        with patch.object(socket, 'getaddrinfo', side_effect=AssertionError('Public DNS used for managed health')):
+            answer = namespace['answer'](question)
+        self.assertEqual(answer[:2], question[:2])
+        self.assertEqual(struct.unpack('!HHH', answer[2:8]), (0x8180, 1, 1))
+        self.assertTrue(answer.endswith(socket.inet_aton('203.0.113.7')))
+        # Package/release hosts still need the real runner resolver.
+        download = question[:12]+b'\x06github\x03com\0'+struct.pack('!HH', 1, 1)
+        with patch.object(socket, 'getaddrinfo', return_value=[
+                (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('198.51.100.10', 443))]) as resolver:
+            answer = namespace['answer'](download)
+        resolver.assert_called_once_with('github.com', 443, socket.AF_INET, socket.SOCK_STREAM)
+        self.assertTrue(answer.endswith(socket.inet_aton('198.51.100.10')))
+
     def test_concise_installer_question_sequence(self):
         names=('validate_domains','select_security','select_vision','select_amneziawg','select_adguard','select_client')
         script='domain=; reality_domain=; msg_err() { echo "$*" >&2; }; msg_inf() { echo "$*"; };\n'
