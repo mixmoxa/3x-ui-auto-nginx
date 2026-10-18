@@ -41,6 +41,26 @@ Configure the DNS records for **two domains** to point to your VPS IP address: o
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
+<a id="installation-vs-update"></a>
+
+> [!CAUTION]
+> **Installation ≠ update**
+>
+> **3X-UI AUTO NGINX** is intended for initial installation on a clean VPS or a complete reinstall.
+>
+> Rerunning the script on an already configured server **does not update the existing installation** — it reinstalls the stack, removing the previous 3X-UI database and nginx configuration.
+
+<details>
+<summary><strong>How do I update?</strong></summary>
+
+- **3X-UI and Xray:** use 3X-UI's built-in update tools.
+- **3X-UI AUTO NGINX:** in-place updates of the installed stack are not supported. Changes in new releases only take effect after a fresh installation or complete reinstall.
+- **Backup / Restore:** is for saving and restoring data, not for updating the project.
+
+**Do not rerun the installer just to update!** To keep your VPS secure, regularly update nginx, the Linux kernel, and other system components using your operating system's package manager.
+
+</details>
+
 
 Once started, the installer walks you through the following steps. The prompts below are shown exactly as they appear in the terminal:
 
