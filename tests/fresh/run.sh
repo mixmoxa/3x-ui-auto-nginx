@@ -44,6 +44,7 @@ for mapping in "${proxy_hosts[@]}"; do network+=(--add-host "$mapping"); done
 docker run --name "$container" --rm --memory=6g --cpus=2 "${network[@]}" \
     -e HTTP_PROXY -e HTTPS_PROXY -e ALL_PROXY -e http_proxy -e https_proxy -e all_proxy \
     -e "XUI_AUTO_REF=$ref" \
+    -e CURL_CA_BUNDLE=/run/proxy-ca.pem \
     --mount "type=bind,src=$work,dst=/pilot" \
     --mount "type=bind,src=$repository,dst=/repo,readonly" \
     --mount type=bind,src=/etc/ssl/certs/ca-certificates.crt,dst=/run/proxy-ca.pem,readonly \
