@@ -75,6 +75,23 @@ def install(scenario, ref):
         report.update(main_exit=result.returncode, main_seconds=round(time.monotonic()-started, 2),
                       installer_sha256=hashlib.sha256((ROOT/'x-ui-latest.sh').read_bytes()).hexdigest())
         private = re.sub(r'\x1b\[[0-9;]*m', '', (ROOT/'installer.raw.log').read_text(errors='replace'))
+        # Public diagnostics are fixed booleans, never log lines or secret URLs.
+        patterns = {
+            'core_running': r'\[✓\]\s+3X-UI / Xray\s+Running',
+            'dot_configured': r'Global DoT — Configured',
+            'fail2ban_configured': r'Fail2ban — Configured',
+            'apt_configured': r'APT security — Configured',
+            'vision_ready': r'\[✓\]\s+VLESS TLS Vision\s+Ready',
+            'awg_configured': r'\[✓\]\s+AmneziaWG\s+Configured',
+            'agh_running': r'\[✓\]\s+AdGuard Home\s+Running',
+            'client_created': r'\[✓\]\s+Client\s+Created',
+            'subscription_ready': r'\[✓\]\s+Subscription\s+Ready',
+            'dns_rollback_verified': r'DoT unavailable; original DNS restored\.',
+            'rollback_unverified': r'rollback not verified',
+            'core_health_unverified': r'Post-rollback health not verified',
+            'xray_runtime_failure': r'Xray must own the REALITY TCP, live XHTTP Unix and Hysteria2 UDP listeners',
+        }
+        report['components'] = {name: bool(re.search(pattern, private)) for name, pattern in patterns.items()}
         subprocess.run(['systemctl', 'is-active', '--quiet', 'ssh'], check=True, timeout=10)
         subprocess.run(['getent', 'ahosts', 'debian.org'], check=True, capture_output=True, timeout=30)
         if scenario == 'dependency':

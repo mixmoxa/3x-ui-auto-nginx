@@ -109,6 +109,13 @@ def install(scenario, ref):
         raise AssertionError('Install result unavailable')
     values = json.loads(data.stdout)
     (ROOT/(phase+'-result.json')).write_bytes(data.stdout)
+    flags = values.get('components', {})
+    allowed = {'core_running','dot_configured','fail2ban_configured','apt_configured','vision_ready',
+               'awg_configured','agh_running','client_created','subscription_ready','dns_rollback_verified',
+               'rollback_unverified','core_health_unverified','xray_runtime_failure'}
+    assert isinstance(flags, dict) and set(flags) <= allowed and all(type(v) is bool for v in flags.values())
+    report[phase+'_components'] = flags
+    print(phase+' components: '+json.dumps(flags, sort_keys=True), flush=True)
     for key in ('main_seconds', 'trust_seconds', 'main_exit'):
         assert type(values[key]) in (int, float)
         report[phase+'_'+key] = values[key]

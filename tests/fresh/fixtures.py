@@ -20,7 +20,7 @@ def answer(packet, pebble=False):
     name='.'.join(labels)
     if name.endswith('.example.test'): address='127.0.0.1' if pebble else '10.0.2.15'
     elif name in ('dns.cloudflare.com','dns.google','dns.quad9.net','adguardteam.github.io'):address='10.0.2.2'
-    elif name in ('cloudflare.com','debian.org') or name.startswith('cold-'):
+    elif name in ('cloudflare.com','debian.org','www.example.com') or name.startswith('cold-'):
         address='203.0.113.7'
     else:
         # Only controlled health/origin domains are synthetic. Official package
