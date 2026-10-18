@@ -1,0 +1,26 @@
+name: Full fresh installer acceptance
+
+on:
+  pull_request:
+    branches: [main]
+    types: [ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fresh-acceptance-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  fresh:
+    name: Full fresh installer (ubuntu-26.04)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Full fresh installer and cold boot
+        run: bash tests/fresh/run.sh

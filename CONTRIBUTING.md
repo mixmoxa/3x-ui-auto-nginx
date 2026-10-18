@@ -8,14 +8,21 @@ Review product wording with the maintainer in Russian (`README.md`) first, then 
 
 ## Required checks
 
-All four checks must pass on the current PR revision:
+Keep the four existing required checks, which run during Draft development:
 
 - `Stack XHTTP and security` (`.github/workflows/stack-xhttp.yml`)
 - `Stack Backup and restore` (`.github/workflows/stack-backup.yml`)
 - `Real services (ubuntu-24.04)` (`.github/workflows/stack-services.yml`)
 - `Real services (ubuntu-26.04)` (`.github/workflows/stack-services.yml`)
 
-The jobs have unique names so GitHub can require them separately. The workflows run for pushes to `main`, pull requests targeting `main`, and manual `workflow_dispatch`. They have read-only repository permissions and no repository-secret dependency.
+The final-stage required check is `Full fresh installer (ubuntu-26.04)`
+(`.github/workflows/fresh-acceptance.yml`); see the owner setup and acceptance
+procedure below. All five checks must pass for the current revision before merge.
+
+The four ordinary checks retain their unique names and run for pushes to `main`,
+pull requests targeting `main`, and manual `workflow_dispatch`. Full Fresh runs
+only on `ready_for_review` for a PR targeting `main`. All workflows have read-only
+repository permissions and no repository-secret dependency.
 
 Reproduce the full suites on a disposable Ubuntu 24.04 test environment:
 
@@ -55,14 +62,21 @@ The same Vision/API case and native AWG transfer case run in both Ubuntu service
 
 See [v2 audit scope](docs/V2_AUDIT.md) for option states, ownership, portable Restore and remaining live acceptance boundaries.
 
-The repository owner must add the exact checks `Real services (ubuntu-24.04)` and `Real services (ubuntu-26.04)` to branch protection/rulesets for required enforcement. Existing protected check names stay unchanged; this PR does not modify repository settings.
+Required enforcement is configured by the repository owner, not by workflow code.
+Preserve the four existing protected check names and add the final-stage check
+using the procedure below; this change does not modify repository settings.
 
 Live VPS acceptance is still required for public DNS, Let's Encrypt, provider kernel/firewall behavior, external-network acceptance and full recovery. Do not run `x-ui-latest.sh` to test syntax: it removes an existing installation. The controlled VM test below covers fresh installation and cold boot, not arbitrary provider/VPS acceptance. Use a disposable VPS for live checks.
 
 ## Full fresh installation acceptance
 
-The existing Ubuntu 26.04 required job also runs `bash tests/fresh/run.sh` (Docker,
-Python 3, Git and passwordless sudo required). It boots a minimal disk-based VM
+`fresh-acceptance.yml` runs `bash tests/fresh/run.sh` (Docker, Python 3, Git and
+passwordless sudo required) only when a PR targeting `main` changes from Draft to
+Ready for review. It checks out the exact event's PR head SHA with full history.
+There is no push, synchronize, opened or manual-dispatch trigger. A new final
+launch cancels an older running Full Fresh job for the same PR.
+
+The unchanged harness boots a minimal disk-based VM
 under QEMU TCG with 2 vCPU/4 GiB RAM, runs the unmodified installer `main()` with
 maximum options and one exact checkout SHA, then cold-boots the same disk.
 Actual installed services, subscriptions, restricted MTR HTTP and Xray/AWG data
@@ -74,9 +88,41 @@ The existing canonical regression preserves STOP on unverified rollback.
 Only external DNS/DoT/filter/HTTP-01 services are controlled fixtures (real Pebble
 validation); official package/release downloads remain real. This does not test
 public Let's Encrypt, a provider's kernel/network or full disaster recovery.
-Raw installer logs, disks and private keys are never uploaded. The Ubuntu 26.04
-job has a 45-minute limit for this measured sequential workload; other job limits
-and required check names are unchanged.
+Raw installer logs, disks and private keys are never uploaded. The dedicated job
+has a 45-minute limit for this measured sequential workload. Both ordinary native
+services jobs have the standard 25-minute limit; their existing names, Debian 13
+coverage and all systemd jobs remain unchanged.
+
+### Owner setup and hosted acceptance
+
+In repository Settings → Rules → Rulesets → `main-protection`, keep enforcement
+active and preserve all four checks listed above. Under required status checks,
+add the exact fifth context `Full fresh installer (ubuntu-26.04)` with source
+**GitHub Actions** (app ID 15368). Keep **Require branches to be up to date before
+merging** enabled (strict required status checks), preserve PR requirements and
+the existing no-bypass policy. If GitHub does not yet offer the new context, run
+the first Draft → Ready acceptance to register it, then add it before any merge.
+Do not remove an existing check or merge during this configuration handoff.
+
+Use the CI-change PR to verify GitHub behavior before merging it:
+
+1. Leave the PR Draft while ordinary CI runs. Confirm there is no Full Fresh run.
+2. After the final commit, choose Ready for review. Confirm one real Full Fresh
+   run with event `pull_request`, action `ready_for_review`, the correct PR and
+   checkout SHA; wait for its successful completion in GitHub Actions.
+3. With the fifth check required, add a small meaningful follow-up commit.
+   Confirm ordinary CI runs, Full Fresh does not start, and the old PASS does not
+   satisfy the new revision: merge must be blocked awaiting the fifth check.
+4. Convert to Draft, then Ready again. Confirm one new real Full Fresh run on the
+   new head SHA and PASS before merge eligibility. Preserve the earlier run/SHA
+   evidence. Return the audit PR to Draft if it must remain Draft for handoff.
+
+These are required hosted acceptance steps, not a claim that YAML validation
+proves event or protection behavior. Stop if GitHub behaves differently; do not
+substitute a skipped job or synthetic success. New commits after a PASS require
+another explicit Draft → Ready cycle. A base update required by strict protection
+also needs fresh acceptance for the resulting revision. Do not merge until the
+final SHA has a real Full Fresh PASS and all five required checks are enforced.
 
 ## Verified upstream baseline and Canary
 
