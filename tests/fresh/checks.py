@@ -18,6 +18,8 @@ import urllib.request
 import uuid
 import ssl
 
+from diagnostics import probe_dns
+
 ROOT = Path('/root/pilot')
 os.umask(0o077)
 
@@ -100,16 +102,24 @@ def installed(cold=False):
     ident=os.urandom(2);name='cold-'+os.urandom(6).hex()+'.example.com'
     question=b''.join(bytes([len(label)])+label.encode() for label in name.split('.'))+b'\0'+struct.pack('!HH',1,1)
     packet=ident+struct.pack('!5H',0x100,1,0,0,0)+question
-    def dns_response(data):assert data[:2]==ident and struct.unpack('!H',data[6:8])[0]>=1 and data.endswith(socket.inet_aton('203.0.113.7'))
-    with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as dns:
-        dns.settimeout(10);dns.sendto(packet,('127.0.0.1',metadata['dns_port']));dns_response(dns.recv(4096))
+    def publish_dns(metrics):
+        with (root/'dns-diagnostics.jsonl').open('a') as output:
+            output.write(json.dumps(metrics)+'\n')
+    def native_query():
+        with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as dns:
+            dns.settimeout(10);dns.sendto(packet,('127.0.0.1',metadata['dns_port']))
+            return dns.recv(4096)
+    probe_dns('native_udp', ident, native_query, publish_dns)
     context=ssl.create_default_context()
     for method in ('GET','POST'):
-        url='https://panel.example.test/dns-query'
-        if method=='GET':url+='?dns='+base64.urlsafe_b64encode(packet).decode().rstrip('=')
-        request=urllib.request.Request(url,data=packet if method=='POST' else None,headers={'Content-Type':'application/dns-message'})
-        with urllib.request.urlopen(request,context=context,timeout=15) as response:
-            assert response.status==200 and response.headers['Content-Type'].startswith('application/dns-message');dns_response(response.read())
+        def doh_query():
+            url='https://panel.example.test/dns-query'
+            if method=='GET':url+='?dns='+base64.urlsafe_b64encode(packet).decode().rstrip('=')
+            request=urllib.request.Request(url,data=packet if method=='POST' else None,headers={'Content-Type':'application/dns-message'})
+            with urllib.request.urlopen(request,context=context,timeout=15) as response:
+                assert response.status==200 and response.headers['Content-Type'].startswith('application/dns-message')
+                return response.read()
+        probe_dns('doh_'+method.lower(), ident, doh_query, publish_dns)
     checks['AGH_native_DNS_and_HTTPS_DoH_GET_POST']=True
     run('fail2ban-client','status','sshd')
     for unit in ('apt-daily.timer','apt-daily-upgrade.timer'):run('systemctl','is-active','--quiet',unit)

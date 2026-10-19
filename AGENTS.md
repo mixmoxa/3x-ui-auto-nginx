@@ -69,6 +69,11 @@ Required protected job names must remain exactly:
 - `Stack XHTTP and security`: all tracked shell Bash syntax, ShellCheck error-only, actionlint 1.7.12, PR Git identity, completeness, nonroot and integration.
 - `Stack Backup and restore`: completeness and root fixtures.
 - `Real services (ubuntu-24.04)` and `Real services (ubuntu-26.04)`: native service suites and selected Vision/client API/AWG tests.
+- `Full fresh installer (ubuntu-26.04)`: final-stage fresh install/cold boot after Draft → Ready.
+
+Create every new PR as **Draft**. Codex must not mark it Ready without the owner's instruction. Ordinary CI runs in Draft; production/code changes need Full Fresh after Ready. Only a verified docs-only diff may use the lightweight documentation smoke instead; never report Full Fresh PASS when it did not run. A new commit after a final PASS requires a new Draft → Ready cycle. Merge and releases belong to the owner.
+
+`tests/ci_scope.py` is the shared conservative exception: the listed root READMEs, Markdown under `docs/` and PNG under `assets/support/` only. Unknown scope, mixed changes, agent/development guidance, tests, workflows and other code keep full CI; manual dispatch is always full. Keep the same five protected contexts and strict protection. Docs-mode success certifies scope, UTF-8/PNG/local-reference/whitespace checks, not installation. Do not add job skips or path filters that leave required checks pending.
 
 `stack-services.yml` also runs Debian 13 native API/Vision/AWG and three systemd userspace guests with a common CI kernel. Preserve their execution model and privilege split. Check all tracked `*.sh`, all workflow YAML and `git diff --check` / `git show --check`. Run applicable suites and require green jobs on the **exact final HEAD**; earlier results do not certify later changes.
 

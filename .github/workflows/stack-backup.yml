@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   validate:
     name: Stack Backup and restore
@@ -18,18 +22,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
+      - name: Classify diff and validate documentation scope
+        id: scope
+        run: python3 tests/ci_scope.py
       - name: Install test dependencies
+        if: steps.scope.outputs.docs_only != 'true'
         run: |
           timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends nginx certbot sqlite3 openssl curl python3 python3-configobj python3-cryptography tar gzip
       - name: Test completeness
+        if: steps.scope.outputs.docs_only != 'true'
         run: python3 tests/run_ci.py --check-completeness
       - name: Backup and restore regression tests
+        if: steps.scope.outputs.docs_only != 'true'
         env:
           NGINX_BIN: /usr/sbin/nginx
         run: sudo --preserve-env=NGINX_BIN python3 tests/run_ci.py --suite root
       - name: Whitespace validation
+        if: steps.scope.outputs.docs_only != 'true'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
@@ -38,3 +50,9 @@ jobs:
           if [ -n "$BASE_SHA" ] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
             git diff --check "$BASE_SHA" HEAD
           fi
+      - name: Report actual CI mode and result
+        if: always()
+        env:
+          CI_DOCS_ONLY: ${{ steps.scope.outputs.docs_only }}
+          CI_JOB_STATUS: ${{ job.status }}
+        run: python3 tests/ci_scope.py --summary

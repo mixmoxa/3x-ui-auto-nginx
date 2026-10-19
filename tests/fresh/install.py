@@ -10,6 +10,8 @@ import subprocess
 import time
 import urllib.request
 
+from diagnostics import vision_failure
+
 ROOT = Path('/root/pilot')
 UNITS = ('ssh', 'nginx', 'x-ui', 'mtr-backend', 'AdGuardHome', 'fail2ban',
          'apt-daily.timer', 'apt-daily-upgrade.timer', 'certbot.timer')
@@ -75,6 +77,8 @@ def install(scenario, ref):
         report.update(main_exit=result.returncode, main_seconds=round(time.monotonic()-started, 2),
                       installer_sha256=hashlib.sha256((ROOT/'x-ui-latest.sh').read_bytes()).hexdigest())
         private = re.sub(r'\x1b\[[0-9;]*m', '', (ROOT/'installer.raw.log').read_text(errors='replace'))
+        vision = vision_failure(private)
+        if vision is not None: report['vision_failure'] = vision
         # Public diagnostics are fixed booleans, never log lines or secret URLs.
         patterns = {
             'core_running': r'\[✓\]\s+3X-UI / Xray\s+Running',

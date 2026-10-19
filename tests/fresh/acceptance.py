@@ -11,6 +11,8 @@ import threading
 import time
 import traceback
 
+from diagnostics import VISION_STAGES
+
 ROOT = Path('/pilot')
 REPO = Path('/repo')
 os.umask(0o077)
@@ -79,11 +81,26 @@ def invoke(expression, result_name, timeout=180):
     started = time.monotonic()
     # No credentials are passed in argv or printed; all guest stdout stays private.
     code = ('import sys,json;from pathlib import Path;sys.path.insert(0,"/root/pilot");'
+            'Path("/root/pilot/dns-diagnostics.jsonl").unlink(missing_ok=True);'
             'import checks,install;result='+expression+';'
             'Path("/root/pilot/'+result_name+'.json").write_text(json.dumps(result))')
     import shlex
     result = ssh('python3 -c '+shlex.quote(code), timeout)
     (ROOT/(phase+'.private.log')).write_bytes(result.stdout+result.stderr)
+    diagnostics = ssh('cat /root/pilot/dns-diagnostics.jsonl', 15)
+    if diagnostics.returncode == 0:
+        probes = [json.loads(line) for line in diagnostics.stdout.splitlines()]
+        allowed = {'probe','rcode','transaction_id_match','answer_records','expected_a',
+                   'response_length','elapsed_seconds','parse_valid','transport_error'}
+        for probe in probes:
+            assert set(probe) <= allowed and probe['probe'] in ('native_udp','doh_get','doh_post')
+            assert probe['rcode'] is None or type(probe['rcode']) is int and 0 <= probe['rcode'] <= 15
+            for key in ('transaction_id_match','expected_a','parse_valid'):
+                assert type(probe[key]) is bool
+            for key in ('answer_records','response_length','elapsed_seconds'):
+                assert type(probe[key]) in (int, float) and probe[key] >= 0
+            if 'transport_error' in probe: assert type(probe['transport_error']) is bool
+        report[phase+'_dns_probes'] = probes
     if result.returncode:
         failure_location(result.stderr)
         raise AssertionError('Guest phase failed; private output is not published')
@@ -109,6 +126,13 @@ def install(scenario, ref):
         raise AssertionError('Install result unavailable')
     values = json.loads(data.stdout)
     (ROOT/(phase+'-result.json')).write_bytes(data.stdout)
+    vision = values.get('vision_failure')
+    if vision is not None:
+        assert set(vision) == {'stage','exit_code','rollback'}
+        assert vision['stage'] in set(VISION_STAGES.values()) | {'unknown'}
+        assert type(vision['exit_code']) is int and 0 <= vision['exit_code'] <= 999
+        assert vision['rollback'] in ('failed_rolled_back','failed_unverified','unknown')
+        report[phase+'_vision_failure'] = vision
     flags = values.get('components', {})
     allowed = {'core_running','dot_configured','fail2ban_configured','apt_configured','vision_ready',
                'awg_configured','agh_running','client_created','subscription_ready','dns_rollback_verified',
