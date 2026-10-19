@@ -71,13 +71,15 @@ StandardError=journal+console
 [Install]
 WantedBy=multi-user.target
 UNIT
-cd /work/root
-find . -xdev -print0 | cpio --null -o --format=newc 2>/work/cpio-reboot.log | gzip -1 > /work/reboot.cpio.gz
 second_boot_ipv6=''
 # One narrow real disabled-family case on the existing Ubuntu 26.04 cold boot.
 if grep -qx 'VERSION_ID="26.04"' /work/root/etc/os-release; then
     second_boot_ipv6='ipv6.disable=1'
+    # Package postinst must activate the real service, without Docker's veto.
+    rm -f /work/root/usr/sbin/policy-rc.d
 fi
+cd /work/root
+find . -xdev -print0 | cpio --null -o --format=newc 2>/work/cpio-reboot.log | gzip -1 > /work/reboot.cpio.gz
 timeout 4m qemu-system-x86_64 -machine accel=tcg -m 2048 -smp 2 -nodefaults \
     -no-reboot -display none -serial stdio -monitor none -nic none \
     -fsdev local,id=ci,path=/work,security_model=none -device virtio-9p-pci,fsdev=ci,mount_tag=xui-ci \

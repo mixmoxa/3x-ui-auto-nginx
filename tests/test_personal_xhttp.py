@@ -495,6 +495,7 @@ systemctl() {
 
     def test_installer_dependencies_are_required(self):
         mock = r'''msg_err() { echo "$*" >&2; }
+ipv6_available() { return 0; }
 apt() { echo "apt $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != apt ]]; }
 apt-get() { echo "apt-get $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != apt ]]; }
 systemctl() { echo "systemctl $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != nginx || "$*" != 'enable --now nginx' ]]; }

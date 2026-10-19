@@ -30,6 +30,13 @@ def root_stat(path, *args, **kwargs):
 REAL_STAT=Path.stat
 
 
+def complete_function(name):
+    # nginx heredocs contain column-zero braces; stop at the next shell function.
+    text=SOURCE[SOURCE.index(name+'() {'):]
+    headers=list(re.finditer(r'^\w+\(\)\s*\{',text,re.M))
+    return text[:headers[1].start()] if len(headers)>1 else text
+
+
 def nginx_ipv4_acme(simulate=False):
     """Production renderers plus real nginx; reused by the existing second VM boot."""
     from certificate_fixtures import relocate
@@ -45,11 +52,6 @@ systemctl() { :; }
 install() { local -a args=(); while (($#)); do case \"$1\" in -o|-g) shift 2;; *) args+=(\"$1\"); shift;; esac; done; command install \"${args[@]}\"; }
 """
         if simulate: stubs+='ipv6_available() { return 1; };\n'
-        def complete_function(name):
-            # These nginx functions contain column-zero braces inside heredocs.
-            text=SOURCE[SOURCE.index(name+'() {'):]
-            headers=list(re.finditer(r'^\w+\(\)\s*\{',text,re.M))
-            return text[:headers[1].start()] if len(headers)>1 else text
         source='\n'.join(relocate(complete_function(n),root) for n in ('ipv6_available','prepare_acme_webroot','setup_acme_http','configure_nginx'))
         result=subprocess.run(['bash','-u','-c',source+'\n'+stubs+'\nsetup_acme_http && configure_nginx'],
             env={**os.environ,**FIXTURE},capture_output=True,text=True,timeout=15)
@@ -230,6 +232,30 @@ python3() {
     def test_real_nginx_ipv4_main_and_vision_acme(self):
         nginx_ipv4_acme(simulate=True)
 
+    def test_first_nginx_start_preserves_default_only_with_ipv6(self):
+        from certificate_fixtures import relocate
+        for ipv6 in ('y','n'):
+            with self.subTest(ipv6=ipv6),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);default=root/'etc/nginx/sites-enabled/default'
+                default.parent.mkdir(parents=True);package=root/'package-default'
+                package.write_bytes(b'listen [::]:80;\n');default.symlink_to(package)
+                (root/'etc/os-release').write_text('VERSION_ID="26.04"\n')
+                stubs='''apt_system() { :; }; python3() { :; }; command() { :; }
+ipv6_available() { [[ "$IPV6" == y ]]; }
+systemctl() {
+    if [[ "$*" == 'enable --now nginx' ]]; then
+        if [[ -L "$DEFAULT" ]]; then echo default-present; [[ "$IPV6" == y ]]; else echo default-absent; fi
+    fi
+}
+'''
+                result=subprocess.run(['bash','-u','-c',stubs+relocate(function('install_packages'),root)+'\ninstall_packages'],
+                    env={**os.environ,'INSTALL':'y','IPV6':ipv6,'DEFAULT':str(default)},
+                    capture_output=True,text=True,timeout=5)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(result.stdout.strip(),'default-present' if ipv6=='y' else 'default-absent')
+                self.assertEqual(default.is_symlink(),ipv6=='y')
+                self.assertEqual(package.read_bytes(),b'listen [::]:80;\n')
+
     def test_dns_checkpoint_writer_reader_roundtrip_and_security(self):
         security=helper('security')
         def command(*args,**kwargs):
@@ -325,6 +351,30 @@ python3() { if [[ $1 == - ]]; then command python3 \"$@\"; else return 1; fi; }
                 env={**os.environ,'COUNTER':str(counter),'vision_domain':'vision.example','PANEL_STAGE':str(root)},capture_output=True,text=True)
             self.assertEqual(r.returncode,0,r.stderr)
             ports=list(map(int,r.stdout.split()));self.assertEqual(len(ports),7);self.assertEqual(len(set(ports)),7)
+
+    def test_vision_port_failure_preserves_target_and_reports_no_unverified_rollback(self):
+        from certificate_fixtures import relocate
+        for partial in (False,True):
+            with self.subTest(partial=partial),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);sentinel=root/'etc/nginx/sites-available/vision-acme.conf'
+                sentinel.parent.mkdir(parents=True);sentinel.write_bytes(b'previous configuration\n')
+                before=(sentinel.read_bytes(),sentinel.stat())
+                source=relocate(function('install_vision'),root)
+                stubs='''make_port() { [[ "$PARTIAL" != True ]] || printf -v "$1" 31001; return 1; }
+msg_warn() { echo "$*" >&2; }
+nginx() { echo MUTATION_REACHED >&2; return 77; }
+systemctl() { echo MUTATION_REACHED >&2; return 77; }
+python3() { echo MUTATION_REACHED >&2; return 77; }
+certbot() { echo MUTATION_REACHED >&2; return 77; }
+'''
+                result=subprocess.run(['bash','-u','-c',source+'\n'+stubs+
+                    '\nstatus=0; install_vision || status=$?; printf "%s|%s" "$status" "$VISION_RESULT"; exit "$status"'],
+                    env={**os.environ,'PARTIAL':str(partial),'vision_domain':'vision.example'},
+                    capture_output=True,text=True,timeout=5)
+                self.assertEqual(result.returncode,1,result.stderr)
+                self.assertEqual(result.stdout,'1|failed_rolled_back')
+                self.assertNotIn('MUTATION_REACHED',result.stderr)
+                self.assertEqual((sentinel.read_bytes(),sentinel.stat()),before)
 
 
 if __name__=='__main__':unittest.main()

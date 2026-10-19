@@ -9,7 +9,7 @@ trap '[[ -z "$sshd_pid" ]] || kill "$sshd_pid"; rm -rf "$state"' EXIT
 python3 - "$repo/x-ui-latest.sh" > "$state/functions" <<'PY'
 import pathlib, re, sys
 source=pathlib.Path(sys.argv[1]).read_text()
-for name in ('apt_system','install_packages'):
+for name in ('apt_system','install_packages','ipv6_available'):
     print(re.search(r'^'+name+r'\(\)\s*\{.*?^\}',source,re.M|re.S).group())
 PY
 # Only service enablement is outside this container's scope; APT is unmodified.

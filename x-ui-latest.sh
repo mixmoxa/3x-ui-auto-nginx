@@ -599,6 +599,9 @@ install_packages() {
 
         apt_system -o APT::Update::Error-Mode=any update || { msg_err "APT list refresh failed (exit $?). Package changes are not rolled back."; return 1; }
         apt_system -y install curl wget jq bash sudo nginx-full certbot sqlite3 ufw netcat-openbsd mtr-tiny python3 python3-configobj python3-cryptography libcap2-bin openssl procps iproute2 tar gzip tzdata ca-certificates || return 1
+        if ! ipv6_available; then
+            rm -f /etc/nginx/sites-enabled/default || return 1
+        fi
         systemctl daemon-reload && systemctl enable --now nginx || return 1
     fi
 
@@ -2759,9 +2762,10 @@ VISIONHOOK
 }
 
 install_vision() {
-    VISION_RESULT=failed_unverified
+    VISION_RESULT=failed_rolled_back
     local new_lineage=0 result=0 vision_output='' hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision vision_port fallback_port vision_stage='rendering ACME configuration' vision_exit=1
     make_port vision_port fallback_port || return 1
+    VISION_RESULT=failed_unverified
     [[ -e "/etc/letsencrypt/live/$vision_domain" || -e "/etc/letsencrypt/renewal/$vision_domain.conf" ]] || new_lineage=1
     if (( ! new_lineage )) && [[ "${VISION_OWNED_LINEAGE:-}" != "$vision_domain" ]]; then
         VISION_RESULT=failed_rolled_back
