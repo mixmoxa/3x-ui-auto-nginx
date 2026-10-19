@@ -4,6 +4,8 @@
 
 `main` is the maintained production line. Create `feat/*`, `fix/*`, `docs/*` or `chore/*` branches and open pull requests against `main`. Upstream is a reference source; do not automatically synchronize it.
 
+Create all new PRs as **Draft**. Codex does not mark them Ready without the owner's instruction. Ordinary CI runs in Draft; the owner initiates final acceptance with Draft → Ready. After any new commit, repeat that final cycle. Only the owner merges and publishes releases.
+
 Review product wording with the maintainer in Russian (`README.md`) first, then adapt all seven languages; Russian is the default GitHub landing page (`README.md`), and the full English adaptation is in `README_EN.md`. `README_RU.md` preserves older Russian links. Preserve exact commands, safety warnings and upstream attribution in every full translation. The maintainer has adopted `GPL-3.0-only` for original xPROMSx developments and changes. Follow the partial scope in `LICENSE` and `THIRD_PARTY_NOTICES.md`; do not claim permission to relicense inherited material.
 
 ## Required checks
@@ -121,8 +123,45 @@ These are required hosted acceptance steps, not a claim that YAML validation
 proves event or protection behavior. Stop if GitHub behaves differently; do not
 substitute a skipped job or synthetic success. New commits after a PASS require
 another explicit Draft → Ready cycle. A base update required by strict protection
-also needs fresh acceptance for the resulting revision. Do not merge until the
-final SHA has a real Full Fresh PASS and all five required checks are enforced.
+also needs fresh acceptance for the resulting revision. Do not merge until all five required checks are enforced and the final SHA has
+a real Full Fresh PASS for code changes or a verified documentation-only smoke.
+Never label the documentation exception as Full Fresh PASS.
+
+## Documentation-only CI
+
+Every ordinary job and the final-stage check run `tests/ci_scope.py` after exact
+checkout with full history. A nonempty, reliable Git diff may use the lightweight
+mode only for the eight listed root README files, `docs/**/*.md`, and PNG images
+under `assets/support/`. SVG, agent/contributor instructions, tests, workflows,
+unknown paths/types, renames/copies and mixed changes keep full CI. A PR uses the
+merge-base of the event base/head; main pushes use before/head across the entire
+change. Invalid or unavailable revisions fall back to full CI; manual dispatch
+always runs full CI. Branch names, labels and commit messages do not classify it.
+
+The stdlib-only smoke validates changed regular paths, UTF-8, PNG chunk CRCs and
+pixel stream, local file/image references within the checkout, and diff whitespace.
+It checks new/touched references and tolerates unrelated pre-existing broken links;
+it does not contact external sites or enforce Markdown style. Corrupt documents
+fail the job. No APT, binary downloads, test suites, Docker or QEMU run in docs mode.
+All jobs still execute a real scope/smoke step and report what ran.
+
+The five protected check names stay unchanged. After Draft → Ready, a verified
+documentation-only final check states exactly:
+`DOCS-ONLY: Full Fresh E2E not executed; documentation scope verified.`
+Production/code changes still execute the complete unchanged acceptance sequence.
+The owner must confirm hosted docs-only behavior with a separately authorized PR
+after merge; synthetic Git-history tests do not prove GitHub merge enforcement.
+
+Ordinary workflow concurrency cancels superseded runs only for the same PR and
+workflow. Main pushes and dispatches have independent run-ID groups; Canary and
+release workflows remain independent. Cancelled runs are not successful checks.
+
+Fresh diagnostics publish only allowlisted Vision stage/exit/rollback fields and
+DNS probe/RCODE/ID-match/Answer-count/expected-A/length/timing values. Unknown
+Vision stages become `unknown`; raw logs, DNS names, packets, credentials and URLs
+remain private. DNS parsing validates the expected Answer A record rather than
+assuming it occupies the final four packet bytes. No retries or timeout increases
+are added; failure remains failure.
 
 ## Verified upstream baseline and Canary
 
@@ -142,7 +181,7 @@ NGINX_BIN=/usr/sbin/nginx python3 tests/upstream_canary.py run --directory /tmp/
 python3 tests/upstream_canary.py report --directory /tmp/xui-canary
 ```
 
-Promote upstream only in a separate reviewed PR: independently confirm all official archive pins, update the single baseline, run all four required jobs, and record full installer/live acceptance. Canary **integration PASS is not full installer acceptance**: systemd lifecycle, public ACME/DNS, kernel UFW, reboot/recovery and non-amd64 behavior still require their own acceptance. Canary failures must be investigated, not hidden by changing assertions or silently substituting baseline binaries.
+Promote upstream only in a separate reviewed PR: independently confirm all official archive pins, update the single baseline, run all five required checks, and record full installer/live acceptance. Canary **integration PASS is not full installer acceptance**: systemd lifecycle, public ACME/DNS, kernel UFW, reboot/recovery and non-amd64 behavior still require their own acceptance. Canary failures must be investigated, not hidden by changing assertions or silently substituting baseline binaries.
 
 ## Public Git metadata
 

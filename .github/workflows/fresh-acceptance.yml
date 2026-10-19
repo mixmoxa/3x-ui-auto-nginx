@@ -22,5 +22,16 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+      - name: Classify diff and validate documentation scope
+        id: scope
+        run: python3 tests/ci_scope.py
       - name: Full fresh installer and cold boot
+        if: steps.scope.outputs.docs_only != 'true'
         run: bash tests/fresh/run.sh
+      - name: Report actual CI mode and result
+        if: always()
+        env:
+          CI_DOCS_ONLY: ${{ steps.scope.outputs.docs_only }}
+          CI_JOB_STATUS: ${{ job.status }}
+          CI_FRESH: 'true'
+        run: python3 tests/ci_scope.py --summary

@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   services:
     name: Real services (${{ matrix.os }})
@@ -24,17 +28,24 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
+      - name: Classify diff and validate documentation scope
+        id: scope
+        run: python3 tests/ci_scope.py
       - name: Install explicit service test dependencies
+        if: steps.scope.outputs.docs_only != 'true'
         run: |
           timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends nginx libnginx-mod-stream certbot sqlite3 openssl curl python3 python3-configobj python3-cryptography apache2-utils iproute2 qemu-user tar gzip sudo
       - name: Canonical completeness
+        if: steps.scope.outputs.docs_only != 'true'
         run: python3 tests/run_ci.py --check-completeness
       - name: Real AGH, HTTP-01 renewal and private Restore
+        if: steps.scope.outputs.docs_only != 'true'
         env:
           NGINX_BIN: /usr/sbin/nginx
         run: python3 tests/run_ci.py --suite services
       - name: Real Vision/client API and embedded AmneziaWG TCP/UDP/restart
+        if: steps.scope.outputs.docs_only != 'true'
         env:
           NGINX_BIN: /usr/sbin/nginx
           PYTHONPATH: tests
@@ -44,15 +55,30 @@ jobs:
             test_real_integration.RealIntegration.test_vision_deploy_hook_waits_for_delayed_xray \
             test_real_integration.RealIntegration.test_amneziawg_tcp_udp_and_panel_restart
 
+      - name: Report actual CI mode and result
+        if: always()
+        env:
+          CI_DOCS_ONLY: ${{ steps.scope.outputs.docs_only }}
+          CI_JOB_STATUS: ${{ job.status }}
+        run: python3 tests/ci_scope.py --summary
+
   debian-native-api:
     name: Native Vision and client API (debian-13)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Classify diff and validate documentation scope
+        id: scope
+        run: python3 tests/ci_scope.py
       - name: Build Debian 13 native service environment
+        if: steps.scope.outputs.docs_only != 'true'
         run: docker build --build-arg DISTRO=debian:13 -t xui-debian -f tests/systemd/Dockerfile .
       - name: Native protocol/API integration with private nonroot state
+        if: steps.scope.outputs.docs_only != 'true'
         run: |
           docker run --rm --user 1000:1000 \
             --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/repo,readonly" \
@@ -60,6 +86,13 @@ jobs:
             test_real_integration.RealIntegration.test_vision_and_initial_client_official_api \
             test_real_integration.RealIntegration.test_vision_deploy_hook_waits_for_delayed_xray \
             test_real_integration.RealIntegration.test_amneziawg_tcp_udp_and_panel_restart
+
+      - name: Report actual CI mode and result
+        if: always()
+        env:
+          CI_DOCS_ONLY: ${{ steps.scope.outputs.docs_only }}
+          CI_JOB_STATUS: ${{ job.status }}
+        run: python3 tests/ci_scope.py --summary
 
   security-systemd:
     name: Security systemd (${{ matrix.distro }})
@@ -71,18 +104,27 @@ jobs:
         distro: ['ubuntu:24.04', 'ubuntu:26.04', 'debian:13']
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Classify diff and validate documentation scope
+        id: scope
+        run: python3 tests/ci_scope.py
       - name: Build isolated systemd root filesystem and QEMU tools
+        if: steps.scope.outputs.docs_only != 'true'
         env:
           DISTRO: ${{ matrix.distro }}
         run: |
           docker build --build-arg "DISTRO=$DISTRO" --build-arg MINIMAL_DNS=1 -t xui-systemd-root -f tests/systemd/Dockerfile .
           docker build -t xui-systemd-tools -f tests/systemd/tools.Dockerfile .
       - name: Real APT upgrade and console MTR installation (disposable container)
+        if: steps.scope.outputs.docs_only != 'true'
         run: |
           docker run --rm \
             --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/repo,readonly" \
             -e XUI_APT_TEST=container xui-systemd-root bash /repo/tests/apt_packages.sh /repo
       - name: Native sshd, timers, authenticated TLS DNS and rollback inside VM
+        if: steps.scope.outputs.docs_only != 'true'
         run: |
           vm_directory=$(mktemp -d)
           container_id=$(docker create xui-systemd-root)
@@ -92,3 +134,9 @@ jobs:
             --mount "type=bind,src=$vm_directory,dst=/work" \
             --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/repo,readonly" \
             xui-systemd-tools bash /repo/tests/systemd/boot.sh
+      - name: Report actual CI mode and result
+        if: always()
+        env:
+          CI_DOCS_ONLY: ${{ steps.scope.outputs.docs_only }}
+          CI_JOB_STATUS: ${{ job.status }}
+        run: python3 tests/ci_scope.py --summary
