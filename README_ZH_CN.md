@@ -41,6 +41,26 @@
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
+<a id="installation-vs-update"></a>
+
+> [!CAUTION]
+> **安装 ≠ 更新**
+>
+> **3X-UI AUTO NGINX** 适用于在全新 VPS 上首次安装，或进行完整重装。
+>
+> 在已经配置好的服务器上再次运行脚本，**不会更新现有安装**，而是重新安装整套服务，并删除原有的 3X-UI 数据库和 nginx 配置。
+
+<details>
+<summary><strong>如何更新？</strong></summary>
+
+- **3X-UI 和 Xray：**使用 3X-UI 自带的更新功能。
+- **3X-UI AUTO NGINX：**不支持对已安装的整套服务进行原地升级。新版本的改动只会在全新安装或完整重装时生效。
+- **Backup / Restore：**用于保存和恢复数据，并非项目更新工具。
+
+**不要为了更新而重新运行安装脚本！** 为保障 VPS 安全，请通过操作系统的包管理工具定期更新 nginx、Linux 内核及其他系统组件。
+
+</details>
+
 
 启动后，安装程序会依次引导你完成以下步骤。下面保留了终端中实际显示的英文提示，方便逐项对照：
 

@@ -41,6 +41,26 @@
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
+<a id="installation-vs-update"></a>
+
+> [!CAUTION]
+> **Kurulum ≠ güncelleme**
+>
+> **3X-UI AUTO NGINX**, temiz bir VPS üzerine ilk kurulum veya tamamen yeniden kurulum için tasarlanmıştır.
+>
+> Daha önce yapılandırılmış bir sunucuda betiği yeniden çalıştırmak **mevcut kurulumu güncellemez**; bunun yerine bileşenleri yeniden kurar ve eski 3X-UI veritabanını ve nginx yapılandırmasını siler.
+
+<details>
+<summary><strong>Nasıl güncellenir?</strong></summary>
+
+- **3X-UI ve Xray:** 3X-UI'nin yerleşik güncelleme araçlarını kullanın.
+- **3X-UI AUTO NGINX:** kurulu sistemin yerinde güncellenmesi desteklenmez. Yeni sürümlerdeki değişiklikler yalnızca sıfırdan kurulum veya tamamen yeniden kurulum sırasında uygulanır.
+- **Backup / Restore:** projeyi güncellemek için değil, verileri yedeklemek ve geri yüklemek içindir.
+
+**Yalnızca güncelleme yapmak için kurulum betiğini yeniden çalıştırmayın!** VPS'nizin güvenliği için nginx'i, Linux çekirdeğini ve diğer sistem bileşenlerini işletim sisteminizin paket yöneticisiyle düzenli olarak güncelleyin.
+
+</details>
+
 
 Kurulum aracı başlatıldığında aşağıdaki adımları sırayla sunar. Terminalde göreceğiniz sorular, karşılaştırabilmeniz için özgün İngilizce biçimleriyle verilmiştir:
 
