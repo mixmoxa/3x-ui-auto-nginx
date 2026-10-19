@@ -143,7 +143,7 @@ pixel stream, local file/image references within the checkout, and diff whitespa
 It checks new/touched references and tolerates unrelated pre-existing broken links;
 it does not contact external sites or enforce Markdown style. Corrupt documents
 fail the job. No APT, binary downloads, test suites, Docker or QEMU run in docs mode.
-All eight jobs still execute a real scope/smoke step and report what ran.
+All jobs still execute a real scope/smoke step and report what ran.
 
 The five protected check names stay unchanged. After Draft → Ready, a verified
 documentation-only final check states exactly:
@@ -181,7 +181,7 @@ NGINX_BIN=/usr/sbin/nginx python3 tests/upstream_canary.py run --directory /tmp/
 python3 tests/upstream_canary.py report --directory /tmp/xui-canary
 ```
 
-Promote upstream only in a separate reviewed PR: independently confirm all official archive pins, update the single baseline, run all four required jobs, and record full installer/live acceptance. Canary **integration PASS is not full installer acceptance**: systemd lifecycle, public ACME/DNS, kernel UFW, reboot/recovery and non-amd64 behavior still require their own acceptance. Canary failures must be investigated, not hidden by changing assertions or silently substituting baseline binaries.
+Promote upstream only in a separate reviewed PR: independently confirm all official archive pins, update the single baseline, run all five required checks, and record full installer/live acceptance. Canary **integration PASS is not full installer acceptance**: systemd lifecycle, public ACME/DNS, kernel UFW, reboot/recovery and non-amd64 behavior still require their own acceptance. Canary failures must be investigated, not hidden by changing assertions or silently substituting baseline binaries.
 
 ## Public Git metadata
 
