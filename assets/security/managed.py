@@ -184,7 +184,8 @@ class Transaction:
             if record != str(index): raise ValueError('Invalid DNS checkpoint path')
             expected.add(record); backup=directory/record
             if backup.is_symlink():
-                if name != '/etc/resolv.conf' or os.readlink(backup) not in ('/run/systemd/resolve/stub-resolv.conf','/run/systemd/resolve/resolv.conf','../run/systemd/resolve/stub-resolv.conf','../run/systemd/resolve/resolv.conf'):
+                # Restore the saved link itself; its target is never opened by rollback.
+                if name != '/etc/resolv.conf' or backup.lstat().st_uid != 0:
                     raise ValueError('Invalid DNS checkpoint link')
             elif not backup.is_file() or backup.stat().st_uid != 0 or backup.stat().st_mode & 0o022:
                 raise ValueError('Unsafe DNS checkpoint file')

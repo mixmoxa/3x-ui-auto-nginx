@@ -9,7 +9,7 @@ class AmneziaWG(unittest.TestCase):
     def test_adguard_cleanup_failure_recovers_only_early_stopped_xui(self):
         import tempfile
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
-               'select_adguard','select_client','preflight_base_os','preflight_panel_release','preflight_amneziawg',
+               'select_adguard','select_client','preflight_base_os','preflight_panel_release','make_port','preflight_amneziawg',
                'preflight_integrated_features','prepare_base_os','prepare_system_dns','install_packages','setup_firewall',
                'get_server_ip','setup_acme_http','get_ssl_certs','install_panel','configure_nginx','configure_xui_db',
                'install_clash_sub','install_fake_site','install_diagnostics','tune_system','install_backup_tool',

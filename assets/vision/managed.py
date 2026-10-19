@@ -103,12 +103,20 @@ def fallback_config(domain, port, root='/var/www/html'):
 '''
 
 
-def acme_config(domain):
+def ipv6_available():
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM): return True
+    except OSError:
+        return False
+
+
+def acme_config(domain, ipv6=None):
     domain_name(domain)
+    if ipv6 is None: ipv6 = ipv6_available()
+    listener = '    listen [::]:80;\n' if ipv6 else ''
     return MARKER + f'''server {{
     listen 80;
-    listen [::]:80;
-    server_name {domain};
+{listener}    server_name {domain};
     location ^~ /.well-known/acme-challenge/ {{ root /var/www/acme; try_files $uri =404; }}
     location / {{ return 301 https://$host$request_uri; }}
 }}
@@ -131,8 +139,8 @@ def nginx_artifact_domain(site, acme):
                 raise ValueError('Unrecognized Vision fallback port')
             expected = render(name[1], int(port[1]))
         else:
-            expected = render(name[1])
-        if text != expected:
+            expected = render(name[1], ipv6=True)
+        if text != expected and not (render is acme_config and text == render(name[1], ipv6=False)):
             raise ValueError('Modified Vision nginx configuration; preserved')
         names.add(name[1])
     if len(names) > 1:

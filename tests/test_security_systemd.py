@@ -38,6 +38,15 @@ def nightly_after_cold_boot():
     for service,when in (('apt-daily.timer','02:30:00'),('apt-daily-upgrade.timer','02:50:00')):
         run('systemctl','is-active','--quiet',service); run('systemctl','is-enabled','--quiet',service)
         assert when in run('systemctl','show',service,'-p','TimersCalendar')
+    if 'ipv6.disable=1' in Path('/proc/cmdline').read_text().split():
+        try:socket.socket(socket.AF_INET6,socket.SOCK_STREAM)
+        except OSError as error:
+            import errno
+            assert error.errno==errno.EAFNOSUPPORT
+        else:raise AssertionError('AF_INET6 unexpectedly available')
+        from test_installer_compatibility import nginx_ipv4_acme
+        nginx_ipv4_acme()
+        print('REAL disabled AF_INET6: production IPv4 main/Vision nginx + HTTP-01 challenge: PASS',flush=True)
     print('REAL second boot: effective APT origins / reboot policy / enabled active local-time timers: PASS',flush=True)
 
 
