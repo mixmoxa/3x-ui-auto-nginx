@@ -131,7 +131,7 @@ gen_group_id() {
     echo
 }
 
-# 0 = occupied, 1 = free, 2+ = probe failure. Called after release dependencies.
+# 0 = free, 3 = occupied, other = probe failure. After release dependencies.
 check_free() {
     python3 - "$1" <<'PYPORT'
 import errno, socket, sys
@@ -139,8 +139,7 @@ try:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(('127.0.0.1', int(sys.argv[1])))
 except OSError as error:
-    sys.exit(0 if error.errno == errno.EADDRINUSE else 2)
-sys.exit(1)
+    sys.exit(3 if error.errno == errno.EADDRINUSE else 2)
 PYPORT
 }
 
@@ -157,12 +156,12 @@ make_port() {
             [[ "${used:-}" != "$candidate" ]] || continue
             status=0
             check_free "$candidate" || status=$?
-            if (( status == 1 )); then
+            if (( status == 0 )); then
                 printf -v "$destination" '%s' "$candidate"
                 ALLOCATED_TCP_PORTS+=("$candidate")
                 break
             fi
-            (( status == 0 )) || { msg_err 'Internal TCP port probe failed.'; return 1; }
+            (( status == 3 )) || { msg_err 'Internal TCP port probe failed.'; return 1; }
         done
         (( attempt < 128 )) || { msg_err 'No free distinct internal TCP port found.'; return 1; }
     done

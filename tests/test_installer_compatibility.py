@@ -151,7 +151,7 @@ class InstallerCompatibility(unittest.TestCase):
             root=Path(directory);occupied.bind(('127.0.0.1',0));busy=occupied.getsockname()[1]
             # Deliberately bind without listen: a TCP connect probe would miss it.
             result=shell(('check_free',),'check_free "$BUSY"',{'BUSY':str(busy)},'nc() { return 127; };')
-            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(result.returncode,3,result.stderr)
             counter=root/'counter';counter.write_text('0')
             stubs='''get_port() { local n; n=$(cat "$COUNTER"); echo $((n+1)) > "$COUNTER"; if ((n<2)); then echo "$BUSY"; else echo $((30000+(n-2)/2)); fi; }
 nc() { echo NC_MUST_NOT_BE_USED >&2; return 127; }
@@ -170,10 +170,10 @@ nc() { echo NC_MUST_NOT_BE_USED >&2; return 127; }
         with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as udp:
             udp.bind(('127.0.0.1',0))
             r=shell(('check_free',),'check_free "$PORT"',{'PORT':str(udp.getsockname()[1])},'nc() { return 127; };')
-            self.assertEqual(r.returncode,1,'UDP occupancy must not reserve the TCP namespace')
+            self.assertEqual(r.returncode,0,'UDP occupancy must not reserve the TCP namespace')
 
     def test_port_exhaustion_and_probe_errors_stop_bounded(self):
-        for probe in ('check_free() { return 0; };','python3() { return 127; };'):
+        for probe in ('check_free() { return 3; };','python3() { return 127; };','python3() { return 1; };'):
             r=shell(('check_free','make_port'),'make_port selected; exit "$?"',
                     stubs='get_port() { echo 32000; };\n'+probe,timeout=4)
             self.assertNotEqual(r.returncode,0)
