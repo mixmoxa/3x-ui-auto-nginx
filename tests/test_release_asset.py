@@ -16,13 +16,13 @@ from test_personal_xhttp import ROOT, SOURCE
 # Only the GitHub boundary is simulated. Git refs, builder, Bash, downloads'
 # bytes, checksum verification and source-ref checks execute real local tools.
 GH_FIXTURE = r'''#!/usr/bin/env python3
-import json, os, pathlib, shutil, subprocess, sys
+import json, os, pathlib, re, shutil, subprocess, sys
 state_path=pathlib.Path(os.environ['RELEASE_STATE'])
 state=json.loads(state_path.read_text()); args=sys.argv[1:]
 state['calls'].append(args)
 def save(): state_path.write_text(json.dumps(state))
-def fail():
-    save(); print('simulated GitHub failure',file=sys.stderr); sys.exit(1)
+def fail(message='simulated GitHub failure'):
+    save(); print(message,file=sys.stderr); sys.exit(1)
 def flag(name): return args[args.index(name)+1]
 if args[0]=='api':
     path=next(a for a in args if a.startswith('repos/'))
@@ -32,8 +32,18 @@ if args[0]=='api':
         if state['fault']=='lookup': fail()
         print(1 if state['tag'] else 0)
     elif '/releases?per_page=100' in path:
-        if state['fault']=='release_lookup': fail()
-        if state['release']: print(state['release']['id'])
+        assert '--paginate' in args
+        assert flag('--jq')=='.[] | select(.tag_name == "'+os.environ['RELEASE_VERSION']+'") | .id'
+        if state['fault']=='release_lookup' or (state['release'] and state['fault']=='draft_list_api'): fail()
+        # Matching draft is on a later page, after a similarly named release.
+        pages=[[{'id':7,'tag_name':'v2.1.50'}],[]]
+        if state['release'] and state['fault']!='draft_missing':
+            pages[1].append(state['release'])
+            if state['fault']=='draft_duplicate': pages[1].append({**state['release'],'id':43})
+        for page in pages:
+            for release in page:
+                if release['tag_name']==os.environ['RELEASE_VERSION']:
+                    print('invalid' if state['fault']=='draft_list_id' else release['id'])
     elif path.endswith('/git/refs') and flag('--method')=='POST':
         values=dict(a.split('=',1) for a in args if a.startswith(('ref=','sha=')))
         if state['tag']: fail()
@@ -42,7 +52,19 @@ if args[0]=='api':
     elif '/git/ref/tags/' in path:
         print(state['tag'])
     elif '/releases/tags/' in path:
-        print(json.dumps(state['release']))
+        fail('HTTP 404: draft lookup by tag is unavailable')
+    elif re.search(r'/releases/[0-9]+$',path):
+        assert path.endswith('/releases/'+str(state['release']['id']))
+        if state['fault']=='draft_get_api': fail()
+        release=json.loads(json.dumps(state['release']))
+        if state['fault']=='draft_wrong_id': release['id']+=1
+        if state['fault']=='draft_wrong_tag': release['tag_name']='v2.1.50'
+        if state['fault']=='draft_wrong_source': release['target_commitish']='a'*40
+        if state['fault']=='draft_missing_metadata': del release['draft']
+        if state['fault']=='draft_not_draft': release['draft']=False
+        if state['fault']=='draft_prerelease': release['prerelease']=True
+        if state['fault']=='draft_assets': release['assets'].pop()
+        print('invalid JSON' if state['fault']=='draft_json' else json.dumps(release))
     else: raise AssertionError('Unexpected API operation')
 elif args[:2]==['release','create']:
     assert '--draft' in args and '--verify-tag' in args
@@ -183,6 +205,13 @@ class ReleaseAsset(unittest.TestCase):
         self.assertIn(state['release']['html_url'],(self.root/'summary').read_text())
         self.assertIn(self.sha,(self.root/'summary').read_text())
         self.assertIn(f'PROJECT_REF="${{XUI_AUTO_REF:-{self.sha}}}"'.encode(),(self.api_assets/'x-ui-latest.sh').read_bytes())
+        api_paths=[next(a for a in call if a.startswith('repos/')) for call in state['calls'] if call[0]=='api']
+        self.assertEqual(sum(path.endswith('/releases?per_page=100') for path in api_paths),2)
+        self.assertTrue(api_paths[-1].endswith('/releases/42'))
+        self.assertFalse(any('/releases/tags/' in path for path in api_paths))
+        by_tag=subprocess.run(['gh','api','repos/xPROMSx/3x-ui-auto-nginx/releases/tags/v2.1.5'],
+            env=self.workflow_env,capture_output=True,text=True,timeout=5)
+        self.assertNotEqual(by_tag.returncode,0); self.assertIn('HTTP 404',by_tag.stderr)
         before={p.name:p.read_bytes() for p in self.api_assets.iterdir()}
         repeated=self.run_workflow(); self.assertNotEqual(repeated.returncode,0)
         self.assertIn('already exists',repeated.stdout+repeated.stderr)
@@ -204,7 +233,7 @@ class ReleaseAsset(unittest.TestCase):
                 if scenario=='checkout': state['main_sha']='a'*40; env['GITHUB_SHA']='a'*40
                 if scenario=='unprotected': state['protected']=False
                 if scenario=='tag': state['tag']=self.sha
-                if scenario=='release': state['release']={'id':42,'draft':True}
+                if scenario=='release': state['release']={'id':42,'draft':True,'tag_name':'v2.1.5'}
                 if scenario in ('lookup','release_lookup'): state['fault']=scenario
                 self.api_state.write_text(json.dumps(state))
                 result=self.run_workflow(**env); self.assertNotEqual(result.returncode,0,scenario)
@@ -223,6 +252,29 @@ class ReleaseAsset(unittest.TestCase):
                 self.assertEqual(state['release'] is not None,fault in ('upload','download'))
                 if state['release']: self.assertTrue(state['release']['draft'])
                 self.assertFalse((f.root/'summary').exists(),'Partial draft must not be reported as prepared')
+                before={p.name:p.read_bytes() for p in f.api_assets.iterdir()}
+                self.assertNotEqual(f.run_workflow().returncode,0)
+                self.assertEqual(json.loads(f.api_state.read_text())['mutations'],state['mutations'])
+                self.assertEqual(before,{p.name:p.read_bytes() for p in f.api_assets.iterdir()})
+
+    def test_release_workflow_draft_lookup_failures_never_report_success(self):
+        faults=('draft_missing','draft_duplicate','draft_list_id','draft_list_api','draft_get_api',
+                'draft_wrong_id','draft_wrong_tag','draft_wrong_source','draft_missing_metadata',
+                'draft_not_draft','draft_prerelease','draft_assets','draft_json')
+        for fault in faults:
+            with self.subTest(fault=fault):
+                f=ReleaseAsset('runTest'); f.setUp(); self.addCleanup(f.doCleanups); f.workflow_fixture(fault)
+                result=f.run_workflow(); self.assertNotEqual(result.returncode,0)
+                state=json.loads(f.api_state.read_text())
+                self.assertTrue(state['release']['draft'])
+                self.assertEqual(state['mutations'],['tag','draft','upload:x-ui-latest.sh','upload:x-ui-latest.sh.sha256'])
+                # Fail at final lookup/metadata verification, after both downloads.
+                download=next(i for i,c in enumerate(state['calls']) if c[:2]==['release','download'])
+                final=state['calls'][download+1:]
+                self.assertTrue(any('/releases?per_page=100' in ' '.join(c) for c in final))
+                if fault not in ('draft_missing','draft_duplicate','draft_list_id','draft_list_api'):
+                    self.assertTrue(any(c[0]=='api' and c[1].endswith('/releases/42') for c in final))
+                self.assertFalse((f.root/'summary').exists())
                 before={p.name:p.read_bytes() for p in f.api_assets.iterdir()}
                 self.assertNotEqual(f.run_workflow().returncode,0)
                 self.assertEqual(json.loads(f.api_state.read_text())['mutations'],state['mutations'])

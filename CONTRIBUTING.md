@@ -4,7 +4,7 @@
 
 `main` is the maintained production line. Create `feat/*`, `fix/*`, `docs/*` or `chore/*` branches and open pull requests against `main`. Upstream is a reference source; do not automatically synchronize it.
 
-Create all new PRs as **Draft**. Codex does not mark them Ready without the owner's instruction. Ordinary CI runs in Draft; the owner initiates final acceptance with Draft → Ready. After any new commit, repeat that final cycle. Only the owner merges and publishes releases.
+Create all new PRs as **Draft**. Codex may mark its own PR **Ready for review** when implementation is complete, the final commit is pushed, necessary local checks pass, and no further changes are planned. Do not wait for long-running GitHub CI first: Ready starts the existing final-stage check. Waiting for Full Fresh in the working session is unnecessary; report the exact HEAD and actual **PASS**, **FAIL**, **IN PROGRESS** or **NOT RUN** states at handoff. If another commit is needed after launch, return to Draft during edits and repeat Ready for the new final HEAD. This permission does not authorize merge, actual tags/releases, Prepare Release dispatch, publication, Settings/Rulesets changes or VPS operations.
 
 Review product wording with the maintainer in Russian (`README.md`) first, then adapt all seven languages; Russian is the default GitHub landing page (`README.md`), and the full English adaptation is in `README_EN.md`. `README_RU.md` preserves older Russian links. Preserve exact commands, safety warnings and upstream attribution in every full translation. The maintainer has adopted `GPL-3.0-only` for original xPROMSx developments and changes. Follow the partial scope in `LICENSE` and `THIRD_PARTY_NOTICES.md`; do not claim permission to relicense inherited material.
 
@@ -23,8 +23,8 @@ procedure below. All five checks must pass for the current revision before merge
 
 The four ordinary checks retain their unique names and run for pushes to `main`,
 pull requests targeting `main`, and manual `workflow_dispatch`. Full Fresh runs
-only on `ready_for_review` for a PR targeting `main`. All workflows have read-only
-repository permissions and no repository-secret dependency.
+only on `ready_for_review` for a PR targeting `main`. These PR validation workflows
+have read-only repository permissions and no repository-secret dependency.
 
 Reproduce the full suites on a disposable Ubuntu 24.04 test environment:
 
@@ -238,7 +238,7 @@ Normal owner procedure after audit/merge — no local SHA selection, tag command
 
 `.github/workflows/prepare-release.yml` is manual-only, not a required PR check. It runs only for this repository's `main`, checks that the dispatched/checked-out SHA is still the current protected main commit, and rejects invalid versions and existing matching tags/releases before writing. GitHub lookup failures are failures, not evidence of absence. It uses the standard `GITHUB_TOKEN` with `contents: write` only for its preparation job; no PAT, extra secret, package installation or heavy acceptance is required. Owner approval, audit and full required acceptance precede dispatch; this lightweight job does not establish installer acceptance.
 
-Preparation creates the tag, invokes the existing builder, attaches both files to a new Draft Release, downloads them for byte/checksum verification, and checks the final tag/release source metadata. Concurrent preparations do not cancel a running preparation. Any error fails the job without publishing. A created tag or partial Draft may remain: a repeat deliberately refuses to overwrite it. Inspect/resolve those unpublished resources as the owner before trying again; never reuse or modify a published release/tag, including `personal-v*`. The local builder remains available for independent reproduction, not as a required manual release step.
+Preparation creates the tag, invokes the existing builder, attaches both files to a new Draft Release, downloads them for byte/checksum verification, and checks the final tag/release source metadata. It finds exactly one matching tag in the paginated release list and fetches the Draft by numeric Release ID; the tag lookup endpoint is not used for Draft verification. Concurrent preparations do not cancel a running preparation. Any error fails the job without publishing. A created tag or partial Draft may remain: a repeat deliberately refuses to overwrite it. Inspect/resolve those unpublished resources as the owner before trying again; never reuse or modify a published release/tag, including `personal-v*`. The local builder remains available for independent reproduction, not as a required manual release step.
 
 The workflow becomes dispatchable from `main` after merge. Do not run it, create tags/releases, or publish during PR development without explicit owner permission. Review the successful summary before publishing; a failed job is not a prepared release.
 
@@ -247,14 +247,8 @@ Publish the prepared Draft Release only with the owner's authorization, as a sta
 - GitHub's Latest API returns the intended stable tag and lists the installer asset with `download_count`.
 - `https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh` downloads the exact built bytes/SHA-256 and source ref.
 - `https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.1.5/x-ui-latest.sh` serves that specific version; historical assets have not changed.
-- The pinned jsDelivr and raw commands download matching Git-tree source, with `XUI_AUTO_REF` selecting the same stable tag. CDN is a fallback, not a mandatory dependency or a GitHub Downloads event. Never use CDN `@latest`: tag/alias caching can delay updates, and CDN serves the Git tree, not the generated release asset.
+- The single Raw GitHub fallback from `main` is available. It is development source and is not promised to match the published release.
 
-**One-time transition:** v2.1.4 has no installer release asset. Keep the working primary raw/main command in all seven READMEs in this PR. Only after v2.1.5 is published and the checks above pass may a separately authorized, minimal docs-only PR switch all seven primary commands to:
-
-```bash
-curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
-```
-
-In that follow-up, keep pinned CDN/raw alternatives inside localized `<details>` only and refresh their explicit tag consistently. Do not expose a broken Latest URL during the merge/publication gap, create a second PR without authorization, add a download badge, or generate artificial downloads. After this transition, new stable releases update Latest without changing the primary README command. A publication verification download is for integrity checking, not telemetry.
+All seven READMEs recommend only the permanent GitHub Releases Latest command openly. Its published installer pins the exact release source SHA. The only fallback is `raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh`, hidden inside localized `<details>` with a short warning that main may differ from the latest release. Do not add CDN, version-pinned fallbacks or additional install methods. Future releases update Latest without README command edits. Do not add a download badge, telemetry or artificial downloads; a publication verification download checks integrity.
 
 User-facing project releases may include a short companion-project footer linking to [Telegram Web Proxy Manager](https://github.com/xPROMSx/3x-ui-auto-nginx#telemt-web-manager); keep it secondary to the actual release changes.

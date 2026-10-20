@@ -42,18 +42,12 @@ curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x
 ```
 
 <details>
-<summary>تنزيل احتياطي (إذا تعذرت الطريقة الأساسية)</summary>
+<summary><strong>تنزيل احتياطي — إذا تعذّر الوصول إلى GitHub Releases</strong></summary>
 
-الإصدار المثبّت v2.1.5: يأتي المثبّت وملفاته المساعدة من الإصدار نفسه.
-
-```bash
-curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.5/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.5 bash x-ui-latest.sh
-```
-
-بديل طارئ عبر raw:
+تثبيت مباشرةً من فرع `main` الحالي. قد يختلف محتواه عن آخر إصدار منشور.
 
 ```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.5/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.5 bash x-ui-latest.sh
+curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
 </details>
