@@ -15,7 +15,7 @@
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 
-[📦 Sürümler](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [🐛 Sorun bildir](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 İletişim](https://t.me/promsdev)
+[📦 Sürümler](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ Destek](#support-development) · [🐛 Sorun bildir](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 İletişim](https://t.me/promsdev)
 
 </div>
 
@@ -40,6 +40,23 @@
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
+
+<details>
+<summary>Alternatif indirme (ana yöntem kullanılamıyorsa)</summary>
+
+Sabit sürüm v2.1.4: yükleyici ve yardımcı dosyaları aynı sürümden alınır.
+
+```bash
+curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+```
+
+Acil durum için raw alternatifi:
+
+```bash
+curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+```
+
+</details>
 
 <a id="installation-vs-update"></a>
 
@@ -322,9 +339,15 @@ xPROMSx tarafından geliştirilen özgün katkılar ve değişiklikler [GNU GPL-
 
 Windows 11'de **3x-ui** panelini **Chrome, Edge veya Brave** ile açtığınızda ülke bayrakları yerine iki harfli kodlar (`FI`, `DE`, `US`) görüyorsanız, küçük yan projemiz [**Flag Emojis Windows Installer**](https://github.com/xPROMSx/flag-emojis-windows-installer) size yardımcı olabilir. Bayrakların görüntülenmesini sağlar, Windows'un özgün yazı tipini korur ve yapılan değişiklikleri geri alma imkânı sunar.
 
+<a id="support-development"></a>
+
 ## ❤️ Geliştirmeyi destekleyin
 
-Bu proje işinize yarıyorsa [geliştirilmesine gönüllü olarak destek olabilirsiniz](docs/SUPPORT_TR.md). Bağış yapıp yapmamanızdan bağımsız olarak proje ve tüm özellikleri ücretsiz ve açık kaynaklı kalır.
+Bu projeyi yararlı buluyorsanız geliştirilmesine gönüllü olarak destek olabilirsiniz. Proje ve tüm özellikleri, bağışlardan bağımsız olarak ücretsiz ve açık kaynaklı kalır.
+
+- **🌍 Uluslararası:** [Tribute ile destekleyin (banka kartı)](https://web.tribute.tg/d/S0p)
+- **🇷🇺 Rusya:** [SBP / Mir ile destekleyin (banka uygulaması)](https://pay.cloudtips.ru/p/9f240c8b)
+- [Tüm destek yöntemleri](docs/SUPPORT_TR.md) — USDT, USDC ve Bitcoin dahil.
 
 <div align="center">
 

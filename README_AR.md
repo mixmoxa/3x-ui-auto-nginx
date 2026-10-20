@@ -15,7 +15,7 @@
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 
-[📦 الإصدارات](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [🐛 الإبلاغ عن مشكلة](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 التواصل](https://t.me/promsdev)
+[📦 الإصدارات](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ دعم المشروع](#support-development) · [🐛 الإبلاغ عن مشكلة](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 التواصل](https://t.me/promsdev)
 
 </div>
 
@@ -40,6 +40,23 @@
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
+
+<details>
+<summary>تنزيل احتياطي (إذا تعذرت الطريقة الأساسية)</summary>
+
+الإصدار المثبّت v2.1.4: يأتي المثبّت وملفاته المساعدة من الإصدار نفسه.
+
+```bash
+curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+```
+
+بديل طارئ عبر raw:
+
+```bash
+curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+```
+
+</details>
 
 <a id="installation-vs-update"></a>
 
@@ -322,9 +339,15 @@ x-ui-backup restore /root/<archive>.tar.gz
 
 إذا ظهرت رموز الدول (`FI` و`DE` و`US`) بدلًا من أعلامها عند فتح لوحة **3x-ui** في **Chrome أو Edge أو Brave** على Windows 11، يمكنك استخدام مشروعنا الصغير [**Flag Emojis Windows Installer**](https://github.com/xPROMSx/flag-emojis-windows-installer). يساعد على إظهار الأعلام، ويحافظ على خط Windows الأصلي، ويتيح التراجع عن التغييرات.
 
+<a id="support-development"></a>
+
 ## ❤️ دعم التطوير
 
-إذا كان المشروع مفيدًا لك، يمكنك [دعم تطويره طوعًا](docs/SUPPORT_AR.md). يبقى المشروع وجميع ميزاته مجانيًا ومفتوح المصدر سواء تبرعت أم لا.
+إذا كان هذا المشروع مفيدًا لك، يمكنك دعم استمرار تطويره طوعًا. يبقى المشروع وجميع ميزاته مجانيًا ومفتوح المصدر بغض النظر عن التبرعات.
+
+- **🌍 دوليًا:** [الدعم عبر Tribute (بطاقة مصرفية)](https://web.tribute.tg/d/S0p)
+- **🇷🇺 روسيا:** [الدعم عبر SBP / Mir (تطبيق البنك)](https://pay.cloudtips.ru/p/9f240c8b)
+- [جميع طرق الدعم](docs/SUPPORT_AR.md) — بما فيها USDT وUSDC وBitcoin.
 
 <div align="center">
 

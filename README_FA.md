@@ -15,7 +15,7 @@
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 
-[📦 نسخه‌های منتشرشده](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [🐛 گزارش مشکل](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 ارتباط با ما](https://t.me/promsdev)
+[📦 نسخه‌های منتشرشده](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ حمایت](#support-development) · [🐛 گزارش مشکل](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 ارتباط با ما](https://t.me/promsdev)
 
 </div>
 
@@ -40,6 +40,23 @@
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
+
+<details>
+<summary>دریافت جایگزین (اگر روش اصلی در دسترس نیست)</summary>
+
+نسخهٔ ثابت v2.1.4: نصب‌کننده و فایل‌های کمکی آن از یک انتشار دریافت می‌شوند.
+
+```bash
+curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+```
+
+روش اضطراری از طریق raw:
+
+```bash
+curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+```
+
+</details>
 
 <a id="installation-vs-update"></a>
 
@@ -322,9 +339,15 @@ SSH، تنظیمات سیستم‌عامل و فایروال پایه همچنا
 
 اگر هنگام باز کردن پنل **3x-ui** در **Chrome، Edge یا Brave** روی Windows 11 به‌جای پرچم کشورها کدهای دوحرفی (`FI`، `DE`، `US`) می‌بینید، می‌توانید از پروژه کوچک ما [**Flag Emojis Windows Installer**](https://github.com/xPROMSx/flag-emojis-windows-installer) استفاده کنید. این ابزار نمایش پرچم‌ها را درست می‌کند، فونت اصلی Windows را حفظ می‌کند و امکان بازگرداندن تغییرات را دارد.
 
+<a id="support-development"></a>
+
 ## ❤️ حمایت از توسعه
 
-اگر این پروژه برایتان مفید بوده، می‌توانید به‌صورت داوطلبانه [از توسعهٔ آن حمایت کنید](docs/SUPPORT_FA.md). پروژه و همهٔ قابلیت‌های آن، چه کمک مالی کنید و چه نکنید، رایگان و متن‌باز می‌مانند.
+اگر این پروژه برایتان مفید است، می‌توانید داوطلبانه از ادامهٔ توسعهٔ آن حمایت کنید. پروژه و همهٔ قابلیت‌هایش، مستقل از کمک‌های مالی، رایگان و متن‌باز می‌مانند.
+
+- **🌍 بین‌المللی:** [حمایت از طریق Tribute (کارت بانکی)](https://web.tribute.tg/d/S0p)
+- **🇷🇺 روسیه:** [حمایت از طریق SBP / Mir (برنامهٔ بانک)](https://pay.cloudtips.ru/p/9f240c8b)
+- [همهٔ روش‌های حمایت](docs/SUPPORT_FA.md) — شامل USDT، USDC و Bitcoin.
 
 <div align="center">
 

@@ -12,6 +12,7 @@ import unittest
 SUITES = {
     'systemd': ('test_security_systemd.SecuritySystemd',),
     'nonroot': (
+        'test_release_asset.ReleaseAsset',
         'test_installer_compatibility.InstallerCompatibility',
         'test_ci_scope.CIScope',
         'test_recovery_extract.RecoveryExtract',

@@ -12,6 +12,16 @@ The current verified baseline is 3x-ui v3.10.2 / bundled Xray 26.10.10. **Read `
 
 Project-owned assets use `GITHUB_RAW`, derived from validated `PROJECT_REF="${XUI_AUTO_REF:-main}"`: `main`, an exact 40-hex commit SHA, or a stable `vMAJOR.MINOR.PATCH` tag. The default raw base is `https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main`; all assets must follow the same selected tree. Do not introduce individual fallbacks to main. Official upstream archives use their own validated release contract; `-version` is explicit stable selection, not promotion. Never run downloaded executables before integrity/layout checks.
 
+## Installer release assets
+
+Development source retains the main default above. Published `x-ui-latest.sh` assets must instead default to the exact 40-hex release commit; use `tools/prepare_release.py` with an existing stable tag and matching SHA. It reads Git content, validates Bash/source initialization, and writes a separate reproducible asset plus SHA-256 sidecar without changing the working source. Explicit `XUI_AUTO_REF` remains supported; every project-owned helper follows that same selected tree. Never mix versions or add a hidden fallback to main.
+
+The owner alone authorizes tags/releases after independent audit, required acceptance and merge of the exact source commit to main. Follow the concrete procedure in CONTRIBUTING: verify tag/SHA, prepare the separate asset, verify its syntax/source pin/checksum and interactive input, attach **`x-ui-latest.sh`** and its checksum to a new **Draft Release**, verify the attached bytes, then publish stable Latest only with authorization. Before declaring success verify Latest tag/asset existence, downloaded bytes/source ref, API `download_count`, pinned CDN/raw fallback and unchanged historical assets. Do not rewrite, repack or redirect old releases/tags.
+
+The permanent primary URL is `https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh`; version-specific `releases/download/vX.Y.Z/...` must remain that version. jsDelivr serves Git-tree source, not the generated asset or a GitHub Downloads event: pin a stable tag and set `XUI_AUTO_REF` to it, avoiding cached `@latest`. CDN/raw alternatives belong only in localized `<details>`, with no telemetry or download badge.
+
+One-time transition: v2.1.4 has no installer asset, so this PR keeps the working raw/main primary command. After audit, merge and verified publication of v2.1.5, a separately authorized minimal docs-only PR switches all seven primary README commands to the permanent Latest URL; never expose an interim 404 or create that second PR/publish without permission. Future stable releases update Latest without README edits. Release notes describe user-visible project changes and compatibility, not CI, README edits or internal repository infrastructure.
+
 ## Production components and lifecycle
 
 - `x-ui-latest.sh`: destructive fresh install / full rebuild, not an in-place updater. **Never execute it on the development machine.** Existing deployment reinstall and uninstall require exact uppercase `YES`. Preserve foreign state and ownership checks.

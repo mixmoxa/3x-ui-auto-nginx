@@ -17,7 +17,7 @@
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 
-[📦 Релизы](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [🐛 Сообщить о проблеме](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 Обратная связь](https://t.me/promsdev)
+[📦 Релизы](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ Поддержать](#support-development) · [🐛 Сообщить о проблеме](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 Обратная связь](https://t.me/promsdev)
 
 </div>
 
@@ -48,6 +48,23 @@
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
+
+<details>
+<summary>Резервная загрузка (если основной способ недоступен)</summary>
+
+Зафиксированная версия v2.1.4: установщик и вспомогательные файлы берутся из одного релиза.
+
+```bash
+curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+```
+
+Аварийный вариант через raw:
+
+```bash
+curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+```
+
+</details>
 
 <a id="installation-vs-update"></a>
 
@@ -374,7 +391,11 @@ SSH, настройки ОС и базовый firewall остаются отв�
 
 ## ❤️ Поддержать разработку
 
-Если проект оказался полезен, вы можете добровольно [поддержать его разработку](docs/SUPPORT.md). Проект и все его функции остаются бесплатными и открытыми независимо от пожертвований.
+Если проект оказался полезен, вы можете добровольно поддержать его разработку и дальнейшее развитие. Проект и все его возможности остаются бесплатными и открытыми независимо от пожертвований.
+
+- **🇷🇺 Россия:** [Поддержать через СБП (QR, Мир, приложение банка)](https://pay.cloudtips.ru/p/9f240c8b)
+- **🌍 Другие страны:** [Поддержать через Tribute (банковская карта)](https://web.tribute.tg/d/S0p)
+- [Все способы поддержки](docs/SUPPORT.md) — включая USDT, USDC и Bitcoin.
 
 <div align="center">
 
