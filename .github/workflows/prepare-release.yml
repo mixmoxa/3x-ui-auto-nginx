@@ -1,0 +1,77 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'New stable project version, for example v2.1.5'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare draft release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_PROMPT_DISABLED: '1'
+    steps:
+      - name: Require main and a stable version
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" == refs/heads/main && "$GITHUB_REPOSITORY" == xPROMSx/3x-ui-auto-nginx ]] || {
+            echo '::error::Run this workflow on this repository main branch only.'; exit 1;
+          }
+          [[ "$RELEASE_VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo '::error::Expected a stable vMAJOR.MINOR.PATCH version.'; exit 1;
+          }
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare verified draft release
+        run: |
+          set -euo pipefail
+          branch=$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq '[.protected, .commit.sha] | @tsv')
+          [[ "$branch" == $'true\t'"$GITHUB_SHA" && "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || {
+            echo '::error::Checkout must match the current protected main SHA.'; exit 1;
+          }
+          tags=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$RELEASE_VERSION" --jq "map(select(.ref == \"refs/tags/$RELEASE_VERSION\")) | length")
+          releases=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == \"$RELEASE_VERSION\") | .id")
+          [[ "$tags" == 0 && -z "$releases" ]] || {
+            echo '::error::Tag or release already exists; inspect it manually. Nothing was overwritten.'; exit 1;
+          }
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$RELEASE_VERSION" -f "sha=$GITHUB_SHA"
+          git fetch --no-tags origin "refs/tags/$RELEASE_VERSION:refs/tags/$RELEASE_VERSION"
+          python3 tools/prepare_release.py "$RELEASE_VERSION" "$GITHUB_SHA" "$RUNNER_TEMP/release"
+          (cd "$RUNNER_TEMP/release" && sha256sum --check x-ui-latest.sh.sha256 && bash -n x-ui-latest.sh)
+          gh release create "$RELEASE_VERSION" "$RUNNER_TEMP/release/x-ui-latest.sh" "$RUNNER_TEMP/release/x-ui-latest.sh.sha256" \
+            --repo "$GITHUB_REPOSITORY" --draft --verify-tag --target "$GITHUB_SHA" --title "$RELEASE_VERSION" --notes ''
+          gh release download "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --pattern x-ui-latest.sh --pattern x-ui-latest.sh.sha256 --dir "$RUNNER_TEMP/release-download"
+          cmp "$RUNNER_TEMP/release/x-ui-latest.sh" "$RUNNER_TEMP/release-download/x-ui-latest.sh"
+          cmp "$RUNNER_TEMP/release/x-ui-latest.sh.sha256" "$RUNNER_TEMP/release-download/x-ui-latest.sh.sha256"
+          (cd "$RUNNER_TEMP/release-download" && sha256sum --check x-ui-latest.sh.sha256)
+          [[ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_VERSION" --jq '.object.sha')" == "$GITHUB_SHA" ]]
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_VERSION" > "$RUNNER_TEMP/draft-release.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          release = json.loads((Path(os.environ['RUNNER_TEMP'])/'draft-release.json').read_text())
+          assert release['draft'] is True and release['prerelease'] is False, 'Expected an unpublished stable draft'
+          assert release['tag_name'] == os.environ['RELEASE_VERSION'] and release['target_commitish'] == os.environ['GITHUB_SHA'], 'Release source mismatch'
+          assert sorted(a['name'] for a in release['assets']) == ['x-ui-latest.sh', 'x-ui-latest.sh.sha256'], 'Incomplete release assets'
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f"Prepared [{release['tag_name']}]({release['html_url']}) from `{os.environ['GITHUB_SHA']}`.\n\nBoth attached files were downloaded and verified. Add the owner-approved release notes, then Publish manually. Nothing was published by this workflow.\n")
+          PY

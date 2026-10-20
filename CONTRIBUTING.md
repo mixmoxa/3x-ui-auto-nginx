@@ -230,22 +230,17 @@ Only the owner publishes `vX.Y.Z` project releases, after independent audit, req
 
 The development `x-ui-latest.sh` keeps `PROJECT_REF="${XUI_AUTO_REF:-main}"`. Prepare the release asset from **committed content**, never by editing or copying the working-tree installer manually. `tools/prepare_release.py` checks an existing stable tag against an exact source commit, pins the asset's default to that 40-hex SHA, checks Bash/source initialization and writes a new output directory with `x-ui-latest.sh` and its SHA-256 sidecar. `XUI_AUTO_REF` remains an explicit override. All project-owned helpers follow the same selected tree; no fallback to main or mixed versions is permitted. An exact SHA is immutable even if a tag moves; dynamic Latest is only a download selector, never the source ref inside an asset.
 
-Owner procedure after audit/merge (example for v2.1.5; these are **not** standing permission for an agent to tag or publish):
+Normal owner procedure after audit/merge — no local SHA selection, tag commands, Python invocation or manual asset upload is needed:
 
-```bash
-git fetch origin main --tags
-release_commit=$(git rev-parse origin/main)
-# Confirm this exact commit has the required acceptance results before proceeding.
-git tag v2.1.5 "$release_commit"
-git push origin refs/tags/v2.1.5
-python3 tools/prepare_release.py v2.1.5 "$release_commit" /tmp/xui-v2.1.5
-(cd /tmp/xui-v2.1.5 && sha256sum --check x-ui-latest.sh.sha256)
-# Write concise user-facing release notes to /tmp/xui-release-notes.md first.
-gh release create v2.1.5 /tmp/xui-v2.1.5/x-ui-latest.sh /tmp/xui-v2.1.5/x-ui-latest.sh.sha256 \
-  --draft --verify-tag --title v2.1.5 --notes-file /tmp/xui-release-notes.md
-```
+1. Open **Actions → Prepare Release → Run workflow**, select **main**, and enter the new stable project version, for example `v2.1.5`.
+2. On success, open the **Draft Release** link in the job summary. The summary records the exact source SHA; the workflow has built and downloaded both attachments and verified their bytes, SHA-256, Bash syntax, tag and source-ref contract.
+3. Write/review the user-facing release notes in GitHub and click **Publish release** as stable Latest. The workflow leaves notes empty and never publishes automatically.
 
-Before publication, download the attached draft files as the owner into a second new directory, compare bytes/SHA-256 with the build, run `bash -n`, and confirm the default source SHA and explicit override without executing the installer. Check project-owned helper URLs at that SHA and test interactive stdin using only the source-initialization block, as in `tests/test_release_asset.py`. Never run a destructive install on the development host. Do not overwrite an already published tag or asset; preserve all historical releases, including `personal-v*`.
+`.github/workflows/prepare-release.yml` is manual-only, not a required PR check. It runs only for this repository's `main`, checks that the dispatched/checked-out SHA is still the current protected main commit, and rejects invalid versions and existing matching tags/releases before writing. GitHub lookup failures are failures, not evidence of absence. It uses the standard `GITHUB_TOKEN` with `contents: write` only for its preparation job; no PAT, extra secret, package installation or heavy acceptance is required. Owner approval, audit and full required acceptance precede dispatch; this lightweight job does not establish installer acceptance.
+
+Preparation creates the tag, invokes the existing builder, attaches both files to a new Draft Release, downloads them for byte/checksum verification, and checks the final tag/release source metadata. Concurrent preparations do not cancel a running preparation. Any error fails the job without publishing. A created tag or partial Draft may remain: a repeat deliberately refuses to overwrite it. Inspect/resolve those unpublished resources as the owner before trying again; never reuse or modify a published release/tag, including `personal-v*`. The local builder remains available for independent reproduction, not as a required manual release step.
+
+The workflow becomes dispatchable from `main` after merge. Do not run it, create tags/releases, or publish during PR development without explicit owner permission. Review the successful summary before publishing; a failed job is not a prepared release.
 
 Publish the prepared Draft Release only with the owner's authorization, as a stable Latest (not prerelease). The asset name is always **`x-ui-latest.sh`**. Verify all of the following before declaring the release available:
 
