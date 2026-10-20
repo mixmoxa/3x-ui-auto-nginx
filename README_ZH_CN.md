@@ -15,7 +15,7 @@
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 
-[📦 发布版本](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [🐛 报告问题](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 交流反馈](https://t.me/promsdev)
+[📦 发布版本](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ 支持开发](#support-development) · [🐛 报告问题](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 交流反馈](https://t.me/promsdev)
 
 </div>
 
@@ -40,6 +40,23 @@
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
+
+<details>
+<summary>备用下载（主要方式不可用时）</summary>
+
+固定版本 v2.1.4：安装脚本及其辅助文件来自同一版本。
+
+```bash
+curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+```
+
+紧急 raw 下载方式：
+
+```bash
+curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+```
+
+</details>
 
 <a id="installation-vs-update"></a>
 
@@ -322,9 +339,15 @@ xPROMSx 贡献者原创的开发内容和修改部分以 [GNU GPL-3.0-only](LICE
 
 如果在 Windows 11 上使用 **Chrome、Edge 或 Brave** 打开 **3x-ui** 面板时，国家旗帜显示为双字母代码（`FI`、`DE`、`US`），可以试试我们的小工具 [**Flag Emojis Windows Installer**](https://github.com/xPROMSx/flag-emojis-windows-installer)。它可以恢复国旗表情的正常显示，保留 Windows 原始字体，并支持卸载后恢复原有设置。
 
+<a id="support-development"></a>
+
 ## ❤️ 支持开发
 
-如果这个项目对你有帮助，欢迎自愿[支持项目开发](docs/SUPPORT_ZH_CN.md)。无论是否捐赠，项目及其所有功能始终免费且开源。
+如果这个项目对你有帮助，欢迎自愿支持后续开发。无论是否捐赠，项目及其所有功能始终免费且开源。
+
+- **🌍 国际:** [通过 Tribute 支持（银行卡）](https://web.tribute.tg/d/S0p)
+- **🇷🇺 俄罗斯:** [通过 SBP / Mir 支持（银行应用）](https://pay.cloudtips.ru/p/9f240c8b)
+- [所有支持方式](docs/SUPPORT_ZH_CN.md) — 包括 USDT、USDC 和 Bitcoin。
 
 <div align="center">
 

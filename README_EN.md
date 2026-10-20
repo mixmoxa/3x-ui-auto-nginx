@@ -15,7 +15,7 @@ Two domains, a clean VPS, and a few minutes to install.
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 
-[📦 Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [🐛 Report an issue](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 Feedback](https://t.me/promsdev)
+[📦 Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ Support](#support-development) · [🐛 Report an issue](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 Feedback](https://t.me/promsdev)
 
 </div>
 
@@ -40,6 +40,23 @@ Configure the DNS records for **two domains** to point to your VPS IP address: o
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
+
+<details>
+<summary>Fallback download (if the primary method is unavailable)</summary>
+
+Pinned version v2.1.4: the installer and its helper files come from the same release.
+
+```bash
+curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+```
+
+Emergency raw alternative:
+
+```bash
+curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+```
+
+</details>
 
 <a id="installation-vs-update"></a>
 
@@ -330,9 +347,15 @@ Original xPROMSx developments and changes are offered under [GNU GPL-3.0-only](L
 
 If you see two-letter country codes (`FI`, `DE`, `US`) instead of flags when opening the **3x-ui** panel in **Chrome, Edge, or Brave** on Windows 11, try our small companion project [**Flag Emojis Windows Installer**](https://github.com/xPROMSx/flag-emojis-windows-installer). It restores flag emoji display, preserves the original Windows font, and lets you roll back the change.
 
-## ❤️ Support development
+<a id="support-development"></a>
 
-If this project is useful to you, you can voluntarily [support its development](docs/SUPPORT.en.md). The project and all its features remain free and open source, whether or not you donate.
+## ❤️ Support Development
+
+If you find this project useful, you can voluntarily support its continued development. The project and all its features remain free and open source, regardless of donations.
+
+- **🌍 International:** [Support via Tribute (bank card)](https://web.tribute.tg/d/S0p)
+- **🇷🇺 Russia:** [Support via SBP / Mir (bank app)](https://pay.cloudtips.ru/p/9f240c8b)
+- [All donation methods](docs/SUPPORT.en.md) — including USDT, USDC, and Bitcoin.
 
 <div align="center">
 

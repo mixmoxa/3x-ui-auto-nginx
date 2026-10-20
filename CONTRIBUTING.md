@@ -226,6 +226,35 @@ The initial main checkpoint is `e02bd9e87768afb11b7cad18fc64d77ee637c3b3`, promo
 
 ## Releases
 
-Publish `vX.Y.Z` project releases from validated `main` with scope, test results and compatibility notes. Preserve historical `personal-v*` releases. Project versioning is separate from the upstream 3x-ui/Xray release versions. Pin the panel with `-version <tag>` when validating a deployment.
+Only the owner publishes `vX.Y.Z` project releases, after independent audit, required checks and merge to `main`, with explicit authorization. Project versions are separate from upstream 3x-ui/Xray versions; `-version <tag>` selects the panel, not this project's assets. Release notes describe user-visible project changes and compatibility limits, not CI, README edits or internal repository tooling. A short release is preferable to presenting internal maintenance as a new installer capability.
+
+The development `x-ui-latest.sh` keeps `PROJECT_REF="${XUI_AUTO_REF:-main}"`. Prepare the release asset from **committed content**, never by editing or copying the working-tree installer manually. `tools/prepare_release.py` checks an existing stable tag against an exact source commit, pins the asset's default to that 40-hex SHA, checks Bash/source initialization and writes a new output directory with `x-ui-latest.sh` and its SHA-256 sidecar. `XUI_AUTO_REF` remains an explicit override. All project-owned helpers follow the same selected tree; no fallback to main or mixed versions is permitted. An exact SHA is immutable even if a tag moves; dynamic Latest is only a download selector, never the source ref inside an asset.
+
+Normal owner procedure after audit/merge — no local SHA selection, tag commands, Python invocation or manual asset upload is needed:
+
+1. Open **Actions → Prepare Release → Run workflow**, select **main**, and enter the new stable project version, for example `v2.1.5`.
+2. On success, open the **Draft Release** link in the job summary. The summary records the exact source SHA; the workflow has built and downloaded both attachments and verified their bytes, SHA-256, Bash syntax, tag and source-ref contract.
+3. Write/review the user-facing release notes in GitHub and click **Publish release** as stable Latest. The workflow leaves notes empty and never publishes automatically.
+
+`.github/workflows/prepare-release.yml` is manual-only, not a required PR check. It runs only for this repository's `main`, checks that the dispatched/checked-out SHA is still the current protected main commit, and rejects invalid versions and existing matching tags/releases before writing. GitHub lookup failures are failures, not evidence of absence. It uses the standard `GITHUB_TOKEN` with `contents: write` only for its preparation job; no PAT, extra secret, package installation or heavy acceptance is required. Owner approval, audit and full required acceptance precede dispatch; this lightweight job does not establish installer acceptance.
+
+Preparation creates the tag, invokes the existing builder, attaches both files to a new Draft Release, downloads them for byte/checksum verification, and checks the final tag/release source metadata. Concurrent preparations do not cancel a running preparation. Any error fails the job without publishing. A created tag or partial Draft may remain: a repeat deliberately refuses to overwrite it. Inspect/resolve those unpublished resources as the owner before trying again; never reuse or modify a published release/tag, including `personal-v*`. The local builder remains available for independent reproduction, not as a required manual release step.
+
+The workflow becomes dispatchable from `main` after merge. Do not run it, create tags/releases, or publish during PR development without explicit owner permission. Review the successful summary before publishing; a failed job is not a prepared release.
+
+Publish the prepared Draft Release only with the owner's authorization, as a stable Latest (not prerelease). The asset name is always **`x-ui-latest.sh`**. Verify all of the following before declaring the release available:
+
+- GitHub's Latest API returns the intended stable tag and lists the installer asset with `download_count`.
+- `https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh` downloads the exact built bytes/SHA-256 and source ref.
+- `https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.1.5/x-ui-latest.sh` serves that specific version; historical assets have not changed.
+- The pinned jsDelivr and raw commands download matching Git-tree source, with `XUI_AUTO_REF` selecting the same stable tag. CDN is a fallback, not a mandatory dependency or a GitHub Downloads event. Never use CDN `@latest`: tag/alias caching can delay updates, and CDN serves the Git tree, not the generated release asset.
+
+**One-time transition:** v2.1.4 has no installer release asset. Keep the working primary raw/main command in all seven READMEs in this PR. Only after v2.1.5 is published and the checks above pass may a separately authorized, minimal docs-only PR switch all seven primary commands to:
+
+```bash
+curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
+```
+
+In that follow-up, keep pinned CDN/raw alternatives inside localized `<details>` only and refresh their explicit tag consistently. Do not expose a broken Latest URL during the merge/publication gap, create a second PR without authorization, add a download badge, or generate artificial downloads. After this transition, new stable releases update Latest without changing the primary README command. A publication verification download is for integrity checking, not telemetry.
 
 User-facing project releases may include a short companion-project footer linking to [Telegram Web Proxy Manager](https://github.com/xPROMSx/3x-ui-auto-nginx#telemt-web-manager); keep it secondary to the actual release changes.
