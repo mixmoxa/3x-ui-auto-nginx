@@ -881,6 +881,7 @@ EOF
     [[ $? -eq 0 ]] || return 1
 
     # Main domain vhost (TLS termination at 7443, proxy_protocol)
+    install -o root -g root -m 0600 /dev/null "/etc/nginx/sites-available/${domain}" || return 1
     cat > "/etc/nginx/sites-available/${domain}" <<EOF
 # Rate limiting zones (http context)
 limit_req_zone  \$binary_remote_addr zone=diag_api:10m  rate=6r/m;
@@ -1618,12 +1619,6 @@ VALUES
     ((SELECT id FROM inbounds WHERE tag='inbound-443-udp'),        ${gid_hysteria} 0, 'hysteria2', '${domain}', 443, 'same', '', '[]');
 EOF
     [[ $? -eq 0 ]] || return 1
-
-    /usr/local/x-ui/x-ui setting \
-        -username  "${config_username}" \
-        -password  "${config_password}" \
-        -port      "${panel_port}"      \
-        -webBasePath "${panel_path}" || return 1
 
     # v3.9.0 updateCert sets BOTH web and subscription TLS settings before first start.
     /usr/local/x-ui/x-ui cert \

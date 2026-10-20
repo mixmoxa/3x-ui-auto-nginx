@@ -323,6 +323,7 @@ class RealIntegration(unittest.TestCase):
             self.assertEqual(user[0], 'integration')
             self.assertNotEqual(user[1], self.auth)
             self.assertTrue(user[1].startswith(('$2a$','$2b$','$2y$')), 'Expected persisted bcrypt credentials')
+            bootstrap_user = db.execute('SELECT * FROM users ORDER BY id LIMIT 1').fetchone()
             sql = render('sqlite3 $XUIDB',private_key=self.private,public_key=self.public_key)
             for placeholder, short_id in zip('abcdefgh', self.short_ids):
                 sql = sql.replace('\"'+placeholder+'\"', '\"'+short_id+'\"')
@@ -356,8 +357,8 @@ class RealIntegration(unittest.TestCase):
                 db.execute('UPDATE inbounds SET listen=?,port=?,stream_settings=?,enable=1 WHERE id=?',
                            (listen,number,json.dumps(stream),iid))
             updates = {'webListen':'127.0.0.1','subListen':'127.0.0.1','subPort':str(self.backends['sub']),
-                       'webCertFile':str(self.cert),'webKeyFile':str(self.key),
-                       'subCertFile':str(self.cert),'subKeyFile':str(self.key),
+                       'webCertFile':'','webKeyFile':'',
+                       'subCertFile':'','subKeyFile':'',
                        'xrayTemplateConfig':json.dumps({'log':{'loglevel':'warning'},'inbounds':[],
                             'outbounds':[{'protocol':'freedom','tag':'direct','settings':{'finalRules':[
                                 # Xray defaults block private targets. Only this test origin is allowed.
@@ -365,6 +366,25 @@ class RealIntegration(unittest.TestCase):
             for key,value in updates.items():
                 db.execute('DELETE FROM settings WHERE key=?',(key,))
                 db.execute('INSERT INTO settings(key,value) VALUES(?,?)',(key,value))
+        # Execute the installer's real post-SQL CLI tail: no second credential
+        # update is needed, and the official cert command must set both pairs.
+        from test_installer_compatibility import complete_function
+        finalize = complete_function('configure_xui_db').split('\nEOF\n',1)[1]
+        finalize = finalize.replace('/usr/local/x-ui/x-ui',shlex.quote(str(self.xui)))
+        finalize = finalize.replace('"/root/cert/${domain}/fullchain.pem"',shlex.quote(str(self.cert)))
+        finalize = finalize.replace('"/root/cert/${domain}/privkey.pem"',shlex.quote(str(self.key)))
+        result = subprocess.run(['bash','-u','-c','finalize() {\n'+finalize+'\nfinalize'],
+            env=env,capture_output=True,timeout=30)
+        self.assertEqual(result.returncode,0,'Official post-SQL panel configuration failed')
+        self.assertTrue(self.auth.encode() not in result.stdout+result.stderr,'Credential appeared in CLI output')
+        with sqlite3.connect(dbdir/'x-ui.db') as db:
+            self.assertTrue(bootstrap_user==db.execute('SELECT * FROM users ORDER BY id LIMIT 1').fetchone(),
+                            'Post-SQL configuration unnecessarily rewrote credentials/login_epoch')
+            values=dict(db.execute("SELECT key,value FROM settings"))
+            for key,value in {'webPort':str(self.backends['panel']),'webBasePath':'/panel/',
+                'webListen':'127.0.0.1','subListen':'127.0.0.1','webCertFile':str(self.cert),
+                'webKeyFile':str(self.key),'subCertFile':str(self.cert),'subKeyFile':str(self.key)}.items():
+                self.assertEqual(values[key],value)
         process = self.launch([self.xui],'subscription-server',env=env)
         self.ready(process,('127.0.0.1',self.backends['sub']))
         def get(path):
@@ -490,6 +510,50 @@ http {{ access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {mai
         self.passed.append(name+' positive/negative')
 
     def test_reality(self): self.transport('reality')
+
+    def test_single_bootstrap_real_login_and_logout(self):
+        from test_integrated_features import helper
+        panel=helper('amneziawg')
+        self.nginx_config()
+        env={**os.environ,'XUI_DB_FOLDER':str(self.root/'db'),
+             'XUI_BIN_FOLDER':str(self.root/'bin'),'XUI_LOG_FOLDER':str(self.root/'logs')}
+        server=self.launch([self.xui],'bootstrap-panel',env)
+        self.ready(server,('127.0.0.1',self.backends['panel']))
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            options=['--cacert',str(self.cert),'--resolve',f'deploy.example:{self.public}:127.0.0.1']
+            base=f'https://deploy.example:{self.public}/panel/'
+            with self.assertRaises(ValueError):
+                panel.Panel(base,'integration',self.auth+'-wrong',directory,options)
+            api=panel.Panel(base,'integration',self.auth,directory,options)
+            api.request('panel/api/inbounds/list')
+            cookie=api.cookie.read_text()
+            self.assertTrue(any('\t/panel/\tTRUE\t' in line and '\t3x-ui\t' in line
+                                for line in cookie.splitlines()),'Expected HTTPS panel-scoped session')
+            def status(path, cookies=False):
+                return subprocess.check_output(['curl','-q','-sS','--noproxy','*',*options,
+                    '--cookie',str(api.cookie) if cookies else '', '--cookie-jar',str(api.cookie) if cookies else '/dev/null',
+                    '--max-time','10','-o','/dev/null','-w','%{http_code}',
+                    f'https://deploy.example:{self.public}'+path],timeout=15)
+            self.assertEqual(status('/diagnostics/api/st/ping'),b'404')
+            self.assertEqual(status('/panel/diag',True),b'302')
+            self.assertTrue('\tdiag_key\t' in api.cookie.read_text(),'Panel SSO did not issue diagnostics cookie')
+            self.assertEqual(status('/diagnostics/api/st/ping',True),b'200')
+            api.request('logout',{})
+            with self.assertRaises(ValueError): api.request('panel/api/inbounds/list')
+        # Actual Linux listeners, not merely persisted webListen text.
+        table=subprocess.check_output(['ss','-H','-ltnp'],text=True,timeout=5)
+        listeners=[line.split()[3] for line in table.splitlines() if f'pid={server.pid},' in line]
+        self.assertIn(f'127.0.0.1:{self.backends["panel"]}',listeners)
+        self.assertTrue(all(address.startswith('127.0.0.1:') for address in listeners))
+        # Upstream setting can exit 0 after rejecting an empty password. A fresh
+        # bootstrap must still fail rather than accepting the default account.
+        broken=self.root/'invalid-bootstrap'; broken.mkdir()
+        initial=installer_function('_panel_initial_config').replace('/usr/local/x-ui/x-ui',shlex.quote(str(self.xui)))
+        result=subprocess.run(['bash','-u','-c','msg_err() { echo "$*" >&2; };\n'+initial+'\n_panel_initial_config'],
+            env={**env,'XUI_DB_FOLDER':str(broken),'XUIDB':str(broken/'x-ui.db'),
+                 'config_username':'integration','config_password':'','panel_port':str(self.backends['panel']),
+                 'panel_path':'panel'},capture_output=True,timeout=30)
+        self.assertNotEqual(result.returncode,0,'Rejected bootstrap must not report success')
 
     def test_vision_deploy_hook_waits_for_delayed_xray(self):
         from certificate_fixtures import certificates, function, relocate

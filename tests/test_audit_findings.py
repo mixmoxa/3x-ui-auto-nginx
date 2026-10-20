@@ -153,8 +153,8 @@ if sys.argv[1]=='cert':
             db.execute('UPDATE settings SET value=? WHERE key=?',(values[flag],key))
 ''')
             binary.chmod(0o755)
-            tail = function('configure_xui_db').split('    /usr/local/x-ui/x-ui setting',1)[1]
-            script = 'finalize() {\n    /usr/local/x-ui/x-ui setting' + tail + '\nfinalize\n'
+            tail = function('configure_xui_db').split('    /usr/local/x-ui/x-ui cert',1)[1]
+            script = 'finalize() {\n    /usr/local/x-ui/x-ui cert' + tail + '\nfinalize\n'
             result = subprocess.run(['bash','-eu','-c',script.replace('/usr/local/x-ui/x-ui',str(binary))],
                                     capture_output=True,text=True,env={**os.environ,'XUIDB':str(dbpath),
                                     'domain':'example.com','config_username':'fixture-user','config_password':'fixture-password',
@@ -387,6 +387,69 @@ if sys.argv[1]=='cert':
             errors = (root/'error.log').read_text().lower()
             for error in ('wrong version number','ssl_do_handshake() failed','unsupported http version'):
                 self.assertNotIn(error,errors)
+
+
+class DiagnosticsFiles(unittest.TestCase):
+    def test_secret_vhost_private_at_first_write_and_rewrite_with_real_nginx(self):
+        from test_personal_xhttp import FIXTURE
+        self.assertEqual(os.geteuid(),0,'File ownership regression requires root')
+        nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
+        self.assertTrue(nginx,'Real nginx is required')
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); root.chmod(0o755)
+            target=root/'etc/nginx/sites-available/deploy.example'
+            target.parent.mkdir(parents=True)
+            writer=INSTALLER.split('    # Main domain vhost (TLS termination at 7443, proxy_protocol)\n',1)[1].split('\nEOF\n',1)[0]+'\nEOF\n'
+            script='persist() {\n'+relocate(writer,root)+'\n}\npersist\n'
+            observer='cat() { stat -c "%u:%g:%a" "$TARGET" >> "$OBSERVATIONS"; command cat "$@"; };\n'
+            for existing in (False,True):
+                with self.subTest(existing=existing):
+                    if existing:
+                        target.write_text('old configuration'); target.chmod(0o644)
+                        os.chown(target,65534,65534)
+                    observation=root/'observations'; observation.write_text('')
+                    result=subprocess.run(['bash','-c','umask 022;\n'+observer+script],
+                        env={**os.environ,**FIXTURE,'TARGET':str(target),'OBSERVATIONS':str(observation)},
+                        capture_output=True,text=True,timeout=10)
+                    self.assertEqual(result.returncode,0,'Private vhost creation failed')
+                    self.assertEqual(observation.read_text().strip(),'0:0:600','Vhost was exposed when writing began')
+                    status=target.stat()
+                    self.assertEqual((status.st_uid,status.st_gid,status.st_mode & 0o777),(0,0,0o600))
+                    denied=subprocess.run(['runuser','-u','nobody','--','cat',str(target)],capture_output=True,timeout=5)
+                    self.assertNotEqual(denied.returncode,0)
+                    self.assertEqual(denied.stdout,b'')
+            subprocess.run(['openssl','req','-x509','-newkey','ec','-pkeyopt','ec_paramgen_curve:prime256v1',
+                '-nodes','-days','1','-subj','/CN=deploy.example','-addext','subjectAltName=DNS:deploy.example',
+                '-out',root/'cert.pem','-keyout',root/'key.pem'],check=True,capture_output=True,timeout=15)
+            with socket.socket() as sock:
+                sock.bind(('127.0.0.1',0)); port=sock.getsockname()[1]
+            text=target.read_text().replace('127.0.0.1:7443 ssl http2 proxy_protocol',f'127.0.0.1:{port} ssl http2')
+            text=re.sub(r'ssl_certificate\s+[^;]+;',f'ssl_certificate {root}/cert.pem;',text)
+            text=re.sub(r'ssl_certificate_key\s+[^;]+;',f'ssl_certificate_key {root}/key.pem;',text)
+            text=re.sub(r'    include [^;]+;','',text)
+            target.write_text(text)
+            config=root/'nginx.conf'
+            config.write_text(f'pid {root}/nginx.pid; error_log {root}/error.log; events {{}} http {{ access_log off; include {target}; }}')
+            args=[nginx,'-p',str(root)+'/', '-c',str(config)]
+            subprocess.run([*args,'-t'],check=True,capture_output=True,timeout=10)
+            # Root master loads the private vhost for start, reload and restart.
+            for restart in (False,True):
+                process=subprocess.Popen([*args,'-g','daemon off;'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                try:
+                    for reload in (False,True):
+                        if reload: subprocess.run([*args,'-s','reload'],check=True,capture_output=True,timeout=10)
+                        deadline=time.monotonic()+5
+                        while True:
+                            try:
+                                with socket.create_connection(('127.0.0.1',port),timeout=.2): break
+                            except OSError:
+                                if time.monotonic()>deadline: self.fail('Private-vhost nginx readiness timeout')
+                                time.sleep(.02)
+                        code=subprocess.check_output(['curl','-q','-sS','--noproxy','*','--cacert',str(root/'cert.pem'),
+                            '--resolve',f'deploy.example:{port}:127.0.0.1','--max-time','5','-o','/dev/null','-w','%{http_code}',
+                            '--cookie','diag_key='+FIXTURE['diag_token'],f'https://deploy.example:{port}/diagnostics/api/st/ping'],timeout=8)
+                        self.assertEqual(code,b'200')
+                finally:process.terminate(); process.wait(timeout=5)
 
 
 class AuditRecovery(unittest.TestCase):
