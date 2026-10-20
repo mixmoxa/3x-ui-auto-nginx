@@ -64,11 +64,16 @@ jobs:
           cmp "$RUNNER_TEMP/release/x-ui-latest.sh.sha256" "$RUNNER_TEMP/release-download/x-ui-latest.sh.sha256"
           (cd "$RUNNER_TEMP/release-download" && sha256sum --check x-ui-latest.sh.sha256)
           [[ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_VERSION" --jq '.object.sha')" == "$GITHUB_SHA" ]]
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_VERSION" > "$RUNNER_TEMP/draft-release.json"
-          python3 - <<'PY'
-          import json, os
+          release_id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == \"$RELEASE_VERSION\") | .id")
+          [[ "$release_id" =~ ^[1-9][0-9]*$ ]] || {
+            echo '::error::Expected exactly one matching release with a numeric ID in the paginated release list.'; exit 1;
+          }
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > "$RUNNER_TEMP/draft-release.json"
+          python3 - "$release_id" <<'PY'
+          import json, os, sys
           from pathlib import Path
           release = json.loads((Path(os.environ['RUNNER_TEMP'])/'draft-release.json').read_text())
+          assert release['id'] == int(sys.argv[1]), 'Release ID mismatch'
           assert release['draft'] is True and release['prerelease'] is False, 'Expected an unpublished stable draft'
           assert release['tag_name'] == os.environ['RELEASE_VERSION'] and release['target_commitish'] == os.environ['GITHUB_SHA'], 'Release source mismatch'
           assert sorted(a['name'] for a in release['assets']) == ['x-ui-latest.sh', 'x-ui-latest.sh.sha256'], 'Incomplete release assets'
