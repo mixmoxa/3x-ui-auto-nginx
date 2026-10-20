@@ -1,5 +1,6 @@
 ARG DISTRO=ubuntu:24.04
 FROM ${DISTRO}
+ARG DISTRO
 ARG MINIMAL_DNS=0
 ENV DEBIAN_FRONTEND=noninteractive
 RUN --mount=type=secret,id=proxy_ca,target=/run/proxy-ca.pem \
@@ -26,7 +27,12 @@ RUN --mount=type=secret,id=proxy_ca,target=/run/proxy-ca.pem \
         if test "$package:$version" = xui-ci-upgrade:2; then printf '#!/bin/sh\nset -e\ntouch /run/reboot-required\n' > /tmp/ci-package/DEBIAN/postinst; chmod 755 /tmp/ci-package/DEBIAN/postinst; fi; \
         dpkg-deb --build /tmp/ci-package "$package-$version.deb" && rm -rf /tmp/ci-package || exit 1; \
       done && dpkg-scanpackages --multiversion . > Packages && \
-      dpkg -r systemd-resolved && rm -f /etc/apt/apt.conf.d/99test-proxy; \
+      dpkg -r systemd-resolved && \
+      if test "$DISTRO" = ubuntu:26.04; then \
+        apt-get -y --download-only install curl wget jq bash sudo nginx-full certbot sqlite3 ufw netcat-openbsd mtr-tiny python3 python3-configobj python3-cryptography libcap2-bin openssl procps iproute2 tar gzip tzdata ca-certificates && \
+        mkdir -p /opt/xui-ci/nginx && cp /var/cache/apt/archives/*.deb /opt/xui-ci/nginx/ && \
+        cd /opt/xui-ci/nginx && apt-get download nginx nginx-common libnginx-mod-stream && dpkg-scanpackages . > Packages; \
+      fi && rm -f /etc/apt/apt.conf.d/99test-proxy; \
     fi
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]

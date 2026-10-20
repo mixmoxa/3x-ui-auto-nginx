@@ -20,6 +20,42 @@ import unittest
 from urllib.parse import parse_qs, urlsplit
 
 
+def nginx_first_install_ipv4():
+    """Actual APT postinst + first systemd start, only in the disposable VM."""
+    from test_installer_compatibility import complete_function
+    assert 'ipv6.disable=1' in Path('/proc/cmdline').read_text().split()
+    assert Path('/proc/1/comm').read_text().strip()=='systemd'
+    cache=Path('/opt/xui-ci/nginx')
+    assert (cache/'Packages').is_file(),'Official nginx APT cache missing'
+    assert not Path('/usr/sbin/policy-rc.d').exists(),'APT service activation must be real'
+    with tempfile.TemporaryDirectory(prefix='nginx-first-') as directory:
+        root=Path(directory);sources=root/'sources.list';config=root/'apt.conf'
+        sources.write_text(f'deb [trusted=yes] file:{cache} ./\n')
+        config.write_text(f'Dir::Etc::sourcelist "{sources}";\nDir::Etc::sourceparts "-";\n')
+        env={**os.environ,'APT_CONFIG':str(config),'INSTALL':'y',
+             'domain':'panel.example','reality_domain':'cover.example'}
+        subprocess.run(['apt-get','-y','purge','nginx','nginx-common'],env=env,check=True,timeout=90)
+        assert not Path('/usr/sbin/nginx').exists(),'nginx must initially be absent'
+        assert not list(Path('/etc/nginx/sites-enabled').glob('*')),'Old nginx sites remain'
+        script='\n'.join(complete_function(name) for name in
+            ('apt_system','install_packages','ipv6_available','prepare_acme_webroot','setup_acme_http'))
+        subprocess.run(['bash','-eu','-c','msg_err() { echo "$*" >&2; };\n'+script+
+            '\ninstall_packages && setup_acme_http'],env=env,check=True,timeout=150)
+        subprocess.run(['dpkg-query','-W','nginx','nginx-common','nginx-full'],check=True,timeout=10)
+        subprocess.run(['nginx','-t'],check=True,timeout=10)
+        subprocess.run(['systemctl','is-active','--quiet','nginx'],check=True,timeout=10)
+        token=Path('/var/www/acme/.well-known/acme-challenge/nginx-first-install')
+        token.write_bytes(os.urandom(32))
+        import http.client
+        connection=http.client.HTTPConnection('127.0.0.1',80,timeout=5)
+        try:
+            connection.request('GET','/.well-known/acme-challenge/'+token.name,headers={'Host':'panel.example'})
+            response=connection.getresponse()
+            assert response.status==200 and response.read()==token.read_bytes()
+        finally:connection.close();token.unlink()
+    print('REAL first APT nginx install / AF_INET6 disabled / IPv4 HTTP-01: PASS',flush=True)
+
+
 def nightly_after_cold_boot():
     """Second real kernel/systemd boot; invoked by the existing QEMU harness."""
     run=lambda *a: subprocess.check_output(a,text=True,stderr=subprocess.STDOUT,timeout=90)
@@ -38,6 +74,16 @@ def nightly_after_cold_boot():
     for service,when in (('apt-daily.timer','02:30:00'),('apt-daily-upgrade.timer','02:50:00')):
         run('systemctl','is-active','--quiet',service); run('systemctl','is-enabled','--quiet',service)
         assert when in run('systemctl','show',service,'-p','TimersCalendar')
+    if 'ipv6.disable=1' in Path('/proc/cmdline').read_text().split():
+        try:socket.socket(socket.AF_INET6,socket.SOCK_STREAM)
+        except OSError as error:
+            import errno
+            assert error.errno==errno.EAFNOSUPPORT
+        else:raise AssertionError('AF_INET6 unexpectedly available')
+        nginx_first_install_ipv4()
+        from test_installer_compatibility import nginx_ipv4_acme
+        nginx_ipv4_acme()
+        print('REAL disabled AF_INET6: production IPv4 main/Vision nginx + HTTP-01 challenge: PASS',flush=True)
     print('REAL second boot: effective APT origins / reboot policy / enabled active local-time timers: PASS',flush=True)
 
 

@@ -33,7 +33,7 @@ class IntegratedFeatures(unittest.TestCase):
                 for path in ('etc/nginx/sites-available','etc/nginx/sites-enabled','etc/letsencrypt/renewal-hooks/deploy','etc/letsencrypt/live/vision.example'):
                     (root/path).mkdir(parents=True)
                 stubs='''nginx() { :; }; systemctl() { :; }; chown() { :; }; check_webroot_lineage() { :; };
-country_flag() { echo SECOND_GEOLOCATION >&2; return 1; }; make_port() { echo $((RANDOM+10000)); };
+country_flag() { echo SECOND_GEOLOCATION >&2; return 1; }; make_port() { for destination in "$@"; do printf -v "$destination" %s "$((RANDOM+10000))"; done; };
 render_vision_hook() { echo '#!/bin/bash'; }; msg_warn() { echo "$*" >&2; };
 python3() { if [[ "$*" == *--render-acme* ]]; then echo '# ACME fixture'; else printf '%s' "${!#}" > "$FLAG_FILE"; echo '{"status":"configured"}'; fi; };
 '''
@@ -394,7 +394,7 @@ sysctl() {
 
     def test_preparation_errors_preserve_deployment_and_initial_reboot_is_manual(self):
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
-               'select_adguard','select_client','preflight_base_os','preflight_panel_release','preflight_amneziawg',
+               'select_adguard','select_client','preflight_base_os','preflight_panel_release','make_port','preflight_amneziawg',
                'preflight_integrated_features','setup_swap','prepare_base_os','prepare_system_dns')
         base='\n'.join(n+'() { echo '+n+'; };' for n in names)
         base+='\nmsg_err() { echo "$*" >&2; }; msg_warn() { :; }; cleanup_adguard() { echo CLEANUP; exit 19; };\n'
@@ -448,7 +448,7 @@ sysctl() {
                 prefix, cli=source.split("if __name__ == '__main__':",1)
                 (root/'helper.py').write_text(prefix.replace("root=Path('/')", 'root=Path('+repr(str(root))+')')+override+"if __name__ == '__main__':"+cli)
                 names=('confirm_destructive_reinstall','validate_domains','select_vision','select_amneziawg','select_adguard','select_client',
-                       'preflight_panel_release','preflight_amneziawg','preflight_vision_artifacts','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot')
+                       'preflight_panel_release','make_port','preflight_amneziawg','preflight_vision_artifacts','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot')
                 stubs='\n'.join(name+'() { :; }' for name in names)
                 stubs+='\nselect_security() { INSTALL_SECURITY='+('n' if case=='declined' else 'y')+'; }; msg_err() { echo "$*" >&2; }; msg_warn() { :; };\n'
                 stubs+='curl() { cp "$FIXTURE_HELPER" "${@: -1}"; }; cleanup_adguard() { echo CLEANUP; exit 19; }; clean_previous_install() { echo DESTRUCTION; };\n'
@@ -502,7 +502,7 @@ sysctl() {
 
     def test_main_stops_after_mandatory_setup_failure(self):
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
-               'select_adguard','select_client','preflight_base_os','preflight_panel_release','preflight_amneziawg',
+               'select_adguard','select_client','preflight_base_os','preflight_panel_release','make_port','preflight_amneziawg',
                'preflight_integrated_features','setup_swap','prepare_base_os','prepare_system_dns','cleanup_adguard','clean_previous_install',
                'install_packages','setup_firewall','get_server_ip','setup_acme_http','get_ssl_certs','install_panel',
                'configure_nginx','configure_xui_db','install_clash_sub','install_fake_site','install_diagnostics','tune_system',
@@ -611,7 +611,7 @@ sysctl() {
 
     def test_concise_installer_question_sequence(self):
         names=('validate_domains','select_security','select_vision','select_amneziawg','select_adguard','select_client')
-        script='domain=; reality_domain=; msg_err() { echo "$*" >&2; }; msg_inf() { echo "$*"; };\n'
+        script='domain=; reality_domain=; msg_err() { echo "$*" >&2; }; msg_inf() { echo "$*"; };\n'+function('valid_hostname')+'\n'
         script+='\n'.join(function(name) for name in names)+'\n'+'; '.join(names)
         result=subprocess.run(['bash','-eu','-c',script],input='panel.example.com\nreality.example.com\ny\ny\nvision.example.com\nn\nn\ny\n',text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr)
@@ -673,7 +673,7 @@ sysctl() {
 
     def test_optional_dns_failure_continues_core_only_after_verified_rollback(self):
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
-               'select_adguard','select_client','preflight_base_os','preflight_panel_release','preflight_amneziawg',
+               'select_adguard','select_client','preflight_base_os','preflight_panel_release','make_port','preflight_amneziawg',
                'preflight_integrated_features','setup_swap','prepare_base_os','verify_base_os','cleanup_adguard','clean_previous_install',
                'install_packages','setup_firewall','get_server_ip','setup_acme_http','get_ssl_certs','install_panel',
                'configure_nginx','configure_xui_db','install_clash_sub','install_fake_site','install_diagnostics','tune_system',
@@ -863,7 +863,7 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
                 (root/path).mkdir(parents=True)
             source = (ROOT/'x-ui-latest.sh').read_text()
             script = relocated('install_vision() {'+source.split('install_vision() {',1)[1].split('\ninstall_security()',1)[0],root)
-            stubs = 'python3() { echo \'# render fixture\'; }; ln() { return 1; }; nginx() { :; }; systemctl() { :; }; check_installation() { :; }; msg_warn() { :; }; make_port() { echo $((RANDOM+10000)); };\n'
+            stubs = 'python3() { echo \'# render fixture\'; }; ln() { return 1; }; nginx() { :; }; systemctl() { :; }; check_installation() { :; }; msg_warn() { :; }; make_port() { for destination in "$@"; do printf -v "$destination" %s "$((RANDOM+10000))"; done; };\n'
             result = subprocess.run(['bash','-eu','-c',stubs+script+'\nPANEL_STAGE=/stage; vision_domain=vision.example; install_vision || :; echo "$VISION_RESULT"'],capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertEqual(result.stdout.strip(),'failed_rolled_back')
@@ -877,7 +877,7 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
                 (root/path).mkdir(parents=True)
             source=(ROOT/'x-ui-latest.sh').read_text()
             script=relocated('install_vision() {'+source.split('install_vision() {',1)[1].split('\ninstall_security()',1)[0],root)
-            stubs='nginx() { :; }; systemctl() { :; }; check_installation() { :; }; check_webroot_lineage() { :; }; msg_warn() { :; }; make_port() { echo $((RANDOM+10000)); }; render_vision_hook() { echo "#!/bin/bash"; }; chown() { :; }; certbot() { echo CERTIFICATE_DELETED; }; python3() { if [[ \"$*\" == *--render-acme* ]]; then echo \'# render fixture\'; return 0; fi; echo \'{"status":"failed_unverified"}\'; return 1; };\n'
+            stubs='nginx() { :; }; systemctl() { :; }; check_installation() { :; }; check_webroot_lineage() { :; }; msg_warn() { :; }; make_port() { for destination in "$@"; do printf -v "$destination" %s "$((RANDOM+10000))"; done; }; render_vision_hook() { echo "#!/bin/bash"; }; chown() { :; }; certbot() { echo CERTIFICATE_DELETED; }; python3() { if [[ \"$*\" == *--render-acme* ]]; then echo \'# render fixture\'; return 0; fi; echo \'{"status":"failed_unverified"}\'; return 1; };\n'
             result=subprocess.run(['bash','-eu','-c',stubs+script+'\nVISION_OWNED_LINEAGE=vision.example; vision_domain=vision.example; domain=panel.example; panel_path=test; config_username=test; config_password=test; PANEL_STAGE=/stage; AWG_HELPER=/helper; install_vision || :; echo "$VISION_RESULT"'],capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertTrue((root/'etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision').exists())
@@ -984,7 +984,7 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
             cert=root/'etc/letsencrypt/live/vision.example/fullchain.pem'; cert.write_text('foreign certificate')
             hook=root/'etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision'; hook.write_text('foreign hook')
             script=relocated(function('install_vision'),root)
-            stubs='make_port() { echo $((RANDOM+10000)); }; python3() { echo "# rendering"; }; ln() { return 1; }; nginx() { :; }; systemctl() { :; }; check_installation() { :; }; msg_warn() { :; }; certbot() { return 1; };\n'
+            stubs='make_port() { for destination in "$@"; do printf -v "$destination" %s "$((RANDOM+10000))"; done; }; python3() { echo "# rendering"; }; ln() { return 1; }; nginx() { :; }; systemctl() { :; }; check_installation() { :; }; msg_warn() { :; }; certbot() { return 1; };\n'
             result=subprocess.run(['bash','-eu','-c',stubs+script+'\nPANEL_STAGE=/stage; vision_domain=vision.example; install_vision'],capture_output=True,text=True)
             self.assertNotEqual(result.returncode,0)
             self.assertEqual(cert.read_text(),'foreign certificate')
@@ -1040,7 +1040,7 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
         declined=subprocess.run(['bash','-eu','-c','python3() { echo MUTATION; return 1; };\n'+function('prepare_system_dns')+'\nINSTALL_SECURITY=n; prepare_system_dns'],capture_output=True,text=True)
         self.assertEqual(declined.returncode,0,declined.stderr); self.assertNotIn('MUTATION',declined.stdout)
         names = ('confirm_destructive_reinstall', 'validate_domains', 'select_amneziawg', 'select_adguard',
-                 'preflight_panel_release', 'preflight_amneziawg', 'cleanup_adguard', 'clean_previous_install',
+                 'preflight_panel_release','make_port', 'preflight_amneziawg', 'cleanup_adguard', 'clean_previous_install',
                  'install_packages', 'setup_firewall', 'get_server_ip', 'setup_acme_http', 'get_ssl_certs',
                  'install_panel', 'configure_nginx', 'configure_xui_db', 'install_clash_sub', 'install_fake_site',
                  'install_diagnostics', 'tune_system', 'install_backup_tool', 'setup_certificate_renewal', 'check_installation', 'show_results', 'preflight_vision_artifacts','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot')
@@ -1101,7 +1101,7 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
         # Security, Vision, AWG, AGH, Client; exact required six combinations.
         scenarios=('nnnnn','ynnny','nynny','ynnyy','nyyny','yyyyy')
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
-               'select_adguard','select_client','preflight_panel_release','preflight_amneziawg','preflight_integrated_features',
+               'select_adguard','select_client','preflight_panel_release','make_port','preflight_amneziawg','preflight_integrated_features',
                'cleanup_adguard','clean_previous_install','install_packages','setup_firewall','get_server_ip','setup_acme_http',
                'get_ssl_certs','install_panel','configure_nginx','configure_xui_db','install_clash_sub','install_fake_site',
                'install_diagnostics','tune_system','install_backup_tool','setup_certificate_renewal','check_installation','show_results','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot')

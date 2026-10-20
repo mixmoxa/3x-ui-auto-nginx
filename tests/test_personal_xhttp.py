@@ -49,6 +49,7 @@ def template(target, source=SOURCE):
 
 
 def render(target, source=SOURCE, **variables):
+    variables.setdefault("ipv6_listen", "listen [::]:80;" if target.endswith("80.conf") else "listen     [::]:443;")
     script = "shor=(a b c d e f g h)\ncat <<EOF\n" + template(target, source) + "EOF\n"
     return subprocess.check_output(
         ["bash", "-eu", "-c", script], text=True,
@@ -159,7 +160,7 @@ CD_COUNT=0
         self.assertNotIn("X-UI-PRO", result.stdout.upper())
         self.assertNotIn("X-UI Secure Panel", SOURCE)
         helpers = '\n'.join(re.findall(r'^msg_\w+\(\).*$', SOURCE, re.M))
-        script = helpers + '\n' + function("validate_domains") + '\nvalidate_domains\nprintf "%s|%s" "$domain" "$reality_domain"\n'
+        script = helpers + '\n' + function("valid_hostname") + '\n' + function("validate_domains") + '\nvalidate_domains\nprintf "%s|%s" "$domain" "$reality_domain"\n'
         for provided in (False, True):
             with self.subTest(cli_domains=provided):
                 result = subprocess.run(["bash", "-eu", "-c", script], capture_output=True, text=True,
@@ -238,7 +239,7 @@ printf 'CPU_STATE|%s|%s\n' "$CPU_SUPPORT_LEVEL" "$CPU_SUPPORT_TEXT"
         # Run the actual main ordering/summary on files; installer operations are no-ops.
         mocks = '\n'.join(name + '() { :; }' for name in (
             "preflight_base_os", "prepare_base_os", "prepare_system_dns", "finish_initial_reboot",
-            "select_security", "select_vision", "select_client", "preflight_integrated_features", "select_amneziawg", "preflight_amneziawg", "preflight_panel_release", "select_adguard", "cleanup_adguard", "validate_domains", "clean_previous_install", "install_packages", "setup_firewall", "get_server_ip",
+            "select_security", "select_vision", "select_client", "preflight_integrated_features", "select_amneziawg", "preflight_amneziawg", "preflight_panel_release", "make_port", "select_adguard", "cleanup_adguard", "validate_domains", "clean_previous_install", "install_packages", "setup_firewall", "get_server_ip",
             "get_ssl_certs", "install_panel", "configure_nginx", "configure_xui_db", "install_clash_sub",
             "install_fake_site", "install_diagnostics", "tune_system", "install_backup_tool", "setup_certificate_renewal", "setup_acme_http", "confirm_destructive_reinstall",
         )) + r'''
@@ -494,6 +495,7 @@ systemctl() {
 
     def test_installer_dependencies_are_required(self):
         mock = r'''msg_err() { echo "$*" >&2; }
+ipv6_available() { return 0; }
 apt() { echo "apt $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != apt ]]; }
 apt-get() { echo "apt-get $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != apt ]]; }
 systemctl() { echo "systemctl $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != nginx || "$*" != 'enable --now nginx' ]]; }

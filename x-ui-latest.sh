@@ -14,9 +14,11 @@ echo
 
 # ─── Pre-flight checks ───────────────────────────────────────────────────────
 check_os() {
-    local os_id os_version
-    os_id=$(grep -oP '(?<=^ID=).+' /etc/os-release 2>/dev/null | tr -d '"')
-    os_version=$(grep -oP '(?<=^VERSION_ID=").+(?=")' /etc/os-release 2>/dev/null)
+    local os_id='' os_version='' key value
+    while IFS='=' read -r key value || [[ -n "$key" ]]; do
+        case "$value" in \"*\"|\'*\') value=${value:1:-1} ;; esac
+        case "$key" in ID) os_id=$value ;; VERSION_ID) os_version=$value ;; esac
+    done < /etc/os-release
 
     case "${os_id}" in
         ubuntu)
@@ -129,27 +131,43 @@ gen_group_id() {
     echo
 }
 
+# 0 = free, 3 = occupied, other = probe failure. After release dependencies.
 check_free() {
-    nc -z 127.0.0.1 "$1" &>/dev/null
-    return $?
+    python3 - "$1" <<'PYPORT'
+import errno, socket, sys
+try:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(('127.0.0.1', int(sys.argv[1])))
+except OSError as error:
+    sys.exit(3 if error.errno == errno.EADDRINUSE else 2)
+PYPORT
 }
 
+ALLOCATED_TCP_PORTS=()
 make_port() {
-    while true; do
-        local PORT
-        PORT=$(get_port)
-        if ! check_free "$PORT"; then
-            echo "$PORT"
-            break
-        fi
+    # Assign in the caller shell: command substitution would discard reservations.
+    local destination candidate used attempt status
+    for destination in "$@"; do
+        candidate=$(get_port)
+        for ((attempt=0; attempt<128; attempt++, candidate=(candidate>=59151?10000:candidate+1))); do
+            for used in "${ALLOCATED_TCP_PORTS[@]}"; do
+                [[ "$used" != "$candidate" ]] || break
+            done
+            [[ "${used:-}" != "$candidate" ]] || continue
+            status=0
+            check_free "$candidate" || status=$?
+            if (( status == 0 )); then
+                printf -v "$destination" '%s' "$candidate"
+                ALLOCATED_TCP_PORTS+=("$candidate")
+                break
+            fi
+            (( status == 3 )) || { msg_err 'Internal TCP port probe failed.'; return 1; }
+        done
+        (( attempt < 128 )) || { msg_err 'No free distinct internal TCP port found.'; return 1; }
     done
 }
 
-# ─── Generate ports & paths (done once at startup) ───────────────────────────
-sub_port=$(make_port)
-panel_port=$(make_port)
-ws_port=$(make_port)
-trojan_port=$(make_port)
+# ─── Generate paths (ports follow mandatory release dependencies in main) ───
 
 sub_path=$(gen_random_string 10)
 json_path=$(gen_random_string 10)
@@ -161,7 +179,6 @@ config_username=$(gen_random_string 10)
 config_password=$(gen_random_string 10)
 diag_path="/net-$(gen_random_string 12)/"
 diag_token=$(gen_random_string 16)
-mtr_backend_port=$(make_port)
 
 # ─── Argument parsing ────────────────────────────────────────────────────────
 while [ "$#" -gt 0 ]; do
@@ -330,13 +347,26 @@ IP4=$(ip route get 8.8.8.8 2>&1 | grep -Po -- 'src \K\S*')
 # ─────────────────────────────────────────────────────────────────────────────
 # DOMAIN VALIDATION
 # ─────────────────────────────────────────────────────────────────────────────
+valid_hostname() {
+    local LC_ALL=C label
+    local -a labels
+    (( ${#1} > 0 && ${#1} <= 253 )) &&
+        [[ "$1" =~ ^[a-zA-Z0-9.-]+$ && "$1" == *.* && "$1" != *. ]] || return 1
+    IFS=. read -r -a labels <<< "$1"
+    for label in "${labels[@]}"; do
+        [[ "$label" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$ ]] || return 1
+    done
+}
+
 validate_domains() {
+    local LC_ALL=C
     while true; do
         [[ -n "$domain" ]] && break
         printf 'Enter the domain for your 3X-UI panel: '
-        read -r domain || { msg_err "Panel domain is required."; return 1; }
+        IFS= read -r domain || { msg_err "Panel domain is required."; return 1; }
     done
-    domain=$(echo "$domain" | tr -d '[:space:]')
+    valid_hostname "$domain" || { msg_err 'Invalid panel hostname: use ASCII DNS labels (punycode supported), without URL, whitespace or terminal dot.'; return 1; }
+    domain=${domain,,}
     SubDomain=$(echo "$domain"   | sed 's/^[^ ]* \|\..*//g')
     MainDomain=$(echo "$domain"  | sed 's/.*\.\([^.]*\..*\)$/\1/')
     [[ "${SubDomain}.${MainDomain}" != "${domain}" ]] && MainDomain=${domain}
@@ -344,9 +374,10 @@ validate_domains() {
     while true; do
         [[ -n "$reality_domain" ]] && break
         printf 'Enter the domain for VLESS REALITY: '
-        read -r reality_domain || { msg_err "REALITY domain is required."; return 1; }
+        IFS= read -r reality_domain || { msg_err "REALITY domain is required."; return 1; }
     done
-    reality_domain=$(echo "$reality_domain" | tr -d '[:space:]')
+    valid_hostname "$reality_domain" || { msg_err 'Invalid REALITY hostname: use ASCII DNS labels (punycode supported), without URL, whitespace or terminal dot.'; return 1; }
+    reality_domain=${reality_domain,,}
     RealitySubDomain=$(echo "$reality_domain" | sed 's/^[^ ]* \|\..*//g')
     RealityMainDomain=$(echo "$reality_domain" | sed 's/.*\.\([^.]*\..*\)$/\1/')
     [[ "${RealitySubDomain}.${RealityMainDomain}" != "${reality_domain}" ]] && RealityMainDomain=${reality_domain}
@@ -568,6 +599,9 @@ install_packages() {
 
         apt_system -o APT::Update::Error-Mode=any update || { msg_err "APT list refresh failed (exit $?). Package changes are not rolled back."; return 1; }
         apt_system -y install curl wget jq bash sudo nginx-full certbot sqlite3 ufw netcat-openbsd mtr-tiny python3 python3-configobj python3-cryptography libcap2-bin openssl procps iproute2 tar gzip tzdata ca-certificates || return 1
+        if ! ipv6_available; then
+            rm -f /etc/nginx/sites-enabled/default || return 1
+        fi
         systemctl daemon-reload && systemctl enable --now nginx || return 1
     fi
 
@@ -586,13 +620,25 @@ prepare_acme_webroot() {
     install -d -o root -g root -m 0755 /var/www/acme /var/www/acme/.well-known /var/www/acme/.well-known/acme-challenge
 }
 
+ipv6_available() {
+    python3 - <<'PYIPV6'
+import socket, sys
+try:
+    with socket.socket(socket.AF_INET6, socket.SOCK_STREAM): pass
+except OSError:
+    sys.exit(1)
+PYIPV6
+}
+
 setup_acme_http() {
+    local ipv6_listen=''
+    if ipv6_available; then ipv6_listen='listen [::]:80;'; fi
     prepare_acme_webroot || return 1
     mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled || return 1
     cat > /etc/nginx/sites-available/80.conf <<EOF
 server {
     listen 80;
-    listen [::]:80;
+    ${ipv6_listen}
     server_name ${domain} ${reality_domain};
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/acme;
@@ -656,7 +702,8 @@ configure_nginx() {
 
     # nginx >= 1.25.1 deprecates "listen ... http2" in favor of "http2 on;";
     # older versions (Ubuntu 24.04) don't know the new directive
-    local ngx_ver http2_listen="" http2_on=""
+    local ngx_ver http2_listen="" http2_on="" ipv6_listen=''
+    if ipv6_available; then ipv6_listen='listen     [::]:443;'; fi
     ngx_ver=$(nginx -v 2>&1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' || echo 0)
     if [[ "$(printf '%s\n' 1.25.1 "$ngx_ver" | sort -V | head -1)" == "1.25.1" ]]; then
         http2_on="http2 on;"
@@ -680,7 +727,7 @@ server {
     proxy_protocol on;
     set_real_ip_from unix:;
     listen     443;
-    listen     [::]:443;
+    ${ipv6_listen}
     proxy_pass \$sni_name;
     ssl_preread on;
 }
@@ -2560,7 +2607,7 @@ select_security() {
 }
 
 select_vision() {
-    local answer
+    local LC_ALL=C answer
     INSTALL_VISION=n
     while true; do
         printf 'Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]: '
@@ -2640,6 +2687,13 @@ preflight_vision_artifacts() {
 }
 
 preflight_integrated_features() {
+    local LC_ALL=C feature
+    if [[ "${INSTALL_VISION:-n}" == y ]]; then
+        vision_domain=${vision_domain,,}
+        valid_hostname "$vision_domain" && [[ "$vision_domain" != "${domain,,}" && "$vision_domain" != "${reality_domain,,}" ]] || {
+            msg_err 'Invalid/conflicting Vision hostname: use a distinct ASCII domain without URL, whitespace or terminal dot.'; return 1;
+        }
+    fi
     if [[ "${INSTALL_VISION:-n}" == y || "${CREATE_CLIENT:-n}" == y ]]; then
         [[ "$PANEL_TAG" == v3.9.0 || "$PANEL_TAG" == v3.10.0 ||
            ( -n "$PANEL_TAG" && "$PANEL_TAG" == "$(verified_panel_release | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')" ) ]] || {
@@ -2651,7 +2705,6 @@ preflight_integrated_features() {
             curl -fsSL --connect-timeout 15 --max-time 60 "$GITHUB_RAW/assets/amneziawg/managed.py" -o "$AWG_HELPER" || { msg_err "Panel API helper download failed; stopped before cleanup."; return 1; }
         fi
     fi
-    local feature
     for feature in security vision client; do
         case "$feature" in
             security) [[ "${INSTALL_SECURITY:-n}" == y ]] || continue ;;
@@ -2665,19 +2718,6 @@ ast.parse(open(sys.argv[1]).read())
 PYCHECK
     done
     preflight_vision_artifacts || return 1
-    [[ "${INSTALL_VISION:-n}" == y ]] || return 0
-    get_server_ip
-    python3 - "$vision_domain" "$domain" "$reality_domain" "$IP4" "$IP6" <<'PYDOMAIN' || return 1
-import ipaddress, re, socket, sys
-name, panel, reality, ipv4, ipv6 = sys.argv[1:]
-if (len(name)>253 or '.' not in name or name.lower() in (panel.lower(), reality.lower())
-    or not all(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label) for label in name.split('.'))):
-    sys.exit('Invalid/conflicting Vision domain; deployment preserved')
-expected = {str(ipaddress.ip_address(ip)) for ip in (ipv4, ipv6) if ip}
-actual = {str(ipaddress.ip_address(row[4][0])) for row in socket.getaddrinfo(name, 443, type=socket.SOCK_STREAM)}
-if not actual or not expected or not actual <= expected:
-    sys.exit('Every Vision A/AAAA record must point to this VPS; deployment preserved')
-PYDOMAIN
 }
 
 render_vision_hook() {
@@ -2722,11 +2762,10 @@ VISIONHOOK
 }
 
 install_vision() {
-    VISION_RESULT=failed_unverified
+    VISION_RESULT=failed_rolled_back
     local new_lineage=0 result=0 vision_output='' hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision vision_port fallback_port vision_stage='rendering ACME configuration' vision_exit=1
-    vision_port=$(make_port)
-    fallback_port=$(make_port)
-    while [[ "$fallback_port" == "$vision_port" ]]; do fallback_port=$(make_port); done
+    make_port vision_port fallback_port || return 1
+    VISION_RESULT=failed_unverified
     [[ -e "/etc/letsencrypt/live/$vision_domain" || -e "/etc/letsencrypt/renewal/$vision_domain.conf" ]] || new_lineage=1
     if (( ! new_lineage )) && [[ "${VISION_OWNED_LINEAGE:-}" != "$vision_domain" ]]; then
         VISION_RESULT=failed_rolled_back
@@ -2804,6 +2843,7 @@ main() {
     msg_warn 'Initial full OS upgrade is mandatory; services may restart. A required initial reboot is manual (sudo reboot).'
     preflight_base_os || { msg_err 'Base OS preflight failed; existing deployment was not removed.'; exit 1; }
     preflight_panel_release || { msg_err "Release preflight failed; existing deployment was not removed."; exit 1; }
+    make_port sub_port panel_port ws_port trojan_port mtr_backend_port || exit 1
     preflight_amneziawg || { msg_err "AmneziaWG preflight failed; existing deployment was not removed."; exit 1; }
     preflight_integrated_features || { msg_err 'Feature preparation stopped before cleanup; see the component error above.'; exit 1; }
     setup_swap || { SWAP_RESULT=skipped; SWAP_REASON='setup failed'; }
