@@ -38,22 +38,22 @@
 **İki alan adının** DNS kayıtlarını VPS IP adresinize yönlendirin: biri panel, diğeri REALITY için. SSH üzerinden **root** olarak bağlanın ve TCP **80/443** ile UDP **443** erişimine izin verin. [Desteklenen sistemler](#technical-details).
 
 ```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
+curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
 <details>
 <summary>Alternatif indirme (ana yöntem kullanılamıyorsa)</summary>
 
-Sabit sürüm v2.1.4: yükleyici ve yardımcı dosyaları aynı sürümden alınır.
+Sabit sürüm v2.1.5: yükleyici ve yardımcı dosyaları aynı sürümden alınır.
 
 ```bash
-curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.5/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.5 bash x-ui-latest.sh
 ```
 
 Acil durum için raw alternatifi:
 
 ```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.5/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.5 bash x-ui-latest.sh
 ```
 
 </details>

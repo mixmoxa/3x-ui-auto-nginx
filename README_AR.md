@@ -38,22 +38,22 @@
 وجّه سجلات DNS الخاصة بـ **نطاقين** إلى عنوان IP لخادمك: أحدهما للوحة والآخر لاتصالات REALITY. اتصل عبر SSH بحساب **root** واسمح بالوصول عبر TCP **80/443** وUDP **443**. راجع [الأنظمة المدعومة](#technical-details).
 
 ```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
+curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
 <details>
 <summary>تنزيل احتياطي (إذا تعذرت الطريقة الأساسية)</summary>
 
-الإصدار المثبّت v2.1.4: يأتي المثبّت وملفاته المساعدة من الإصدار نفسه.
+الإصدار المثبّت v2.1.5: يأتي المثبّت وملفاته المساعدة من الإصدار نفسه.
 
 ```bash
-curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.5/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.5 bash x-ui-latest.sh
 ```
 
 بديل طارئ عبر raw:
 
 ```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.5/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.5 bash x-ui-latest.sh
 ```
 
 </details>

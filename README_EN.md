@@ -38,22 +38,22 @@ Bring two domains and a clean VPS. A cover website is selected and deployed auto
 Configure the DNS records for **two domains** to point to your VPS IP address: one for the panel, one for REALITY. Connect via SSH as **root** and allow TCP **80/443**, UDP **443**. [Supported systems](#technical-details).
 
 ```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
+curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
 <details>
 <summary>Fallback download (if the primary method is unavailable)</summary>
 
-Pinned version v2.1.4: the installer and its helper files come from the same release.
+Pinned version v2.1.5: the installer and its helper files come from the same release.
 
 ```bash
-curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.5/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.5 bash x-ui-latest.sh
 ```
 
 Emergency raw alternative:
 
 ```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.5/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.5 bash x-ui-latest.sh
 ```
 
 </details>

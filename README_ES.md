@@ -38,22 +38,22 @@ Solo necesitas dos dominios y un VPS limpio. El instalador selecciona y desplieg
 Configura los registros DNS de **dos dominios** para que apunten a la IP de tu VPS: uno para el panel y otro para REALITY. Conéctate por SSH como **root** y permite TCP **80/443** y UDP **443**. Consulta los [sistemas compatibles](#technical-details).
 
 ```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
+curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
 <details>
 <summary>Descarga alternativa (si el método principal no está disponible)</summary>
 
-Versión fijada v2.1.4: el instalador y sus archivos auxiliares proceden de la misma versión.
+Versión fijada v2.1.5: el instalador y sus archivos auxiliares proceden de la misma versión.
 
 ```bash
-curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.5/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.5 bash x-ui-latest.sh
 ```
 
 Alternativa de emergencia mediante raw:
 
 ```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.5/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.5 bash x-ui-latest.sh
 ```
 
 </details>

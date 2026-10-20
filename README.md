@@ -46,22 +46,22 @@
 Настройте DNS-записи **двух доменов**, указав IP-адрес вашего VPS: один для панели, другой для REALITY. Подключитесь по SSH под **root** и разрешите входящие TCP **80/443** и UDP **443**. [Поддерживаемые ОС](#technical-details).
 
 ```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
+curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
 <details>
 <summary>Резервная загрузка (если основной способ недоступен)</summary>
 
-Зафиксированная версия v2.1.4: установщик и вспомогательные файлы берутся из одного релиза.
+Зафиксированная версия v2.1.5: установщик и вспомогательные файлы берутся из одного релиза.
 
 ```bash
-curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.5/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.5 bash x-ui-latest.sh
 ```
 
 Аварийный вариант через raw:
 
 ```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.5/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.5 bash x-ui-latest.sh
 ```
 
 </details>

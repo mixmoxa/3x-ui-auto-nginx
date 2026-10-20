@@ -38,22 +38,22 @@
 رکوردهای DNS **دو دامنه** را طوری تنظیم کنید که به نشانی IP سرور VPS شما اشاره کنند: یکی برای پنل و دیگری برای REALITY. با SSH و کاربر **root** وارد شوید و پورت‌های TCP **80/443** و UDP **443** را باز کنید. [سیستم‌عامل‌های پشتیبانی‌شده](#technical-details).
 
 ```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
+curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
 <details>
 <summary>دریافت جایگزین (اگر روش اصلی در دسترس نیست)</summary>
 
-نسخهٔ ثابت v2.1.4: نصب‌کننده و فایل‌های کمکی آن از یک انتشار دریافت می‌شوند.
+نسخهٔ ثابت v2.1.5: نصب‌کننده و فایل‌های کمکی آن از یک انتشار دریافت می‌شوند.
 
 ```bash
-curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+curl -fSL https://cdn.jsdelivr.net/gh/xPROMSx/3x-ui-auto-nginx@v2.1.5/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.5 bash x-ui-latest.sh
 ```
 
 روش اضطراری از طریق raw:
 
 ```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.4/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.4 bash x-ui-latest.sh
+curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/v2.1.5/x-ui-latest.sh -o x-ui-latest.sh && XUI_AUTO_REF=v2.1.5 bash x-ui-latest.sh
 ```
 
 </details>
