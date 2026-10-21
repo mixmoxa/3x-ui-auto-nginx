@@ -335,10 +335,17 @@ class InstallerCompatibility(unittest.TestCase):
                             proxy,forwarded=servers[index].received[-1]
                             self.assertTrue(proxy.startswith(b'PROXY TCP4 127.0.0.1 127.0.0.1 '),proxy)
                             self.assertEqual(forwarded,hello)
-                        for path,agent,expected in (('/','Mihomo','1:1'),('/?provider=1','Mihomo','1:0'),('/','ordinary','0:0')):
+                        for path,agent,hwid,expected in (
+                                ('/','Mihomo','','1:1'),('/?provider=1','Mihomo','','1:0'),('/','ordinary','','0:0'),
+                                ('/','ClashMeta/1.19.30; mihomo/1.19.30','fixture','1:0'),
+                                ('/?other=1','ClashMeta/2.0.0; mihomo/2.0.0','fixture','1:0'),
+                                ('/','ClashMeta/1.19.30; mihomo/1.19.30','','1:1'),
+                                ('/','Mihomo','fixture','1:1'),
+                                ('/','ClashMetaForAndroid/2.11.33.Meta','fixture','1:1'),
+                                ('/','Happ/5.6.0','fixture','0:0')):
                             connection=http.client.HTTPConnection('127.0.0.1',http_port,timeout=3)
                             try:
-                                connection.request('GET',path,headers={'User-Agent':agent})
+                                connection.request('GET',path,headers={'User-Agent':agent,'x-hwid':hwid})
                                 response=connection.getresponse()
                                 self.assertEqual((response.status,response.read()),(200,expected.encode()))
                             finally: connection.close()
