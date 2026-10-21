@@ -6,13 +6,16 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import socketserver
+import ssl
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
 
-from test_personal_xhttp import SOURCE, function
+from test_personal_xhttp import SOURCE, function, render
 from test_integrated_features import helper
 
 
@@ -35,6 +38,15 @@ def complete_function(name):
     text=SOURCE[SOURCE.index(name+'() {'):]
     headers=list(re.finditer(r'^\w+\(\)\s*\{',text,re.M))
     return text[:headers[1].start()] if len(headers)>1 else text
+
+
+def dns_name(length, letter='a'):
+    if length <= 63:
+        return letter*(length-2)+'.'+letter
+    labels=[]
+    while length > 63:
+        size=min(63,length-2); labels.append(letter*size); length-=size+1
+    return '.'.join([*labels,letter*length])
 
 
 def nginx_ipv4_acme(simulate=False):
@@ -99,6 +111,111 @@ install() { local -a args=(); while (($#)); do case \"$1\" in -o|-g) shift 2;; *
 
 
 class InstallerCompatibility(unittest.TestCase):
+    def test_real_nginx_stream_all_permitted_hostname_lengths(self):
+        nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
+        self.assertTrue(nginx,'Real nginx required')
+        cases=[(dns_name(n),dns_name(n,'b')) for n in range(3,254)]
+        cases += [('a.'*125+'aaa','b.'*125+'bbb'),
+                  ('.'.join(['xn--e1afmkfd']*11+['xn--p1ai']),'cover.example'),
+                  ('an.'+dns_name(250),'c0.'+dns_name(250))]  # Same nginx hash; distinct valid keys.
+        maps=render('cat > /etc/nginx/sites-available/00-maps.conf')
+        with tempfile.TemporaryDirectory(prefix='stream-names-') as directory:
+            root=Path(directory); conf=root/'nginx.conf'
+            for panel,reality in cases:
+                with self.subTest(panel_length=len(panel),reality_length=len(reality),prefix=panel[:4]):
+                    valid=shell(('valid_hostname',),'valid_hostname "$domain" && valid_hostname "$reality_domain"',
+                                {'domain':panel,'reality_domain':reality})
+                    self.assertEqual(valid.returncode,0,valid.stderr)
+                    stream=render('cat > /etc/nginx/stream-enabled/stream.conf',domain=panel,reality_domain=reality,ipv6_listen='')
+                    stream=stream.replace('listen     443;','listen 127.0.0.1:31235;')
+                    conf.write_text(f'load_module /usr/lib/nginx/modules/ngx_stream_module.so; pid {root}/pid; error_log stderr; events {{}} stream {{{stream}}} http {{ access_log off; {maps} }}')
+                    result=subprocess.run([nginx,'-t','-e','stderr','-p',directory+'/', '-c',str(conf)],capture_output=True,text=True,timeout=10)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    if len(panel)<=46 and len(reality)<=46:
+                        self.assertNotIn('[warn]',result.stderr)
+
+    def test_real_nginx_stream_sni_vision_and_http_maps(self):
+        nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
+        self.assertTrue(nginx,'Real nginx required')
+        class Backend(socketserver.StreamRequestHandler):
+            def handle(self):
+                self.request.settimeout(3)
+                proxy=self.rfile.readline(108)
+                header=self.rfile.read(5)
+                body=self.rfile.read(int.from_bytes(header[3:5],'big'))
+                self.server.received.append((proxy,header+body))
+                self.wfile.write(self.server.marker)
+        cases=[('panel.example','reality.example'),(dns_name(253),dns_name(253,'b')),
+               ('an.'+dns_name(250),'c0.'+dns_name(250))]
+        for panel,reality in cases:
+            with self.subTest(panel=panel[:16]),tempfile.TemporaryDirectory(prefix='sni-route-') as directory:
+                root=Path(directory); servers=[]; threads=[]; child=None
+                try:
+                    for i in range(3):
+                        server=socketserver.ThreadingTCPServer(('127.0.0.1',0),Backend)
+                        servers.append(server); server.daemon_threads=True
+                        server.marker=f'upstream-{i}'.encode(); server.received=[]
+                        thread=threading.Thread(target=server.serve_forever,kwargs={'poll_interval':.05},daemon=True)
+                        thread.start(); threads.append(thread)
+                    with socket.socket() as first,socket.socket() as second:
+                        first.bind(('127.0.0.1',0)); second.bind(('127.0.0.1',0))
+                        public,http_port=first.getsockname()[1],second.getsockname()[1]
+                    stream=render('cat > /etc/nginx/stream-enabled/stream.conf',domain=panel,reality_domain=reality,ipv6_listen='')
+                    for old,server in zip(('8443','7443'),servers):
+                        stream=stream.replace('127.0.0.1:'+old,'127.0.0.1:'+str(server.server_address[1]))
+                    stream=stream.replace('listen     443;',f'listen 127.0.0.1:{public};')
+                    vision=dns_name(253,'v')
+                    stream=helper('vision').stream_config(stream,vision,servers[2].server_address[1])
+                    maps=render('cat > /etc/nginx/sites-available/00-maps.conf')
+                    temporary='\n'.join(f'{kind}_temp_path {root}/{kind};' for kind in ('client_body','proxy','fastcgi','uwsgi','scgi'))
+                    conf=root/'nginx.conf'
+                    conf.write_text(f'load_module /usr/lib/nginx/modules/ngx_stream_module.so; pid {root}/pid; error_log stderr; events {{}} stream {{{stream}}} http {{ access_log off; {temporary} {maps} server {{ listen 127.0.0.1:{http_port}; return 200 "$is_clash_ua:$serve_clash_yaml"; }} }}')
+                    command=[nginx,'-e','stderr','-p',directory+'/', '-c',str(conf)]
+                    result=subprocess.run([*command,'-t'],capture_output=True,text=True,timeout=10)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    with (root/'private.log').open('wb') as log:
+                        child=subprocess.Popen([*command,'-g','daemon off;'],stdout=log,stderr=log)
+                        deadline=time.monotonic()+5
+                        while True:
+                            self.assertIsNone(child.poll(),'nginx exited')
+                            try:
+                                with socket.create_connection(('127.0.0.1',http_port),timeout=.1): break
+                            except OSError:
+                                if time.monotonic()>=deadline: self.fail('nginx listener readiness deadline')
+                                time.sleep(.02)
+                        # Send real TLS ClientHello bytes; record the selected upstream and PROXY header.
+                        context=ssl.create_default_context()
+                        for name,index in ((panel,1),(reality,0),(vision,2),('unknown.example',0),(panel.upper(),1)):
+                            incoming,outgoing=ssl.MemoryBIO(),ssl.MemoryBIO()
+                            tls=context.wrap_bio(incoming,outgoing,server_side=False,server_hostname=name)
+                            with self.assertRaises(ssl.SSLWantReadError): tls.do_handshake()
+                            hello=outgoing.read()
+                            with socket.create_connection(('127.0.0.1',public),timeout=3) as client:
+                                client.sendall(hello)
+                                received=b''
+                                while len(received)<len(servers[index].marker):
+                                    block=client.recv(64)
+                                    if not block: break
+                                    received+=block
+                            self.assertEqual(received,servers[index].marker,name)
+                            proxy,forwarded=servers[index].received[-1]
+                            self.assertTrue(proxy.startswith(b'PROXY TCP4 127.0.0.1 127.0.0.1 '),proxy)
+                            self.assertEqual(forwarded,hello)
+                        for path,agent,expected in (('/','Mihomo','1:1'),('/?provider=1','Mihomo','1:0'),('/','ordinary','0:0')):
+                            connection=http.client.HTTPConnection('127.0.0.1',http_port,timeout=3)
+                            try:
+                                connection.request('GET',path,headers={'User-Agent':agent})
+                                response=connection.getresponse()
+                                self.assertEqual((response.status,response.read()),(200,expected.encode()))
+                            finally: connection.close()
+                finally:
+                    if child is not None:
+                        child.terminate()
+                        try: child.wait(timeout=5)
+                        except subprocess.TimeoutExpired: child.kill(); child.wait(timeout=5)
+                    for server in servers: server.shutdown(); server.server_close()
+                    for thread in threads: thread.join(timeout=5)
+
     def test_domain_syntax_canonicalization_and_precleanup_failure(self):
         names=('valid_hostname','validate_domains')
         for panel,reality in (('Panel.Example.COM','Reality.Example.COM'),
