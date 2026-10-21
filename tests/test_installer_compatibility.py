@@ -49,7 +49,7 @@ def dns_name(length, letter='a'):
     return '.'.join([*labels,letter*length])
 
 
-def http_name_configs(root, names, ipv6):
+def http_name_configs(root, names, ipv6, ports):
     """Actual installer/ Vision HTTP fragments, with private paths and listeners."""
     from test_personal_xhttp import MAIN, SHARED
     nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
@@ -70,6 +70,9 @@ def http_name_configs(root, names, ipv6):
     result={}
     for stage,text in (('initial',acme),('core',acme+core),
                        ('vision-acme',acme+core+vision_acme),('fallback',acme+core+vision_acme+fallback)):
+        text=text.replace('listen 80;',f'listen 127.0.0.1:{ports[0]};')
+        text=text.replace('listen [::]:80;',f'listen [::1]:{ports[0]};')
+        for old,port in zip((7443,9443,31236),ports[1:]): text=text.replace(f'127.0.0.1:{old}',f'127.0.0.1:{port}')
         text=text.replace('/etc/nginx/snippets/includes.conf',str(root/'includes.conf'))
         text=text.replace('/etc/nginx/snippets/x-ui-auto-optional',str(root/'optional'))
         text=re.sub(r'/etc/letsencrypt/live/[^/]+/fullchain.pem',str(root/'cert.pem'),text)
@@ -162,10 +165,13 @@ class InstallerCompatibility(unittest.TestCase):
         families=(False,True) if vision.ipv6_available() else (False,)
         with tempfile.TemporaryDirectory(prefix='http-names-') as directory:
             root=Path(directory); conf=root/'nginx.conf'; http_name_certificate(root)
+            with socket.socket() as a,socket.socket() as b,socket.socket() as c,socket.socket() as d:
+                for listener in (a,b,c,d): listener.bind(('127.0.0.1',0))
+                ports=[listener.getsockname()[1] for listener in (a,b,c,d)]
             for names in cases:
                 for name in names: self.assertEqual(vision.domain_name(name),name)
                 for ipv6 in families:
-                    for stage,text in http_name_configs(root,names,ipv6).items():
+                    for stage,text in http_name_configs(root,names,ipv6,ports).items():
                         with self.subTest(length=len(names[0]),prefix=names[0][:4],ipv6=ipv6,stage=stage):
                             conf.write_text(text)
                             result=subprocess.run([nginx,'-t','-e','stderr','-p',directory+'/', '-c',str(conf)],
@@ -189,11 +195,9 @@ class InstallerCompatibility(unittest.TestCase):
                     with socket.socket() as a,socket.socket() as b,socket.socket() as c,socket.socket() as d:
                         for listener in (a,b,c,d): listener.bind(('127.0.0.1',0))
                         ports=[listener.getsockname()[1] for listener in (a,b,c,d)]
-                    configs=http_name_configs(root,names,ipv6)
+                    configs=http_name_configs(root,names,ipv6,ports)
                     for stage in ('initial','vision-acme','fallback'):
-                        text=configs[stage].replace('listen 80;',f'listen 127.0.0.1:{ports[0]};')
-                        text=text.replace('listen [::]:80;',f'listen [::1]:{ports[0]};')
-                        for old,port in zip((7443,9443,31236),ports[1:]): text=text.replace(f'127.0.0.1:{old}',f'127.0.0.1:{port}')
+                        text=configs[stage]
                         access=root/'access.log'; access.unlink(missing_ok=True)
                         text=text.replace('http { access_log off;',f'http {{ log_format selected "$server_name|$host|$request_uri|$status"; access_log {access} selected;')
                         conf=root/'nginx.conf'; conf.write_text(text)
