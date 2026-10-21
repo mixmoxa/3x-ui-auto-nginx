@@ -422,7 +422,8 @@ class RealIntegration(unittest.TestCase):
         shared = shared.replace(f"/{self.backends['ws']}/websocket",'/10003/websocket').replace(
             f"/{self.backends['trojan-grpc']}/trojan",'/10004/trojan').replace('/dev/shm/uds2023.sock',str(self.uds))
         (self.root/'shared.conf').write_text(shared)
-        main = render(MAIN,panel_port=str(self.backends['panel']),sub_port=str(self.backends['sub']))
+        main = render(MAIN,panel_port=str(self.backends['panel']),sub_port=str(self.backends['sub']),
+                      mtr_backend_port=str(self.backends['api']))
         main = main.replace('127.0.0.1:7443',f"127.0.0.1:{self.backends['tls']}")
         main = main.replace('/etc/nginx/snippets/includes.conf',str(self.root/'shared.conf'))
         main = re.sub(r'include /etc/nginx/snippets/x-ui-auto-optional/\*\.conf;', '', main)
@@ -455,7 +456,7 @@ http {{ access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {mai
         process = self.launch([self.nginx,'-p',str(self.root)+'/', '-c',path],'nginx')
         self.ready(process,('127.0.0.1',self.public))
 
-    def client(self, name, negative=False, server_log="xray-server.log"):
+    def client(self, name, negative=False, server_log="xray-server.log", expect_success=True):
         config = copy.deepcopy(self.clients[name])
         outbound = next(o for o in config['outbounds'] if o['protocol'] in ('vless','trojan','hysteria'))
         settings,stream = outbound['settings'],outbound['streamSettings']
@@ -486,7 +487,7 @@ http {{ access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {mai
                 '--connect-timeout','5','--max-time','12',f'http://127.0.0.1:{self.origin.server_port}/{name}'],
                 capture_output=True,text=True,timeout=18)
         stop(process)
-        if negative:
+        if negative or not expect_success:
             self.assertNotEqual(result.returncode,0,'bad transport credentials/path unexpectedly worked')
             self.assertNotIn(self.marker,result.stdout)
             self.assertEqual(len(self.origin_requests),before,'negative transport reached origin')
@@ -1286,6 +1287,171 @@ finally:
                 # Numeric WS/gRPC path components are the public managed route, not endpoint ports.
                 self.assertNotRegex(output,rf'(?:\"port\"\s*:\s*|:){internal}(?:\D|$)')
         self.passed.append('No internal endpoint leak')
+
+    def test_real_mihomo_http_provider_and_full_profile(self):
+        # zxc-rv/XKeen-UI v1.3.8 AddOutbound.tsx: createDefaultForm/generateSubYaml.
+        # Alternative UI a63e65c: mihomo_hwid_sub._mihomo_hwid_user_agent uses the same pair.
+        standard_ua='ClashMeta/1.19.30; mihomo/1.19.30'
+        headers={'User-Agent':[standard_ua],'x-hwid':[os.urandom(6).hex().upper()]}
+        template=self.root/'clash.yaml.tpl'
+        template.write_text((ROOT/'assets/clash/clash.yaml').read_text().replace('${DOMAIN}','deploy.example').replace('${SUB_PATH}','subscription'))
+        source=(ROOT/'assets/diagnostics/mtr-backend.py').read_text().replace('"/var/www/subpage/clash.yaml.tpl"',repr(str(template)))
+        namespace={'__name__':'integration_clash_provider'}
+        exec(compile(source,'mtr-backend.py','exec'),namespace)
+        server=ThreadingHTTPServer(('127.0.0.1',self.backends['api']),namespace['Handler'])
+        threading.Thread(target=server.serve_forever,daemon=True).start()
+        self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
+        self.nginx_config()
+        serial=0
+        def fetch(path,request_headers=None,controller=None,method='GET'):
+            nonlocal serial
+            serial+=1; payload=self.root/f'http-payload-{serial}'
+            command=['curl','-q','-sS','--noproxy','*','--max-time','15','-X',method,
+                     '-o',str(payload),'-w','%{http_code}']
+            if controller is None:
+                command+=['--cacert',str(self.cert),'--resolve',f'deploy.example:{self.public}:127.0.0.1']
+                url=f'https://deploy.example:{self.public}'+path
+            else: url=f'http://127.0.0.1:{controller}'+path
+            for key,value in (request_headers or {}).items(): command+=['-H',key+': '+value]
+            result=subprocess.run([*command,url],capture_output=True,text=True,timeout=20)
+            self.assertEqual(result.returncode,0,'Private HTTP request failed')
+            return int(result.stdout),payload.read_bytes()
+        def raw_semantics(payload):
+            links=base64.b64decode(payload,validate=True).decode().splitlines()
+            self.assertEqual(len(links),5)
+            normalized=[]
+            for link in links:
+                query=parse_qs(urlsplit(link).query)
+                if query.get('security')==['reality']:
+                    sid=query.get('sid',[''])[0]
+                    self.assertTrue(sid in self.short_ids,'Native REALITY export selected an unknown shortId')
+                    # Official 3x-ui randomly chooses one of the server's permitted shortIds per fetch.
+                    link=link.replace('sid='+sid,'sid=[valid-server-shortId]')
+                normalized.append(link)
+            return normalized
+        def provider_runtime(url,request_headers,label,full_profile=None):
+            controller=port(self.allocated_ports)
+            # UI defaults preserved; only its external health URL is a loopback fixture.
+            provider={'type':'http','url':url,'interval':43200,'override':{'udp':True},
+                      'header':request_headers,'health-check':{'enable':True,
+                      'url':f'http://127.0.0.1:{self.origin.server_port}/health','interval':300,'expected-status':204}}
+            config={'external-controller':f'127.0.0.1:{controller}','log-level':'info',
+                    'hosts':{'deploy.example':'127.0.0.1'},'tls':{'custom-certifactes':[self.cert.read_text()]},
+                    'proxy-providers':{'subscription_1':provider},
+                    'proxy-groups':[{'name':'PROXY','type':'select','use':['subscription_1']}],
+                    'rules':['MATCH,DIRECT']}
+            provider_name='subscription_1'
+            if full_profile is not None:
+                provider_name='sub'; runtime=full_profile.decode()
+                # Preserve the generated profile/provider; external DNS/rules/health endpoints
+                # are offline fixtures, as in test_real_mihomo_generated_template.
+                for section in ('dns','rule-providers','rules'):
+                    runtime=re.sub(r'^'+section+r':.*?(?=^[A-Za-z][^\n]*:|\Z)','',runtime,flags=re.M|re.S)
+                runtime=runtime.replace('mixed-port: 10000',f'mixed-port: {port(self.allocated_ports)}').replace('allow-lan: true','allow-lan: false')
+                runtime=runtime.replace('https://deploy.example/subscription/fixture?provider=1',url+'?provider=1')
+                runtime=re.sub(r'https://(?:www.gstatic.com|cp.cloudflare.com)/generate_204',
+                               f'http://127.0.0.1:{self.origin.server_port}/health',runtime)
+                runtime+=f'\nexternal-controller: 127.0.0.1:{controller}\nbind-address: 127.0.0.1\nrules:\n  - MATCH,DIRECT\nhosts:\n  deploy.example: 127.0.0.1\n'
+                runtime+='tls:\n  custom-certifactes:\n    - '+json.dumps(self.cert.read_text())+'\n'
+            else: runtime=json.dumps(config)
+            path=self.root/(label+'.yaml');path.write_text(runtime)
+            process=self.launch([self.mihomo,'-d',self.root/label,'-f',path],label)
+            self.ready(process,('127.0.0.1',controller))
+            for refresh in range(2):
+                status,body=fetch('/providers/proxies/'+provider_name,controller=controller,method='PUT')
+                reason='missing proxies field' if b'file must have a `proxies` field' in body else 'provider refresh rejected'
+                self.assertEqual(status,204,label+': '+reason)
+                status,body=fetch('/providers/proxies/'+provider_name,controller=controller)
+                self.assertEqual(status,200)
+                proxies=json.loads(body)['proxies']
+                self.assertEqual(len(proxies),5,'Provider did not import all supported nodes')
+                self.assertEqual(len({p['name'] for p in proxies}),5)
+                self.assertEqual(sorted(p['type'].lower() for p in proxies),['hysteria2','trojan','vless','vless','vless'])
+            stop(process)
+        raw_by_json=[]
+        for json_enabled in (True,False):
+            with self.subTest(subJsonEnable=json_enabled):
+                with sqlite3.connect(self.root/'db/x-ui.db') as db:
+                    db.execute("UPDATE settings SET value=? WHERE key='subJsonEnable'",('true' if json_enabled else 'false',))
+                env={**os.environ,'XUI_DB_FOLDER':str(self.root/'db'),'XUI_BIN_FOLDER':str(self.root/'bin'),'XUI_LOG_FOLDER':str(self.root/'logs')}
+                panel=self.launch([self.xui],'provider-subscription-'+str(json_enabled),env=env)
+                self.ready(panel,('127.0.0.1',self.backends['sub']))
+                try:
+                    status,observed=fetch('/subscription/fixture',{'User-Agent':standard_ua,'x-hwid':headers['x-hwid'][0]})
+                    print(f'XKeen request (JSON={json_enabled}): HTTP {status}; full-profile={b"proxy-providers:" in observed}; bytes={len(observed)}',flush=True)
+                    provider_runtime(f'https://deploy.example:{self.public}/subscription/fixture',headers,'xkeen-'+str(json_enabled))
+                    provider_runtime(f'https://deploy.example:{self.public}/subscription/fixture',
+                                     {'User-Agent':['ClashMeta/1.19.24; mihomo/1.19.24'],'x-hwid':['fixture-router'],
+                                      'x-device-os':['Keenetic OS']},'alternative-'+str(json_enabled))
+                    raw_status,raw=fetch('/subscription/fixture',{'User-Agent':'curl/8.5.0'})
+                    self.assertEqual(raw_status,200)
+                    baseline=raw_semantics(raw); raw_by_json.append(baseline)
+                    cases=[('xkeen',standard_ua,headers['x-hwid'][0],'','raw'),
+                           ('alternative-hwid','ClashMeta/1.19.24; mihomo/1.19.24','fixture-router','','raw'),
+                           ('alternative-adapter','Python-urllib/3.12','','','raw'),
+                           ('v2rayN','v2rayN/7.24.8','','','raw'),
+                           ('unknown','unknown-client','','','raw'),
+                           ('full-profile','ClashMetaForAndroid/2.11.33.Meta','','','full'),
+                           ('other-hwid','ClashMetaForAndroid/2.11.33.Meta','fixture-device','','full'),
+                           ('no-hwid',standard_ua,'','','full'),
+                           ('explicit-provider',standard_ua,'fixture','?keep=1&provider=1','raw'),
+                           ('empty-provider',standard_ua,'fixture','?provider=&keep=1','raw'),
+                           ('query',standard_ua,'fixture','?keep=1','raw')]
+                    for label,agent,hwid,query,kind in cases:
+                        with self.subTest(case=label):
+                            status,body=fetch('/subscription/fixture'+query,{'User-Agent':agent,'x-hwid':hwid})
+                            self.assertEqual(status,200)
+                            if kind=='raw': self.assertTrue(raw_semantics(body)==baseline,'Unexpected provider payload: '+label)
+                            else:
+                                self.assertIn(b'proxy-providers:',body)
+                                self.assertIn(b'https://deploy.example/subscription/fixture?provider=1',body)
+                                self.assertNotIn(b'${',body)
+                                if label=='full-profile': full_profile=body
+                    provider_runtime(f'https://deploy.example:{self.public}/subscription/fixture',{},
+                                     'full-profile-'+str(json_enabled),full_profile=full_profile)
+                    status,body=fetch('/jsonsub/fixture',{'User-Agent':standard_ua,'x-hwid':'fixture'})
+                    self.assertEqual(status,200 if json_enabled else 404)
+                    if json_enabled: self.assertEqual(len(json.loads(body)),5)
+                    if json_enabled:
+                        self.ready(panel,('127.0.0.1',self.backends['ws']))
+                        self.client('ws',server_log='provider-subscription-True.log')
+                    status,body=fetch('/clash/fixture',{'User-Agent':standard_ua})
+                    self.assertEqual(status,404,'Native Clash endpoint must remain disabled')
+                    for path in ('/subscription/','/subscription/missing-fixture','/jsonsub/missing-fixture','/__clash_api'):
+                        status,body=fetch(path,{'User-Agent':standard_ua,'x-hwid':'fixture'})
+                        self.assertEqual(status,404)
+                        self.assertNotIn(self.uuid.encode(),body)
+                finally:
+                    stop(panel); self.release_subscription_socket()
+        self.assertEqual(len(raw_by_json),2)
+        self.assertTrue(raw_by_json[0]==raw_by_json[1],'subJsonEnable changed the ordinary subscription')
+        # Upstream enable=false preserves export links but must reject the unchanged credentials.
+        with sqlite3.connect(self.root/'db/x-ui.db') as db:
+            db.execute("UPDATE clients SET enable=0 WHERE sub_id='fixture'")
+        panel=self.launch([self.xui],'disabled-subscription',env=env)
+        self.ready(panel,('127.0.0.1',self.backends['sub']))
+        self.ready(panel,('127.0.0.1',self.backends['ws']))
+        try:
+            status,body=fetch('/subscription/fixture',{'User-Agent':standard_ua,'x-hwid':'fixture'})
+            self.assertEqual(status,200)
+            self.assertTrue(raw_semantics(body)==raw_by_json[0],'Native disabled-client export changed')
+            self.client('ws',server_log='disabled-subscription.log',expect_success=False)
+            # Rotating sub_id revokes the previous ID: official x-ui no longer resolves it.
+            replacement='replacement-'+os.urandom(12).hex()
+            with sqlite3.connect(self.root/'db/x-ui.db') as db:
+                db.execute("UPDATE clients SET sub_id=? WHERE sub_id='fixture'",(replacement,))
+            for sid in ('fixture','unknown-'+os.urandom(12).hex()):
+                for agent,hwid in ((standard_ua,'fixture'),('ClashMetaForAndroid/2.11.33.Meta','')):
+                    status,body=fetch('/subscription/'+sid,{'User-Agent':agent,'x-hwid':hwid})
+                    if hwid: self.assertEqual(status,404)
+                    else:
+                        self.assertEqual(status,200)  # Existing public template, not subscriber nodes.
+                        self.assertIn(('/subscription/'+sid+'?provider=1').encode(),body)
+                    for secret in (self.uuid,self.auth,self.private,replacement):
+                        self.assertFalse(secret.encode() in body,'Unknown/revoked ID disclosed private data')
+        finally:
+            stop(panel); self.release_subscription_socket()
+        self.passed.append('XKeen HTTP providers / full-profile routing / JSON independence')
 
     def test_real_mihomo_generated_template(self):
         # Execute the actual project endpoint that substitutes the subscription ID.

@@ -877,8 +877,10 @@ map \$http_user_agent \$is_clash_ua {
 }
 # Serve clash.yaml only when: Clash UA AND no ?provider=1 query param
 # (proxy-provider refresh requests add ?provider=1 and must get the real sub)
-map "\$is_clash_ua:\$arg_provider" \$serve_clash_yaml {
-    "1:"    1;
+map "\$is_clash_ua:\$arg_provider:\$http_user_agent:\$http_x_hwid" \$serve_clash_yaml {
+    # XKeen UI HTTP providers advertise this version-independent UA pair + HWID.
+    "~*^1::ClashMeta/[0-9][0-9A-Za-z.+_-]*;[ ]*mihomo/[0-9][0-9A-Za-z.+_-]*:.+\$" 0;
+    ~^1::   1;
     default 0;
 }
 EOF
