@@ -636,6 +636,8 @@ setup_acme_http() {
     prepare_acme_webroot || return 1
     mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled || return 1
     cat > /etc/nginx/sites-available/80.conf <<EOF
+# 253-byte DNS key plus 64-bit hash entry/sentinel; nginx aligns to cache lines.
+server_names_hash_bucket_size 272;
 server {
     listen 80;
     ${ipv6_listen}

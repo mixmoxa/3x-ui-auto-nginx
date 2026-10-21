@@ -49,6 +49,46 @@ def dns_name(length, letter='a'):
     return '.'.join([*labels,letter*length])
 
 
+def http_name_configs(root, names, ipv6, ports):
+    """Actual installer/ Vision HTTP fragments, with private paths and listeners."""
+    from test_personal_xhttp import MAIN, SHARED
+    nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
+    version=subprocess.run([nginx,'-v'],capture_output=True,text=True,check=True).stderr
+    modern=tuple(map(int,re.search(r'nginx/(\d+)\.(\d+)\.(\d+)',version).groups())) >= (1,25,1)
+    variables={'domain':names[0],'reality_domain':names[1],
+               'http2_listen':'' if modern else ' http2','http2_on':'http2 on;' if modern else '',
+               'ipv6_listen':'listen [::]:80;' if ipv6 else ''}
+    (root/'includes.conf').write_text(render(SHARED,**variables))
+    acme=render('cat > /etc/nginx/sites-available/80.conf',**variables)
+    core=render('cat > /etc/nginx/sites-available/00-maps.conf',**variables)
+    for target in (MAIN,'cat > "/etc/nginx/sites-available/${reality_domain}"'):
+        core+=render(target,**variables)
+    vision=helper('vision')
+    vision_acme=vision.acme_config(names[2],ipv6=ipv6)
+    fallback=vision.fallback_config(names[2],31236)
+    temporary='\n'.join(f'{kind}_temp_path {root}/{kind};' for kind in ('client_body','proxy','fastcgi','uwsgi','scgi'))
+    result={}
+    for stage,text in (('initial',acme),('core',acme+core),
+                       ('vision-acme',acme+core+vision_acme),('fallback',acme+core+vision_acme+fallback)):
+        text=text.replace('listen 80;',f'listen 127.0.0.1:{ports[0]};')
+        text=text.replace('listen [::]:80;',f'listen [::1]:{ports[0]};')
+        for old,port in zip((7443,9443,31236),ports[1:]): text=text.replace(f'127.0.0.1:{old}',f'127.0.0.1:{port}')
+        text=text.replace('/etc/nginx/snippets/includes.conf',str(root/'includes.conf'))
+        text=text.replace('/etc/nginx/snippets/x-ui-auto-optional',str(root/'optional'))
+        text=re.sub(r'/etc/letsencrypt/live/[^/]+/fullchain.pem',str(root/'cert.pem'),text)
+        text=re.sub(r'/etc/letsencrypt/live/[^/]+/privkey.pem',str(root/'key.pem'),text)
+        text=text.replace('/var/www/acme',str(root/'acme')).replace('/var/www/html',str(root/'html'))
+        result[stage]=f'pid {root}/pid; error_log stderr; events {{}} http {{ access_log off; {temporary}\n{text}\n}}'
+    return result
+
+
+def http_name_certificate(root):
+    # Syntax-only fixture: nginx -t needs a certificate, without a TLS handshake.
+    subprocess.run(['openssl','req','-x509','-newkey','ec','-pkeyopt','ec_paramgen_curve:prime256v1',
+                    '-nodes','-days','1','-subj','/CN=fixture.example','-keyout',str(root/'key.pem'),
+                    '-out',str(root/'cert.pem')],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+
+
 def nginx_ipv4_acme(simulate=False):
     """Production renderers plus real nginx; reused by the existing second VM boot."""
     from certificate_fixtures import relocate
@@ -111,6 +151,100 @@ install() { local -a args=(); while (($#)); do case \"$1\" in -o|-g) shift 2;; *
 
 
 class InstallerCompatibility(unittest.TestCase):
+    def test_real_nginx_http_all_permitted_hostname_lengths(self):
+        nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
+        self.assertTrue(nginx,'Real nginx required')
+        cases=[tuple(dns_name(n,c) for c in 'abv') for n in range(3,254)]
+        cases += [('a.'*125+'aaa','b.'*125+'bbb','v.'*125+'vvv'),
+                  ('.'.join(['xn--e1afmkfd']*11+['xn--p1ai']),'cover.example','vision.example'),
+                  ('an.'+dns_name(250),'c0.'+dns_name(250),dns_name(253,'v'))]
+        valid=shell(('valid_hostname',),'for name in "$@"; do valid_hostname "$name" || exit 1; done',
+                    stubs='set -- '+' '.join(name for names in cases for name in names))
+        self.assertEqual(valid.returncode,0,valid.stderr)
+        vision=helper('vision')
+        families=(False,True) if vision.ipv6_available() else (False,)
+        with tempfile.TemporaryDirectory(prefix='http-names-') as directory:
+            root=Path(directory); conf=root/'nginx.conf'; http_name_certificate(root)
+            with socket.socket() as a,socket.socket() as b,socket.socket() as c,socket.socket() as d:
+                for listener in (a,b,c,d): listener.bind(('127.0.0.1',0))
+                ports=[listener.getsockname()[1] for listener in (a,b,c,d)]
+            for names in cases:
+                for name in names: self.assertEqual(vision.domain_name(name),name)
+                for ipv6 in families:
+                    for stage,text in http_name_configs(root,names,ipv6,ports).items():
+                        with self.subTest(length=len(names[0]),prefix=names[0][:4],ipv6=ipv6,stage=stage):
+                            conf.write_text(text)
+                            result=subprocess.run([nginx,'-t','-e','stderr','-p',directory+'/', '-c',str(conf)],
+                                                  capture_output=True,text=True,timeout=10)
+                            self.assertEqual(result.returncode,0,result.stderr)
+                            if max(map(len,names))<=46: self.assertNotIn('[warn]',result.stderr)
+
+    def test_real_nginx_http_long_host_routing_acme_and_vision_fallback(self):
+        nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
+        self.assertTrue(nginx,'Real nginx required')
+        families=(False,True) if helper('vision').ipv6_available() else (False,)
+        for length in (13,47,111,239,253):
+            names=tuple(dns_name(length,c) for c in 'abv')
+            for ipv6 in families:
+                with self.subTest(length=length,ipv6=ipv6),tempfile.TemporaryDirectory(prefix='http-routing-') as directory:
+                    root=Path(directory); http_name_certificate(root)
+                    (root/'acme/.well-known/acme-challenge').mkdir(parents=True)
+                    (root/'acme/.well-known/acme-challenge/check').write_bytes(b'ACME exact bytes')
+                    (root/'html').mkdir(); (root/'html/index.html').write_bytes(b'Vision fallback exact bytes')
+                    # Keep sockets open during allocation so this fixture's TCP ports are distinct.
+                    with socket.socket() as a,socket.socket() as b,socket.socket() as c,socket.socket() as d:
+                        for listener in (a,b,c,d): listener.bind(('127.0.0.1',0))
+                        ports=[listener.getsockname()[1] for listener in (a,b,c,d)]
+                    configs=http_name_configs(root,names,ipv6,ports)
+                    for stage in ('initial','vision-acme','fallback'):
+                        text=configs[stage]
+                        access=root/'access.log'; access.unlink(missing_ok=True)
+                        text=text.replace('http { access_log off;',f'http {{ log_format selected "$server_name|$host|$request_uri|$status"; access_log {access} selected;')
+                        conf=root/'nginx.conf'; conf.write_text(text)
+                        command=[nginx,'-e','stderr','-p',directory+'/', '-c',str(conf)]
+                        syntax=subprocess.run([*command,'-t'],capture_output=True,text=True,timeout=10)
+                        self.assertEqual(syntax.returncode,0,syntax.stderr)
+                        with (root/'private.log').open('wb') as log:
+                            child=subprocess.Popen([*command,'-g','daemon off;'],stdout=log,stderr=log)
+                            expected=[]
+                            try:
+                                deadline=time.monotonic()+5
+                                while True:
+                                    self.assertIsNone(child.poll(),'nginx exited: '+(root/'private.log').read_text())
+                                    try:
+                                        with socket.create_connection(('::1' if ipv6 else '127.0.0.1',ports[0]),timeout=.1): break
+                                    except OSError:
+                                        if time.monotonic()>=deadline: self.fail('HTTP listener readiness deadline')
+                                        time.sleep(.02)
+                                for name in (*names,names[2].upper(),'unknown.example'):
+                                    selected=names[2] if stage!='initial' and name.lower()==names[2] else names[0]
+                                    for path in ('/.well-known/acme-challenge/check?nonce=fixture','/ordinary?keep=1'):
+                                        connection=http.client.HTTPConnection('::1' if ipv6 else '127.0.0.1',ports[0],timeout=3)
+                                        try:
+                                            connection.request('GET',path,headers={'Host':name})
+                                            response=connection.getresponse(); body=response.read()
+                                            if path.startswith('/.well-known/'):
+                                                self.assertEqual((response.status,body),(200,b'ACME exact bytes'))
+                                            else:
+                                                self.assertEqual(response.status,301)
+                                                self.assertEqual(response.getheader('Location'),'https://'+name.lower()+path)
+                                            expected.append(f'{selected}|{name.lower()}|{path}|{response.status}')
+                                        finally: connection.close()
+                                if stage=='fallback':
+                                    for name in names:
+                                        with socket.create_connection(('127.0.0.1',ports[3]),timeout=3) as client:
+                                            client.sendall(('PROXY TCP4 127.0.0.1 127.0.0.1 12345 80\r\nGET / HTTP/1.1\r\nHost: '+name+'\r\nConnection: close\r\n\r\n').encode())
+                                            response=http.client.HTTPResponse(client); response.begin(); body=response.read()
+                                            self.assertEqual(response.status,200 if name==names[2] else 404)
+                                            if name==names[2]: self.assertEqual(body,b'Vision fallback exact bytes')
+                                            else: self.assertNotIn(b'Vision fallback exact bytes',body)
+                                            expected.append(f'{names[2]}|{name}|/|{response.status}')
+                            finally:
+                                child.terminate()
+                                try: child.wait(timeout=5)
+                                except subprocess.TimeoutExpired: child.kill(); child.wait(timeout=5)
+                            self.assertEqual(access.read_text().splitlines(),expected)
+
     def test_real_nginx_stream_all_permitted_hostname_lengths(self):
         nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
         self.assertTrue(nginx,'Real nginx required')
