@@ -56,6 +56,7 @@ def http_name_configs(root, names, ipv6, ports):
     version=subprocess.run([nginx,'-v'],capture_output=True,text=True,check=True).stderr
     modern=tuple(map(int,re.search(r'nginx/(\d+)\.(\d+)\.(\d+)',version).groups())) >= (1,25,1)
     variables={'domain':names[0],'reality_domain':names[1],
+               'diag_token':'AbCdEf0123456789',  # Production gen_random_string(16), not the shorter shared fixture.
                'http2_listen':'' if modern else ' http2','http2_on':'http2 on;' if modern else '',
                'ipv6_listen':'listen [::]:80;' if ipv6 else ''}
     (root/'includes.conf').write_text(render(SHARED,**variables))
@@ -151,6 +152,87 @@ install() { local -a args=(); while (($#)); do case \"$1\" in -o|-g) shift 2;; *
 
 
 class InstallerCompatibility(unittest.TestCase):
+    def test_real_nginx_http_maps_with_small_cacheline_and_existing_policy(self):
+        nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
+        self.assertTrue(nginx,'Real nginx required')
+        qemu=shutil.which('qemu-x86_64')
+        self.assertTrue(qemu,'Existing CI qemu-user dependency required')
+        # Unmodified packaged amd64 nginx: this CPUID selects nginx's 32-byte
+        # cacheline branch. An explicit bucket 32 on a modern CPU rounds to 64.
+        commands=([nginx],[qemu,'-cpu','qemu64,vendor=GenuineIntel,family=6,model=6',nginx])
+        token='AbCdEf0123456789'
+        with tempfile.TemporaryDirectory(prefix='http-map-hash-') as directory:
+            root=Path(directory); (root/'optional').mkdir(); http_name_certificate(root)
+            configs=http_name_configs(root,('panel.example','cover.example','vision.example'),False,(31231,31232,31233,31234))
+            policy=root/'policy.conf';conf=root/'nginx.conf'
+            for command in commands:
+                for bucket in (None,32,64,128):
+                    policy_text=('' if bucket is None else f'map_hash_bucket_size {bucket};\n')
+                    policy_text+='map $arg_probe $foreign_map { default 0; fixture 1; }\n'
+                    policy.write_text(policy_text)
+                    for stage,text in configs.items():
+                        with self.subTest(emulated=len(command)>1,bucket=bucket,stage=stage):
+                            # Policy in a separate HTTP include, as in distro conf.d;
+                            # no assumptions about nginx.conf indentation/line layout.
+                            conf.write_text(text.replace('http {',f'http {{ include {policy};',1))
+                            result=subprocess.run([*command,'-t','-e','stderr','-p',directory+'/', '-c',str(conf)],capture_output=True,text=True,timeout=15)
+                            self.assertEqual(result.returncode,0,result.stderr)
+                            self.assertNotIn('[warn]',result.stderr)
+                            self.assertEqual(policy.read_text(),policy_text)
+                from test_personal_xhttp import MAIN
+                main=render(MAIN,diag_token=token)
+                diag=re.search(r'map \$cookie_diag_key \$diag_auth \{.*?^\}',main,re.M|re.S).group()
+                maps=render('cat > /etc/nginx/sites-available/00-maps.conf')
+                with socket.socket() as reserved:
+                    reserved.bind(('127.0.0.1',0));port=reserved.getsockname()[1]
+                temporary='\n'.join(f'{kind}_temp_path {root}/{kind};' for kind in ('client_body','proxy','fastcgi','uwsgi','scgi'))
+                conf.write_text(f'pid {root}/pid; error_log stderr; events {{}} http {{ access_log off; {temporary}\n{maps}\n{diag}\nserver {{ listen 127.0.0.1:{port}; return 200 "$diag_auth:$serve_clash_yaml"; }} }}')
+                process=subprocess.Popen([*command,'-e','stderr','-p',directory+'/', '-c',str(conf),'-g','daemon off; master_process off;'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                try:
+                    deadline=time.monotonic()+5
+                    while True:
+                        self.assertIsNone(process.poll(),'nginx HTTP map startup failed')
+                        try:
+                            with socket.create_connection(('127.0.0.1',port),timeout=.1):break
+                        except OSError:
+                            if time.monotonic()>=deadline:self.fail('nginx HTTP map readiness deadline')
+                            time.sleep(.02)
+                    for cookie,allowed in (('',0),(token,1),(token.lower(),1),(token.upper(),1),('x'+token,0),(token+'x',0),('wrong',0)):
+                        connection=http.client.HTTPConnection('127.0.0.1',port,timeout=3)
+                        try:
+                            connection.request('GET','/',headers={'Cookie':'diag_key='+cookie,'User-Agent':'ClashMeta/1.19.30; mihomo/1.19.30','x-hwid':'fixture'})
+                            response=connection.getresponse()
+                            self.assertEqual((response.status,response.read()),(200,f'{allowed}:0'.encode()))
+                        finally:connection.close()
+                finally:
+                    process.terminate()
+                    try:process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:process.kill();process.wait(timeout=5)
+
+    def test_repeated_nginx_configuration_preserves_existing_http_policy(self):
+        from certificate_fixtures import relocate
+        from test_personal_xhttp import FIXTURE
+        with tempfile.TemporaryDirectory(prefix='nginx-repeat-') as directory:
+            root=Path(directory);nginx=root/'etc/nginx';nginx.mkdir(parents=True)
+            policy=nginx/'conf.d/policy.conf';policy.parent.mkdir()
+            policy.write_text('map_hash_bucket_size 128;\nmap $arg_probe $foreign_map { default 0; }\n')
+            # Distro packages already provide this module declaration.
+            (nginx/'modules.conf').write_text('load_module modules/ngx_stream_module.so;\n')
+            config=nginx/'nginx.conf';config.write_text(f'events {{}}\n  http  {{ include {policy}; }}\n')
+            stubs='''nginx() { [[ "${1:-}" != -v ]] || echo 'nginx version: nginx/1.24.0' >&2; return 0; }
+systemctl() { :; }
+install() { local -a args=(); while (($#)); do case "$1" in -o|-g) shift 2;; *) args+=("$1"); shift;; esac; done; command install "${args[@]}"; }
+'''
+            source='\n'.join(relocate(complete_function(n),root) for n in ('ipv6_available','prepare_acme_webroot','setup_acme_http','configure_nginx'))
+            snapshots=[]
+            for iteration in range(2):
+                result=subprocess.run(['bash','-u','-c',source+'\n'+stubs+'\nsetup_acme_http && configure_nginx'],env={**os.environ,**FIXTURE},capture_output=True,text=True,timeout=15)
+                self.assertEqual(result.returncode,0,result.stderr)
+                snapshots.append({str(p.relative_to(nginx)):p.read_bytes() for p in nginx.rglob('*') if p.is_file()})
+            self.assertEqual(snapshots[0],snapshots[1])
+            self.assertEqual(policy.read_text(),'map_hash_bucket_size 128;\nmap $arg_probe $foreign_map { default 0; }\n')
+            self.assertEqual(config.read_text().count('http  {'),1)
+
     def test_real_nginx_http_all_permitted_hostname_lengths(self):
         nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
         self.assertTrue(nginx,'Real nginx required')
