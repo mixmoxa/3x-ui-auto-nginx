@@ -895,8 +895,9 @@ limit_req_zone  \$binary_remote_addr zone=diag_page:10m rate=30r/m;
 limit_conn_zone \$binary_remote_addr zone=per_ip:10m;
 
 # Diagnostics access: cookie issued by the SSO bridge after panel login
+# Exact regex avoids a 40-byte hash entry on CPUs with 32-byte map buckets.
 map \$cookie_diag_key \$diag_auth {
-    "${diag_token}" 1;
+    "~*\\A${diag_token}\\z" 1;
     default          0;
 }
 
