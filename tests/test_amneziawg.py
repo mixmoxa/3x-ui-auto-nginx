@@ -132,6 +132,16 @@ else: sys.exit(1)
                         try: os.killpg(pid,signal.SIGTERM)
                         except ProcessLookupError: pass
                     process.wait(timeout=5)
+                    # SIGTERM is asynchronous; every known listener must release its sockets.
+                    children=[int((root/name).read_text()) for name in ('child-pid','hog-pid') if (root/name).exists()]
+                    deadline=time.monotonic()+5
+                    for pid in children:
+                        while time.monotonic()<deadline:
+                            try: state=Path(f'/proc/{pid}/stat').read_text().split(') ',1)[1].split()[0]
+                            except FileNotFoundError: break
+                            if state=='Z': break
+                            time.sleep(.01)
+                        else: self.fail('Private UDP fixture child did not terminate')
 
     def test_opt_in_defaults_and_eof(self):
         for answer, expected in [('', 'n'), ('\n','n'), ('N\n','n'), ('y\n','y'), ('Y\n','y'), ('invalid\nN\n','n')]:
