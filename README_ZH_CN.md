@@ -41,6 +41,8 @@
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
+交互式 SSH 终端会打开菜单：**1 — Installation**、**3 — Backups**、**0 — Exit**。请使用 `ssh -t` 分配 TTY；没有 TTY 时应使用明确的安装参数。[菜单与备份命令](docs/MANAGER.md)。
+
 <details>
 <summary><strong>备用下载 — GitHub Releases 不可用时</strong></summary>
 

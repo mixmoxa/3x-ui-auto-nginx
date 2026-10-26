@@ -41,6 +41,8 @@
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
+در ترمینال تعاملی SSH منو باز می‌شود: **1 — Installation**، **3 — Backups**، **0 — Exit**. با `ssh -t` یک TTY اختصاص دهید؛ بدون TTY از آرگومان‌های صریح نصب استفاده کنید. [منو و فرمان‌های پشتیبان‌گیری](docs/MANAGER.md).
+
 <details>
 <summary><strong>دریافت جایگزین — اگر GitHub Releases در دسترس نیست</strong></summary>
 

@@ -1,16 +1,12 @@
 #!/bin/bash
 # 3x-ui Auto Nginx - based on x-ui-pro-refactor by mozaroc (github.com/mozaroc/3x-ui-pro)
-[[ $EUID -ne 0 ]] && { echo "Run as root: sudo bash $0"; exit 1; }
 
 # ─── Output helpers ──────────────────────────────────────────────────────────
-msg_ok()  { printf '\e[1;32m%s\e[0m\n' "$1"; }
-msg_err() { echo -e "\e[1;41m $1 \e[0m"; }
-msg_inf() { echo -e "\e[1;34m$1\e[0m"; }
-msg_warn() { printf '\e[1;33m%s\e[0m\n' "$1"; }
+msg_ok() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;32m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
+msg_err() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;41m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
+msg_inf() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;34m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
+msg_warn() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;33m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
 
-echo
-msg_inf '3X-UI AUTO NGINX'
-echo
 
 # ─── Pre-flight checks ───────────────────────────────────────────────────────
 check_os() {
@@ -64,8 +60,6 @@ check_cpu() {
     fi
 }
 
-check_os
-check_cpu
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 XUIDB="/etc/x-ui/x-ui.db"
@@ -78,8 +72,10 @@ configure_project_source() {
     fi
     GITHUB_RAW="https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/${PROJECT_REF}"
 }
-configure_project_source || exit 1
+# Validation is local only; source/import performs no operation.
+configure_project_source || return 1 2>/dev/null || exit 1
 FAKE_SITE_COUNT=10
+PROJECT_SOURCE_SHA=
 LEGACY_CERTBOT_CRON='@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" > /dev/null 2>&1'
 
 # ─── Default argument values ─────────────────────────────────────────────────
@@ -169,32 +165,37 @@ make_port() {
 
 # ─── Generate paths (ports follow mandatory release dependencies in main) ───
 
-sub_path=$(gen_random_string 10)
-json_path=$(gen_random_string 10)
-panel_path=$(gen_random_string 10)
-ws_path=$(gen_random_string 10)
-trojan_path=$(gen_random_string 10)
-xhttp_path=$(gen_random_string 10)
-config_username=$(gen_random_string 10)
-config_password=$(gen_random_string 10)
-diag_path="/net-$(gen_random_string 12)/"
-diag_token=$(gen_random_string 16)
+initialize_installation() {
+    sub_path=$(gen_random_string 10)
+    json_path=$(gen_random_string 10)
+    panel_path=$(gen_random_string 10)
+    ws_path=$(gen_random_string 10)
+    trojan_path=$(gen_random_string 10)
+    xhttp_path=$(gen_random_string 10)
+    config_username=$(gen_random_string 10)
+    config_password=$(gen_random_string 10)
+    diag_path="/net-$(gen_random_string 12)/"
+    diag_token=$(gen_random_string 16)
+}
 
-# ─── Argument parsing ────────────────────────────────────────────────────────
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        -install)          INSTALL="$2";           shift 2 ;;
-        -subdomain)        domain="$2";            shift 2 ;;
-        -reality_domain)   reality_domain="$2";    shift 2 ;;
-        -ONLY_CF_IP_ALLOW) CFALLOW="$2";           shift 2 ;;
-        -version)
-            PANEL_VERSION="${2:-}"
-            [[ -n "$PANEL_VERSION" ]] || { msg_err "-version requires a stable release tag."; exit 1; }
-            shift 2 ;;
-        -uninstall)        UNINSTALL="$2";         shift 2 ;;
-        *)                 shift 1 ;;
-    esac
-done
+parse_installation_args() {
+    while [ "$#" -gt 0 ]; do
+        case "$1" in -install|-subdomain|-reality_domain|-ONLY_CF_IP_ALLOW|-version|-uninstall)
+            (( $# >= 2 )) || { msg_err "Missing argument: $1"; return 2; } ;; esac
+        case "$1" in
+            -install)          INSTALL="$2";           shift 2 ;;
+            -subdomain)        domain="$2";            shift 2 ;;
+            -reality_domain)   reality_domain="$2";    shift 2 ;;
+            -ONLY_CF_IP_ALLOW) CFALLOW="$2";           shift 2 ;;
+            -version)
+                PANEL_VERSION="${2:-}"
+                [[ -n "$PANEL_VERSION" ]] || { msg_err "-version requires a stable release tag."; exit 1; }
+                shift 2 ;;
+            -uninstall)        UNINSTALL="$2";         shift 2 ;;
+            *)                 shift 1 ;;
+        esac
+    done
+}
 
 # Only stable release versions at or above the supported security baseline.
 _validate_panel_version() {
@@ -206,13 +207,8 @@ _validate_panel_version() {
     fi
 }
 
-# Reject unsafe/invalid -version values before uninstall or rebuild actions.
-if [[ -n "$PANEL_VERSION" ]]; then
-    _validate_panel_version "$PANEL_VERSION" || exit 1
-fi
-
 # ─── Detect package manager ───────────────────────────────────────────────────
-Pak=$(type apt &>/dev/null && echo "apt" || echo "yum")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UNINSTALL
@@ -316,13 +312,6 @@ uninstall_xui() {
     systemctl daemon-reload 2>/dev/null || true
 }
 
-if [[ ${UNINSTALL} == *"y"* ]]; then
-    confirm_destructive_reinstall || exit 1
-    uninstall_xui || exit 1
-    msg_ok "3X-UI Auto Nginx completely uninstalled."
-    exit 0
-fi
-
 # ─────────────────────────────────────────────────────────────────────────────
 # GET SERVER IP
 # ─────────────────────────────────────────────────────────────────────────────
@@ -337,12 +326,6 @@ get_server_ip() {
     [[ $IP4 =~ $IP4_REGEX ]] || IP4=""
     [[ $IP6 =~ $IP6_REGEX ]] || IP6=""
 }
-
-# Early IP fetch for auto-domain
-IP4=$(ip route get 8.8.8.8 2>&1 | grep -Po -- 'src \K\S*')
-[[ $IP4 =~ $IP4_REGEX ]] || IP4=$(curl -4 -fsS --connect-timeout 5 --max-time 10 https://ipv4.icanhazip.com | tr -d '[:space:]')
-[[ $IP4 =~ $IP4_REGEX ]] || IP4=""
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DOMAIN VALIDATION
@@ -1276,6 +1259,9 @@ PY
 
 preflight_panel_release() {
     bootstrap_panel_dependencies || { msg_err "Release preflight dependency setup failed."; return 1; }
+    # Curl/CA bootstrap may install base tools; managed state is still untouched.
+    pin_project_source || return 1
+    prepare_backup_helper || return 1
     PANEL_STAGE=$(mktemp -d /tmp/x-ui-release.XXXXXX) || return 1
     trap release_panel_preflight EXIT
     chmod 700 "$PANEL_STAGE" || return 1
@@ -1811,14 +1797,20 @@ tune_system() {
 install_backup_tool() {
     local temporary
     mkdir -p /usr/local/bin || return 1
+    [[ ! -L /usr/local/bin && $(stat -c '%u' /usr/local/bin) == 0 ]] || return 1
+    if [[ -e /usr/local/bin/x-ui-backup || -L /usr/local/bin/x-ui-backup ]]; then
+        [[ -f /usr/local/bin/x-ui-backup && ! -L /usr/local/bin/x-ui-backup &&
+           $(stat -c '%u:%g:%a' /usr/local/bin/x-ui-backup) == 0:0:755 ]] || return 1
+    fi
     temporary=$(mktemp /usr/local/bin/.x-ui-backup.XXXXXX) || return 1
     if ! curl -fsSL "${GITHUB_RAW}/assets/backup/x-ui-backup.sh" -o "$temporary" ||
-       ! bash -n "$temporary" || [[ ! -s "$temporary" ]]; then
+       ! bash -n "$temporary" || [[ $(bash "$temporary" capabilities) != 'xui-backup:1 inspect backup-json lock-fd9' ]]; then
         rm -f "$temporary"
         msg_err "Failed to download a valid backup tool."
         return 1
     fi
     if ! chown root:root "$temporary" || ! chmod 0755 "$temporary" ||
+       ! backup_helper_compatible "$temporary" ||
        ! mv -fT "$temporary" /usr/local/bin/x-ui-backup; then
         rm -f "$temporary"
         msg_err "Failed to install the backup tool."
@@ -2833,6 +2825,54 @@ install_initial_client() {
     CLIENT_RESULT=configured
 }
 
+# Protocol 1: fd 9 is an inherited open-file description of this private inode.
+# Re-locking that same description is nested ownership, never an env bypass.
+acquire_stack_lock() {
+    local directory=/run/3x-ui-auto-nginx path=/run/3x-ui-auto-nginx/operation.lock info candidate executable parent=$$
+    local -a ancestors=() argv=()
+    [[ $EUID == 0 ]] || { printf 'Run this operation as root.\n' >&2; return 1; }
+    command -v flock >/dev/null || { printf 'Required tool unavailable: flock (util-linux).\n' >&2; return 1; }
+    if [[ ! -e "$directory" && ! -L "$directory" ]]; then
+        mkdir -m 0700 -- "$directory" || return 1
+    fi
+    [[ -d "$directory" && ! -L "$directory" && $(stat -c '%u:%g:%a' "$directory") == 0:0:700 ]] || {
+        printf 'Unsafe operation lock directory.\n' >&2; return 1;
+    }
+    if [[ ! -e "$path" && ! -L "$path" ]]; then
+        (umask 077; set -o noclobber; : > "$path") || return 1
+    fi
+    [[ -f "$path" && ! -L "$path" && $(stat -c '%u:%g:%a:%h' "$path") == 0:0:600:1 ]] || {
+        printf 'Unsafe operation lock file.\n' >&2; return 1;
+    }
+    info=$(stat -Lc '%d:%i' "$path") || return 1
+    if [[ $(stat -Lc '%d:%i' /proc/self/fd/9 2>/dev/null) != "$info" ]]; then
+        exec 9<> "$path" || return 1
+    fi
+    [[ $(stat -Lc '%d:%i' /proc/self/fd/9) == "$info" ]] || return 1
+    flock -n 9 || { printf 'Another stack operation is running.\n' >&2; return 75; }
+    # Historic lock-unaware processes cannot be retroactively locked. Refuse
+    # identifiable peers, excluding this process and its own trusted ancestors.
+    while [[ "$parent" =~ ^[0-9]+$ && "$parent" != 0 ]]; do
+        ancestors+=("$parent")
+        parent=$(awk '/^PPid:/ {print $2}' "/proc/$parent/status" 2>/dev/null) || break
+    done
+    for candidate in /proc/[0-9]*/cmdline; do
+        parent=${candidate#/proc/}; parent=${parent%/cmdline}
+        [[ " ${ancestors[*]} " != *" $parent "* ]] || continue
+        argv=()
+        mapfile -d '' -t argv 2>/dev/null < "$candidate" || continue
+        # Match script argv, not arbitrary substrings in bash -c or test code.
+        executable=${argv[0]:-}
+        case "${executable##*/}" in bash|sh|env) ;; *) continue ;; esac
+        case "${argv[1]:-}" in
+            */x-ui-backup|*/x-ui-backup.sh)
+                case "${argv[2]:-}" in backup|restore|update-hooks)
+                    printf 'An existing Backup utility is running; let it finish first.\n' >&2; return 75 ;;
+                esac ;;
+        esac
+    done
+}
+
 main() {
     confirm_destructive_reinstall || exit 1
     validate_domains || exit 1
@@ -2924,9 +2964,212 @@ main() {
     if [[ "${INSTALL_SECURITY:-n}${INSTALL_VISION:-n}${INSTALL_AWG:-n}${INSTALL_AGH:-n}${CREATE_CLIENT:-n}" != nnnnn ]]; then
         if ! check_installation; then CORE_RESULT=failed_unverified; install_result=1; fi
     fi
+    if [[ "$CORE_RESULT" == configured ]]; then
+        write_managed_state || { msg_err "Managed-state could not be recorded; core data retained."; install_result=1; }
+    fi
     show_results
     finish_initial_reboot "$install_result" || install_result=1
     return "$install_result"
 }
 
-main
+
+# Describe only this health-checked fresh install; no legacy adoption.
+write_managed_state() {
+    [[ ${CORE_RESULT:-} == configured && ${PROJECT_SOURCE_SHA:-} =~ ^[0-9a-f]{40}$ ]] || return 1
+    python3 - "$XUIDB" "$PROJECT_SOURCE_SHA" "$domain" "$reality_domain" \
+        "${VISION_RESULT:-not_requested}" "${AWG_RESULT:-not_requested}" "${AGH_RESULT:-not_requested}" <<'PYSTATE'
+import json, os, pathlib, sqlite3, tempfile, sys
+path,revision,panel,reality,vision_result,awg_result,agh_result=sys.argv[1:]
+roles={}; vision=None
+with sqlite3.connect('file:'+path+'?mode=ro',uri=True) as db:
+    settings=dict(db.execute('SELECT key,value FROM settings'))
+    for key,name in (('webCertFile','fullchain.pem'),('webKeyFile','privkey.pem'),('subCertFile','fullchain.pem'),('subKeyFile','privkey.pem')):
+        if settings.get(key)!='/root/cert/'+panel+'/'+name: raise ValueError('Panel TLS relationship differs')
+    columns={r[1] for r in db.execute('PRAGMA table_info(inbounds)')}
+    share=','.join(name if name in columns else "''" for name in ('share_addr_strategy','share_addr'))
+    rows=db.execute('SELECT id,protocol,listen,port,stream_settings,'+share+' FROM inbounds').fetchall()
+    def single(role,predicate):
+        found=[r for r in rows if predicate(r,json.loads(r[4]))]
+        if len(found)!=1: raise ValueError('Ambiguous installed role: '+role)
+        roles[role]=found[0][0]
+        return json.loads(found[0][4])
+    single('reality',lambda r,s:r[1:4]==('vless','127.0.0.1',8443) and s.get('security')=='reality' and
+           s.get('realitySettings',{}).get('serverNames')==[reality] and s.get('realitySettings',{}).get('target')=='127.0.0.1:9443')
+    for role,proto,network in (('ws','vless','ws'),('grpc','trojan','grpc')):
+        single(role,lambda r,s,proto=proto,network=network:r[1]==proto and r[2]=='127.0.0.1' and s.get('network')==network and s.get('security')=='none')
+    single('xhttp',lambda r,s:r[1:4]==('vless','/dev/shm/uds2023.sock,0666',0) and s.get('network')=='xhttp' and s.get('xhttpSettings',{}).get('mode')=='stream-up')
+    single('hysteria2',lambda r,s:r[1]=='hysteria' and r[3]==443 and s.get('tlsSettings',{}).get('serverName')==panel)
+    if vision_result=='configured':
+        stream=single('vision',lambda r,s:r[1]=='vless' and r[2]=='127.0.0.1' and s.get('security')=='tls')
+        vision=stream['tlsSettings']['serverName']
+    if awg_result=='configured':
+        single('amneziawg',lambda r,s:r[1:4]==('amneziawg','0.0.0.0',8443) and r[5:]==('custom',panel))
+    for role,iid in roles.items():
+        if role!='amneziawg' and not db.execute('SELECT 1 FROM hosts WHERE inbound_id=? AND address=? AND port=443',
+                (iid,vision if role=='vision' else panel)).fetchone(): raise ValueError('Missing Host relationship: '+role)
+if agh_result=='installed':
+    if json.loads(pathlib.Path('/opt/AdGuardHome/managed.json').read_text()).get('domain')!=panel:
+        raise ValueError('AGH domain relationship differs')
+state=dict(format=1,layout='nginx-stream-v1',installed_by='source@'+revision,source_ref=revision,
+           domains=dict(panel=panel,reality=reality,vision=vision),inbound_roles=roles,
+           features=dict(adguard=agh_result=='installed',vision=vision_result=='configured',amneziawg=awg_result=='configured'))
+directory=pathlib.Path(path).parent;target=directory/'auto-nginx-managed.json'
+if directory.is_symlink() or directory.stat().st_uid!=0 or directory.stat().st_mode&0o022:
+    raise ValueError('Unsafe managed-state directory')
+if target.is_symlink() or (target.exists() and (not target.is_file() or target.stat().st_uid!=0)):
+    raise ValueError('Unsafe managed-state target')
+fd,name=tempfile.mkstemp(prefix='.managed-',dir=directory)
+try:
+    with os.fdopen(fd,'w') as out:
+        os.fchmod(out.fileno(),0o600);os.fchown(out.fileno(),0,0)
+        json.dump(state,out);out.write('\n');out.flush();os.fsync(out.fileno())
+    os.replace(name,target)
+finally:
+    if os.path.exists(name):os.unlink(name)
+PYSTATE
+}
+
+# Resolve mutable sources once and compare this script before fetching code.
+# A release asset differs from source only in its PROJECT_REF default.
+pin_project_source() {
+    local revision=$PROJECT_REF temporary response
+    if [[ ! "$revision" =~ ^[a-fA-F0-9]{40}$ ]]; then
+        response=$(curl -q -fsSL --connect-timeout 10 --max-time 30 "https://api.github.com/repos/xPROMSx/3x-ui-auto-nginx/commits/$revision") || return 1
+        revision=$(printf '%s' "$response" | python3 -c 'import json,re,sys; value=json.load(sys.stdin)["sha"]; print(value) if isinstance(value,str) and re.fullmatch("[0-9a-f]{40}",value) else sys.exit("Invalid project source revision")') || return 1
+    fi
+    [[ "$revision" =~ ^[a-fA-F0-9]{40}$ ]] || { msg_err 'Cannot resolve project source revision.'; return 1; }
+    temporary=$(mktemp -d) || return 1
+    if ! curl -q -fsSL --connect-timeout 10 --max-time 30 \
+        "${GITHUB_RAW%/*}/$revision/x-ui-latest.sh" -o "$temporary/source" ||
+       ! sed '/^PROJECT_REF=/c\PROJECT_REF=normalized' "$temporary/source" > "$temporary/expected" ||
+       ! sed '/^PROJECT_REF=/c\PROJECT_REF=normalized' "${BASH_SOURCE[0]}" > "$temporary/actual" ||
+       ! cmp -s "$temporary/expected" "$temporary/actual"; then
+        rm -rf -- "$temporary"
+        msg_err 'Installer differs from selected source revision; download a matching installer and retry.'
+        return 1
+    fi
+    rm -rf -- "$temporary"
+    PROJECT_SOURCE_SHA=${revision,,}
+    PROJECT_REF=$PROJECT_SOURCE_SHA
+    configure_project_source
+}
+
+backup_helper_compatible() {
+    local helper=${1:-/usr/local/bin/x-ui-backup} status=0
+    [[ -f "$helper" && ! -L "$helper" && $(stat -c '%u:%g:%a' "$helper") == 0:0:755 ]] || return 1
+    [[ $(bash "$helper" capabilities) == 'xui-backup:1 inspect backup-json lock-fd9' ]] || return 1
+    # Functional contention probe: a version string alone does not prove locking.
+    bash "$helper" lock-check 9>&- >/dev/null 2>&1 || status=$?
+    [[ $status == 75 ]] || return 1
+    bash "$helper" lock-check
+}
+
+prepare_backup_helper() {
+    backup_helper_compatible && return 0
+    [[ -n ${PROJECT_SOURCE_SHA:-} && $PROJECT_SOURCE_SHA == "${PROJECT_REF:-}" ]] || pin_project_source || return 1
+    install_backup_tool || return 1
+    backup_helper_compatible || { msg_err 'Backup helper protocol verification failed.'; return 1; }
+}
+
+backup_list() {
+    local archive size timestamp number=0
+    BACKUP_CHOICES=()
+    for archive in /var/backups/x-ui/*.tar.gz; do
+        [[ -f "$archive" && ! -L "$archive" ]] || continue
+        BACKUP_CHOICES+=("$archive")
+        number=$((number+1))
+        size=$(stat -c %s -- "$archive") || return 1
+        timestamp=$(date -u -r "$archive" '+%Y-%m-%d %H:%M UTC') || return 1
+        printf '%d. %q  %s  %s bytes\n' "$number" "$archive" "$timestamp" "$size"
+    done
+    (( number )) || printf 'No backups in /var/backups/x-ui.\n'
+}
+
+backup_action() (
+    acquire_stack_lock || exit $?
+    local action=$1 choice archive answer
+    if [[ "$action" == list ]]; then backup_list; exit $?; fi
+    prepare_backup_helper || exit 1
+    if [[ "$action" == backup ]]; then
+        local result
+        result=$(bash /usr/local/bin/x-ui-backup backup --json) || exit $?
+        printf '%s\n' "$result" | python3 -c 'import json,sys; r=json.load(sys.stdin); r.get("status")=="success" or sys.exit(1); print("Created archive: "+ascii(r["archive"]))' || exit 1
+        exit 0
+    fi
+    backup_list || exit 1
+    printf 'Archive number or absolute path (empty to cancel): '
+    IFS= read -r choice || exit 0
+    [[ -n "$choice" ]] || exit 0
+    if [[ "$choice" =~ ^[0-9]+$ && ${#choice} -lt 8 ]]; then
+        (( 10#$choice > 0 && 10#$choice <= ${#BACKUP_CHOICES[@]} )) || { msg_err 'Invalid archive number.'; exit 1; }
+        archive=${BACKUP_CHOICES[10#$choice-1]}
+    elif [[ "$choice" == /* ]]; then archive=$choice
+    else msg_err 'Enter an archive number or absolute path.'; exit 1; fi
+    bash /usr/local/bin/x-ui-backup inspect "$archive" || exit $?
+    printf 'Restore replaces project-managed data. Trust this archive before continuing.\nType YES to restore: '
+    IFS= read -r answer || exit 0
+    [[ "$answer" == YES ]] || { printf 'Cancelled.\n'; exit 0; }
+    bash /usr/local/bin/x-ui-backup restore "$archive"
+)
+
+run_installation() (
+    acquire_stack_lock || exit $?
+    check_os
+    check_cpu
+    parse_installation_args "$@" || exit $?
+    [[ -z "$PANEL_VERSION" ]] || _validate_panel_version "$PANEL_VERSION" || exit 1
+    Pak=$(type apt &>/dev/null && echo apt || echo yum)
+    if [[ ${UNINSTALL} == *y* ]]; then
+        confirm_destructive_reinstall || exit 1
+        uninstall_xui || exit 1
+        msg_ok '3X-UI Auto Nginx completely uninstalled.'
+        exit 0
+    fi
+    initialize_installation
+    # The historical early lookup belongs only to installation / auto-domain.
+    IP4=$(ip route get 8.8.8.8 2>&1 | grep -Po -- 'src \K\S*')
+    [[ $IP4 =~ $IP4_REGEX ]] || IP4=$(curl -4 -fsS --connect-timeout 5 --max-time 10 https://ipv4.icanhazip.com | tr -d '[:space:]')
+    [[ $IP4 =~ $IP4_REGEX ]] || IP4=''
+    main
+)
+
+manager_menu() {
+    local choice status=0
+    while true; do
+        printf '\n'
+        msg_inf '3X-UI AUTO NGINX'
+        printf '\n1. Installation\n3. Backups\n\n0. Exit\n\nSelect an option: '
+        IFS= read -r choice || return "$status"
+        case "$choice" in
+            0) return "$status" ;;
+            1) run_installation; status=$? ;;
+            3)
+                printf '\nBACKUPS\n\n1. Create backup\n2. List backups\n3. Restore backup\n0. Back\n\nSelect an option: '
+                IFS= read -r choice || return "$status"
+                case "$choice" in
+                    0) continue ;;
+                    1) backup_action backup; status=$? ;;
+                    2) backup_action list; status=$? ;;
+                    3) backup_action restore; status=$? ;;
+                    *) printf 'Invalid selection.\n'; continue ;;
+                esac ;;
+            *) printf 'Invalid selection.\n'; continue ;;
+        esac
+        if (( status )); then
+            printf 'FAILED (exit %d). Check the reported recovery state before another operation.\n' "$status" >&2
+            return "$status"
+        fi
+        printf 'SUCCESS\n'
+    done
+}
+
+entrypoint() {
+    if (( $# )); then run_installation "$@"; return $?; fi
+    if [[ ! -t 0 || ! -t 1 ]]; then
+        printf 'Use an interactive TTY (SSH: ssh -t), or explicit installation flags: bash x-ui-latest.sh -install y\n' >&2
+        return 2
+    fi
+    manager_menu
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then entrypoint "$@"; fi

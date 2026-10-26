@@ -29,8 +29,8 @@ def launch(args, name, env=None):
     return process
 
 
-def ssh(command, timeout=30):
-    return subprocess.run(['ssh', '-i', '/pilot/ssh-key', '-o', 'StrictHostKeyChecking=accept-new',
+def ssh(command, timeout=30, tty=False):
+    return subprocess.run(['ssh', *(['-tt'] if tty else []), '-i', '/pilot/ssh-key', '-o', 'StrictHostKeyChecking=accept-new',
         '-o', 'UserKnownHostsFile=/pilot/known_hosts', '-o', 'ConnectTimeout=3',
         '-p', '22220', 'root@127.0.0.1', command], capture_output=True, timeout=timeout)
 
@@ -77,7 +77,7 @@ def poweroff():
     vm.wait(timeout=30)
 
 
-def invoke(expression, result_name, timeout=180):
+def invoke(expression, result_name, timeout=180, tty=False):
     started = time.monotonic()
     # No credentials are passed in argv or printed; all guest stdout stays private.
     code = ('import sys,json;from pathlib import Path;sys.path.insert(0,"/root/pilot");'
@@ -85,7 +85,7 @@ def invoke(expression, result_name, timeout=180):
             'import checks,install;result='+expression+';'
             'Path("/root/pilot/'+result_name+'.json").write_text(json.dumps(result))')
     import shlex
-    result = ssh('python3 -c '+shlex.quote(code), timeout)
+    result = ssh('python3 -c '+shlex.quote(code), timeout, tty=tty)
     (ROOT/(phase+'.private.log')).write_bytes(result.stdout+result.stderr)
     diagnostics = ssh('cat /root/pilot/dns-diagnostics.jsonl', 15)
     if diagnostics.returncode == 0:
@@ -225,6 +225,8 @@ if __name__ == '__main__':
         boot()
         install('positive', ref)
         invoke('checks.installed()', 'installed')
+        phase = 'manager-backup'
+        invoke('checks.manager_backup()', 'manager-backup', 150, tty=True)
         phase = 'transport-consumers'
         invoke('checks.transports()', 'transports', 300)
         phase = 'AWG-payload'

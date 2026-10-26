@@ -41,6 +41,8 @@ Configure the DNS records for **two domains** to point to your VPS IP address: o
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
+An interactive SSH terminal opens the menu: **1 — Installation**, **3 — Backups**, **0 — Exit**. Allocate a TTY with `ssh -t`; without a TTY, use explicit installation flags. [Menu and Backup CLI](docs/MANAGER.md).
+
 <details>
 <summary><strong>Fallback download — if GitHub Releases is unavailable</strong></summary>
 

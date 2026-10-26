@@ -12,6 +12,7 @@ import unittest
 SUITES = {
     'systemd': ('test_security_systemd.SecuritySystemd',),
     'nonroot': (
+        'test_manager.Manager',
         'test_release_asset.ReleaseAsset',
         'test_installer_compatibility.InstallerCompatibility',
         'test_ci_scope.CIScope',
@@ -28,6 +29,7 @@ SUITES = {
     'integration': ('test_real_integration.RealIntegration',),
     'services': ('test_real_services.RealServices',),
     'root': (
+        'test_manager.ManagerBackup',
         'test_audit_findings.DiagnosticsFiles',
         'test_personal_backup.PersonalBackup',
         'test_adguard_backup.AdGuardBackup',

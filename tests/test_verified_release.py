@@ -55,9 +55,9 @@ cp() { command cp "$@"; }
 '''
             if 'preflight_panel_release()' in source:
                 names = ('_validate_panel_version','_validate_panel_archive','release_panel_preflight','preflight_panel_release')
-                script = mock+'\n'+'\n'.join(function(source,n) for n in names)+'\npreflight_panel_release'
+                script = mock+'\npin_project_source() { :; }; prepare_backup_helper() { :; };\n'+'\n'.join(function(source,n) for n in names)+'\npreflight_panel_release'
             else:
-                script = mock+'\n'+function(source,'_validate_panel_version')+'\n'+function(source,'install_panel').replace('/usr/local',str(root/'local')).replace('/etc/systemd/system/x-ui.service',str(root/'service'))+'\ninstall_panel'
+                script = mock+'\npin_project_source() { :; }; prepare_backup_helper() { :; };\n'+function(source,'_validate_panel_version')+'\n'+function(source,'install_panel').replace('/usr/local',str(root/'local')).replace('/etc/systemd/system/x-ui.service',str(root/'service'))+'\ninstall_panel'
             result = subprocess.run(['bash','-u','-c',script],capture_output=True,text=True,
                                     env={**os.environ,'MANIFEST':json.dumps(metadata),'PANEL_VERSION':'',
                                          'FIXTURE':str(archive),'LOG':str(root/'calls')})
@@ -225,7 +225,7 @@ install() { :; }
 _panel_initial_config() { :; }
 '''
             names = ('_validate_panel_version','release_panel_preflight','_validate_panel_archive','_download_panel_archive','preflight_panel_release')
-            script = mock+'\n'+'\n'.join(function(source,n) for n in names)+'\npreflight_panel_release || exit 1\n'
+            script = mock+'\npin_project_source() { :; }; prepare_backup_helper() { :; };\n'+'\n'.join(function(source,n) for n in names)+'\npreflight_panel_release || exit 1\n'
             if consume:
                 script += function(source,'install_panel').replace('/usr/local',str(root/'local')).replace('/etc/systemd/system/x-ui.service',str(root/'service'))+'\ninstall_panel || exit 1\n'
             result = subprocess.run(['bash','-u','-c',script],capture_output=True,text=True,

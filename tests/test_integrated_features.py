@@ -448,7 +448,7 @@ sysctl() {
                 prefix, cli=source.split("if __name__ == '__main__':",1)
                 (root/'helper.py').write_text(prefix.replace("root=Path('/')", 'root=Path('+repr(str(root))+')')+override+"if __name__ == '__main__':"+cli)
                 names=('confirm_destructive_reinstall','validate_domains','select_vision','select_amneziawg','select_adguard','select_client',
-                       'preflight_panel_release','make_port','preflight_amneziawg','preflight_vision_artifacts','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot')
+                       'preflight_panel_release','make_port','preflight_amneziawg','preflight_vision_artifacts','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state')
                 stubs='\n'.join(name+'() { :; }' for name in names)
                 stubs+='\nselect_security() { INSTALL_SECURITY='+('n' if case=='declined' else 'y')+'; }; msg_err() { echo "$*" >&2; }; msg_warn() { :; };\n'
                 stubs+='curl() { cp "$FIXTURE_HELPER" "${@: -1}"; }; cleanup_adguard() { echo CLEANUP; exit 19; }; clean_previous_install() { echo DESTRUCTION; };\n'
@@ -506,7 +506,7 @@ sysctl() {
                'preflight_integrated_features','setup_swap','prepare_base_os','prepare_system_dns','cleanup_adguard','clean_previous_install',
                'install_packages','setup_firewall','get_server_ip','setup_acme_http','get_ssl_certs','install_panel',
                'configure_nginx','configure_xui_db','install_clash_sub','install_fake_site','install_diagnostics','tune_system',
-               'install_backup_tool','setup_certificate_renewal','check_installation','show_results','finish_initial_reboot')
+               'install_backup_tool','setup_certificate_renewal','check_installation','show_results','finish_initial_reboot','write_managed_state')
         stubs='\n'.join(n+'() { echo '+n+'; };' for n in names)
         stubs+='\nmsg_err() { echo "$*" >&2; }; msg_warn() { :; }; systemctl() { :; }; x-ui() { :; };\n'
         for failed in ('clean_previous_install','get_server_ip','configure_nginx','install_clash_sub','install_fake_site','install_diagnostics','install_backup_tool'):
@@ -677,7 +677,7 @@ sysctl() {
                'preflight_integrated_features','setup_swap','prepare_base_os','verify_base_os','cleanup_adguard','clean_previous_install',
                'install_packages','setup_firewall','get_server_ip','setup_acme_http','get_ssl_certs','install_panel',
                'configure_nginx','configure_xui_db','install_clash_sub','install_fake_site','install_diagnostics','tune_system',
-               'install_backup_tool','setup_certificate_renewal','check_installation','finish_initial_reboot')
+               'install_backup_tool','setup_certificate_renewal','check_installation','finish_initial_reboot','write_managed_state')
         stubs='\n'.join(n+'() { echo '+n+'; };' for n in names)
         stubs+=r'''
 msg_err() { echo "$*" >&2; }; msg_warn() { echo "$*" >&2; }; systemctl() { :; }; x-ui() { :; }
@@ -1043,7 +1043,7 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
                  'preflight_panel_release','make_port', 'preflight_amneziawg', 'cleanup_adguard', 'clean_previous_install',
                  'install_packages', 'setup_firewall', 'get_server_ip', 'setup_acme_http', 'get_ssl_certs',
                  'install_panel', 'configure_nginx', 'configure_xui_db', 'install_clash_sub', 'install_fake_site',
-                 'install_diagnostics', 'tune_system', 'install_backup_tool', 'setup_certificate_renewal', 'check_installation', 'show_results', 'preflight_vision_artifacts','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot')
+                 'install_diagnostics', 'tune_system', 'install_backup_tool', 'setup_certificate_renewal', 'check_installation', 'show_results', 'preflight_vision_artifacts','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state')
         stubs = '\n'.join(name + '() { :; }' for name in names)
         stubs += '\nmsg_warn() { :; }; select_security() { INSTALL_SECURITY=n; }; select_vision() { INSTALL_VISION=n; }; select_client() { CREATE_CLIENT=n; }; systemctl() { :; }; x-ui() { :; }\n'
         for name in ('install_security', 'install_vision', 'install_initial_client'):
@@ -1104,7 +1104,7 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
                'select_adguard','select_client','preflight_panel_release','make_port','preflight_amneziawg','preflight_integrated_features',
                'cleanup_adguard','clean_previous_install','install_packages','setup_firewall','get_server_ip','setup_acme_http',
                'get_ssl_certs','install_panel','configure_nginx','configure_xui_db','install_clash_sub','install_fake_site',
-               'install_diagnostics','tune_system','install_backup_tool','setup_certificate_renewal','check_installation','show_results','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot')
+               'install_diagnostics','tune_system','install_backup_tool','setup_certificate_renewal','check_installation','show_results','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state')
         stubs='\n'.join(name+'() { :; }' for name in names)+'\nmsg_warn() { :; }; systemctl() { :; }; x-ui() { :; }\n'
         for name in ('install_security','install_vision','install_amneziawg','install_adguard','install_initial_client'):
             stubs+=name+'() { echo '+name+'; };\n'

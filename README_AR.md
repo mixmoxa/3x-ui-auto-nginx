@@ -41,6 +41,8 @@
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
+تفتح جلسة SSH التفاعلية القائمة: **1 — Installation**، **3 — Backups**، **0 — Exit**. خصص TTY باستخدام `ssh -t`؛ وبدون TTY استخدم خيارات التثبيت الصريحة. [القائمة وأوامر النسخ الاحتياطي](docs/MANAGER.md).
+
 <details>
 <summary><strong>تنزيل احتياطي — إذا تعذّر الوصول إلى GitHub Releases</strong></summary>
 

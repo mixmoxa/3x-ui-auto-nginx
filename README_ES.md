@@ -41,6 +41,8 @@ Configura los registros DNS de **dos dominios** para que apunten a la IP de tu V
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
+Una terminal SSH interactiva abre el menú: **1 — Installation**, **3 — Backups**, **0 — Exit**. Asigna un TTY con `ssh -t`; sin TTY, utiliza argumentos explícitos de instalación. [Menú y comandos de Backup](docs/MANAGER.md).
+
 <details>
 <summary><strong>Descarga alternativa — si GitHub Releases no está disponible</strong></summary>
 

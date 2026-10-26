@@ -1,4 +1,4 @@
-"""Read-only installed-stack and actual subscription consumer checks inside the guest."""
+"""Installed-stack, Backup UI and actual subscription consumer checks in the guest."""
 import base64
 import importlib.util
 import json
@@ -324,3 +324,41 @@ def renewal():
     after = [run('openssl','x509','-in',str(cert),'-noout','-serial') for cert in certificates]
     assert all(a != b for a,b in zip(before,after)), 'Renewal did not replace every managed certificate'
     return {'three_real_renewals':True, **installed()}
+
+
+def manager_backup():
+    """Actual Bash menu on a TTY, actual installed Backup, private raw output."""
+    import ast, pty, select
+    state=json.loads(Path('/etc/x-ui/auto-nginx-managed.json').read_text())
+    assert state['format']==1 and re.fullmatch('[0-9a-f]{40}',state['source_ref'])
+    assert state['features']==dict(adguard=True,vision=True,amneziawg=True)
+    assert set(state['inbound_roles'])=={'reality','ws','xhttp','grpc','hysteria2','vision','amneziawg'}
+    before={unit:run('systemctl','is-active',unit) for unit in ('x-ui','nginx','AdGuardHome','certbot.timer')}
+    master,slave=pty.openpty()
+    proc=subprocess.Popen(['bash',str(ROOT/'x-ui-latest.sh')],stdin=slave,stdout=slave,stderr=slave,
+                          env={**os.environ,'TERM':'dumb','NO_COLOR':'1'})
+    os.close(slave); output=bytearray();deadline=time.monotonic()+120
+    os.write(master,b'3\n1\n3\n2\n0\n')
+    try:
+        while time.monotonic()<deadline:
+            if select.select([master],[],[],.2)[0]:
+                try:part=os.read(master,65536)
+                except OSError:break
+                if not part:break
+                output.extend(part)
+            if proc.poll() is not None:break
+        proc.wait(timeout=2)
+        assert proc.returncode==0,'Backup menu failed (private output retained in guest)'
+    finally:
+        if proc.poll() is None:proc.kill();proc.wait()
+        os.close(master)
+        (ROOT/'manager-backup.private.log').write_bytes(output)
+    text=output.decode(errors='replace')
+    assert text.count('BACKUPS')>=2 and 'FAILED' not in text
+    exact=ast.literal_eval(re.search(r'Created archive: ([^\r\n]+)',text)[1])
+    archive=Path(exact);assert archive.is_file() and archive.stat().st_mode&0o777==0o600
+    inspected=json.loads(run('bash','/usr/local/bin/x-ui-backup','inspect',str(archive)))
+    assert inspected['format_version']==3 and inspected['adguard_home'] is True
+    for unit,value in before.items():assert run('systemctl','is-active',unit)==value
+    # The next consumer phase verifies that the resumed official Xray still transfers data.
+    return {'actual_menu_backup_and_list':True,'service_states_preserved':True,'managed_state':True}

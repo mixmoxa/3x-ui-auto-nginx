@@ -31,7 +31,7 @@ def prepare(tag, commit, output):
     asset = source.replace(DEVELOPMENT_REF, pinned, 1)
     subprocess.run(['bash', '-n'], input=asset, check=True, capture_output=True)
     # Check the actual source initialization without running the installer.
-    init = re.search(rb'^PROJECT_REF=.*?^configure_project_source \|\| exit 1$', asset, re.M | re.S)
+    init = re.search(rb'^PROJECT_REF=.*?^configure_project_source \|\| return 1 2>/dev/null \|\| exit 1$', asset, re.M | re.S)
     if init is None:
         raise ValueError('Installer source initialization is missing')
     for override, expected in (('', commit), ('v1.2.3', 'v1.2.3')):

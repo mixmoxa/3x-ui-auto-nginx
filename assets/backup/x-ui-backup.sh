@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Managed 3x-ui Auto Nginx backup: same-host rollback or clean-host recovery, same OS/arch.
-# Usage: x-ui-backup {backup|restore <archive>|extract <archive> <new-directory>|list|update-hooks}
+# Usage: x-ui-backup {backup [--json]|inspect <archive>|restore <archive>|extract <archive> <new-directory>|list|update-hooks}
 set -Eeuo pipefail
 umask 077
 
@@ -182,6 +182,8 @@ quick_check() {
 validate_archive() {
     local -a runner=()
     if [[ ${2:-restore} == extract ]]; then runner=(exec)
+    elif [[ ${2:-restore} == inspect ]]; then
+        gzip -t -- "$1" 2>/dev/null || die 'Archive gzip integrity check failed.'
     else gzip -t -- "$1" || die 'Archive gzip integrity check failed.'; fi
     "${runner[@]}" python3 - "$1" "${2:-restore}" "${3:-}" "$DB" "$XRAY_DIR" "${REQUIRED_PATHS[@]}" -- \
         "${RUNTIME_PATHS[@]:0:2}" "${TREE_PATHS[@]}" -- \
@@ -437,6 +439,11 @@ try:
                 fail('Incomplete backup metadata')
             if meta['source_ipv4']:
                 ipaddress.IPv4Address(meta['source_ipv4'])
+            if mode == 'inspect':
+                # JSON encoding escapes all terminal control characters. No private fields.
+                print(json.dumps({key: meta[key] for key in (
+                    'format_version','os_id','os_version','arch','created','x_ui_version',
+                    'xray_version','adguard_home','service_states') if key in meta}, ensure_ascii=True))
 except (ValueError, OSError, EOFError, tarfile.TarError, KeyError, UnicodeError) as exc:
     label = 'Recovery extraction failed' if mode == 'extract' else 'Invalid or unsafe backup archive'
     print('[FAIL] ' + label + ': ' + str(exc), file=sys.stderr)
@@ -579,6 +586,13 @@ cmd_backup() {
     ok 'Archive integrity and required members verified'
     printf '\nBackup completed successfully.\n  File: %s\n  Size: %s\n' "$OUTPUT" "$(du -h "$OUTPUT" | cut -f1)"
     warn 'Backup contains secrets and is stored on this VPS. Copy it securely off-host for disaster recovery.'
+    if [[ ${BACKUP_JSON:-0} == 1 ]]; then
+        stage 'Writing Backup JSON result; verified archive retained on output failure'
+        python3 - "$OUTPUT" <<'PYRESULT' >&3
+import json, sys
+print(json.dumps({'status':'success','archive':sys.argv[1]}))
+PYRESULT
+    fi
 }
 
 check_compatibility() {
@@ -2046,17 +2060,79 @@ cmd_list() {
     local archives=("$BACKUP_STORE"/*.tar.gz)
     if (( ! ${#archives[@]} )); then printf 'No backups in %s\n' "$BACKUP_STORE"; return; fi
     for archive in "${archives[@]}"; do
-        printf '%-52s %8s\n' "${archive##*/}" "$(du -h "$archive" | cut -f1)"
+        printf '%q %8s\n' "${archive##*/}" "$(du -h "$archive" | cut -f1)"
+    done
+}
+
+# Protocol 1: fd 9 is an inherited open-file description of this private inode.
+# Re-locking that same description is nested ownership, never an env bypass.
+acquire_stack_lock() {
+    local directory=/run/3x-ui-auto-nginx path=/run/3x-ui-auto-nginx/operation.lock info candidate executable parent=$$
+    local -a ancestors=() argv=()
+    [[ $EUID == 0 ]] || { printf 'Run this operation as root.\n' >&2; return 1; }
+    command -v flock >/dev/null || { printf 'Required tool unavailable: flock (util-linux).\n' >&2; return 1; }
+    if [[ ! -e "$directory" && ! -L "$directory" ]]; then
+        mkdir -m 0700 -- "$directory" || return 1
+    fi
+    [[ -d "$directory" && ! -L "$directory" && $(stat -c '%u:%g:%a' "$directory") == 0:0:700 ]] || {
+        printf 'Unsafe operation lock directory.\n' >&2; return 1;
+    }
+    if [[ ! -e "$path" && ! -L "$path" ]]; then
+        (umask 077; set -o noclobber; : > "$path") || return 1
+    fi
+    [[ -f "$path" && ! -L "$path" && $(stat -c '%u:%g:%a:%h' "$path") == 0:0:600:1 ]] || {
+        printf 'Unsafe operation lock file.\n' >&2; return 1;
+    }
+    info=$(stat -Lc '%d:%i' "$path") || return 1
+    if [[ $(stat -Lc '%d:%i' /proc/self/fd/9 2>/dev/null) != "$info" ]]; then
+        exec 9<> "$path" || return 1
+    fi
+    [[ $(stat -Lc '%d:%i' /proc/self/fd/9) == "$info" ]] || return 1
+    flock -n 9 || { printf 'Another stack operation is running.\n' >&2; return 75; }
+    # Historic lock-unaware processes cannot be retroactively locked. Refuse
+    # identifiable peers, excluding this process and its own trusted ancestors.
+    while [[ "$parent" =~ ^[0-9]+$ && "$parent" != 0 ]]; do
+        ancestors+=("$parent")
+        parent=$(awk '/^PPid:/ {print $2}' "/proc/$parent/status" 2>/dev/null) || break
+    done
+    for candidate in /proc/[0-9]*/cmdline; do
+        parent=${candidate#/proc/}; parent=${parent%/cmdline}
+        [[ " ${ancestors[*]} " != *" $parent "* ]] || continue
+        argv=()
+        mapfile -d '' -t argv 2>/dev/null < "$candidate" || continue
+        # Match script argv, not arbitrary substrings in bash -c or test code.
+        executable=${argv[0]:-}
+        case "${executable##*/}" in bash|sh|env) ;; *) continue ;; esac
+        case "${argv[1]:-}" in
+            */x-ui-backup|*/x-ui-backup.sh)
+                case "${argv[2]:-}" in backup|restore|update-hooks)
+                    printf 'An existing Backup utility is running; let it finish first.\n' >&2; return 75 ;;
+                esac ;;
+        esac
     done
 }
 
 main() {
+    case ${1:-} in
+        capabilities) printf '%s\n' 'xui-backup:1 inspect backup-json lock-fd9'; return ;;
+        inspect)
+            [[ $# == 2 ]] || die 'Usage: x-ui-backup inspect <archive>'
+            command -v python3 >/dev/null && command -v gzip >/dev/null || die 'Inspect requires Python 3 and gzip; no packages were installed.'
+            validate_archive "$2" inspect
+            return ;;
+    esac
     if [[ ${1:-} == extract ]]; then
         [[ $# == 3 && -n "$2" && -n "$3" ]] || die 'Usage: x-ui-backup extract <archive> <new-directory>'
         validate_archive "$2" extract "$3"
         return
     fi
     require_root
+    case ${1:-} in backup|restore|update-hooks|lock-check) acquire_stack_lock || return $? ;; esac
+    [[ ${1:-} != lock-check ]] || return 0
+    if [[ ${1:-} == backup && ${2:-} == --json && $# == 2 ]]; then
+        BACKUP_JSON=1
+        exec 3>&1 1>&2
+    fi
     export LC_ALL=C
     trap cleanup EXIT
     trap 'printf "[FAIL] Operation failed during: %s\n" "$STAGE" >&2; exit 1' ERR
@@ -2067,7 +2143,7 @@ main() {
         restore) cmd_restore "${2:-}" ;;
         list) cmd_list ;;
         update-hooks) cmd_update_hooks ;;
-        *) die 'Usage: x-ui-backup {backup|restore <archive>|extract <archive> <new-directory>|list|update-hooks}' ;;
+        *) die 'Usage: x-ui-backup {backup [--json]|inspect <archive>|restore <archive>|extract <archive> <new-directory>|list|update-hooks}' ;;
     esac
 }
 

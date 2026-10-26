@@ -236,7 +236,7 @@ dpkg-query() { [[ "${NGINX_PACKAGE:-0}" == 1 ]] && echo 'install ok installed'; 
         (self.root / 'etc/x-ui').mkdir(parents=True)
         guard = ('detect_existing_installation','confirm_destructive_reinstall')
         mocks = MOCK + '\nsystemctl() { return 1; }\ndpkg-query() { return 1; }\n'
-        operations = ('preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot','select_security','select_vision','select_client','preflight_integrated_features','select_amneziawg','preflight_amneziawg','preflight_panel_release','make_port','select_adguard','cleanup_adguard','validate_domains','clean_previous_install','install_packages','setup_firewall','get_server_ip',
+        operations = ('preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state','select_security','select_vision','select_client','preflight_integrated_features','select_amneziawg','preflight_amneziawg','preflight_panel_release','make_port','select_adguard','cleanup_adguard','validate_domains','clean_previous_install','install_packages','setup_firewall','get_server_ip',
                       'setup_acme_http','get_ssl_certs','install_panel','configure_nginx','configure_xui_db','install_clash_sub',
                       'install_fake_site','install_diagnostics','tune_system','install_backup_tool','setup_certificate_renewal',
                       'check_installation','show_results','uninstall_xui')
@@ -246,7 +246,7 @@ dpkg-query() { [[ "${NGINX_PACKAGE:-0}" == 1 ]] && echo 'install ok installed'; 
         for uninstall in (False,True):
             for answer in ('YES\n','yes\n','\n',''):
                 self.calls.unlink(missing_ok=True)
-                branch = re.search(r'^if \[\[ \$\{UNINSTALL\}.*?^fi',INSTALLER,re.M|re.S).group()
+                branch = re.search(r'^    if \[\[ \$\{UNINSTALL\}.*?^    fi',INSTALLER,re.M|re.S).group()
                 body = 'UNINSTALL=y\n'+branch if uninstall else function('main')+'\nmain'
                 result = self.run_functions(guard,body,mock=mocks,input=answer)
                 mutations = self.calls.read_text().splitlines() if self.calls.exists() else []
@@ -294,7 +294,7 @@ apt() { echo "apt $*" >> "$CALLS"; }
 dpkg-query() { return 1; }
 systemctl() { echo "systemctl $*" >> "$CALLS"; [[ "$*" != *AdGuardHome* ]]; }
 '''
-        branch=re.search(r'^if \[\[ \$\{UNINSTALL\}.*?^fi',INSTALLER,re.M|re.S).group()
+        branch=re.search(r'^    if \[\[ \$\{UNINSTALL\}.*?^    fi',INSTALLER,re.M|re.S).group()
         self.assertLess(INSTALLER.index('remove_legacy_certbot_cron()'),INSTALLER.index(branch))
         names=('detect_existing_installation','confirm_destructive_reinstall','remove_legacy_certbot_cron','cleanup_adguard','uninstall_xui')
         for answer in ('no\n','','YES\n'):

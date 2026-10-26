@@ -49,6 +49,8 @@
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
+При запуске из интерактивного SSH-терминала откроется меню: **1 — Installation**, **3 — Backups**, **0 — Exit**. Для удалённого запуска выделите TTY: `ssh -t`. Без TTY используйте прежние явные параметры установки. [Меню и Backup CLI](docs/MANAGER.md).
+
 <details>
 <summary><strong>Резервная загрузка — если GitHub Releases недоступен</strong></summary>
 

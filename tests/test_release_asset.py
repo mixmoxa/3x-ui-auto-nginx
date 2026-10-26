@@ -126,7 +126,7 @@ class ReleaseAsset(unittest.TestCase):
         self.assertEqual(asset,(second/'x-ui-latest.sh').read_bytes())
         self.assertEqual((self.repo/'x-ui-latest.sh').read_text(),'dirty source\n')
         self.assertEqual((first/'x-ui-latest.sh.sha256').read_text(),hashlib.sha256(asset).hexdigest()+'  x-ui-latest.sh\n')
-        init=re.search(r'^PROJECT_REF=.*?^configure_project_source \|\| exit 1$',asset.decode(),re.M|re.S)[0]
+        init=re.search(r'^PROJECT_REF=.*?^configure_project_source \|\| return 1 2>/dev/null \|\| exit 1$',asset.decode(),re.M|re.S)[0]
         for override, expected in (('',self.sha),('v2.1.4','v2.1.4'),('a'*40,'a'*40)):
             result=subprocess.run(['bash','-eu','-c',init+'\nread -r reply; printf "%s|%s" "$GITHUB_RAW" "$reply"'],
                 input='interactive answer\n',env={**os.environ,'XUI_AUTO_REF':override},capture_output=True,text=True,timeout=5)
