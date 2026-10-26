@@ -2113,6 +2113,7 @@ acquire_stack_lock() {
 }
 
 main() {
+    local BACKUP_JSON=0
     case ${1:-} in
         capabilities) printf '%s\n' 'xui-backup:1 inspect backup-json lock-fd9'; return ;;
         inspect)

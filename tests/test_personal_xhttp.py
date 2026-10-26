@@ -907,6 +907,7 @@ sleep() { :; }
         from certificate_fixtures import relocate
         mock = r'''
 backup_helper_compatible() { :; }
+backup_helper_path_safe() { :; }
 stat() { echo 0; }
 msg_err() { echo "$*" >&2; }
 msg_ok() { :; }

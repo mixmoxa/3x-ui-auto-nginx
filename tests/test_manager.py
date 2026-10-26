@@ -11,10 +11,10 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def tty_run(script, answers, timeout=8):
+def tty_run(script, answers, timeout=8, env=None):
     master, slave = pty.openpty()
     process = subprocess.Popen(['bash', str(script)], stdin=slave, stdout=slave, stderr=slave,
-                               env={**os.environ, 'TERM':'dumb', 'NO_COLOR':'1'})
+                               env={**os.environ, **(env or {}), 'TERM':'dumb', 'NO_COLOR':'1'})
     os.close(slave)
     output = bytearray()
     os.write(master, answers)
@@ -77,6 +77,67 @@ class ManagerBackup(unittest.TestCase):
     def setUp(self):
         from test_personal_backup import PersonalBackup
         self.f=PersonalBackup('runTest');self.f.setUp();self.addCleanup(self.f.doCleanups)
+
+    def test_inherited_backup_json_keeps_default_cli(self):
+        result=self.f.run_tool('backup',BACKUP_JSON='1')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn('Backup completed successfully.',result.stdout)
+        self.assertNotIn('"status": "success"',result.stdout)
+        archive=next(self.f.path('/var/backups/x-ui').glob('*.tar.gz'))
+        self.assertEqual(self.f.run_tool('inspect',archive).returncode,0)
+
+    def test_helper_refuses_writable_target_ancestry_before_execution_or_replacement(self):
+        from test_personal_backup import function, relocated
+        names=('backup_helper_path_safe','backup_helper_compatible','install_backup_tool','prepare_backup_helper')
+        helpers='\n'.join(relocated(function(n),self.f.root).replace(' /usr ', ' '+str(self.f.root/'usr')+' ')
+                          for n in names if n+'() {' in (ROOT/'x-ui-latest.sh').read_text())
+        target=self.f.path('/usr/local/bin/x-ui-backup');target.parent.mkdir(parents=True,exist_ok=True)
+        executed=self.f.root/'helper-executed'
+        source='#!/bin/bash\ntouch "'+str(executed)+'"\ncase $1 in capabilities) echo "xui-backup:1 inspect backup-json lock-fd9";; lock-check) [[ -e /proc/$$/fd/9 ]] || exit 75;; esac\n'
+        setup='msg_err() { echo "$*" >&2; }; pin_project_source() { GITHUB_RAW=https://source.invalid/exact; }; curl() { command cp "'+str(self.f.script)+'" "${@: -1}"; };\n'
+        for directory in (target.parent,target.parent.parent,self.f.root/'usr'):
+            for action in ('backup_helper_compatible','install_backup_tool','prepare_backup_helper'):
+                with self.subTest(directory=directory.relative_to(self.f.root),action=action):
+                    target.write_text(source);target.chmod(0o755);executed.unlink(missing_ok=True)
+                    directory.chmod(0o775)
+                    try:
+                        result=subprocess.run(['bash','-c',self.lock_script('acquire_stack_lock || exit $?')+'\n'+helpers+'\n'+setup+action],capture_output=True,text=True)
+                        self.assertNotEqual(result.returncode,0,result.stderr)
+                        self.assertFalse(executed.exists(),'Helper in writable ancestry was executed')
+                        self.assertEqual(target.read_text(),source)
+                        self.assertEqual(directory.stat().st_mode&0o777,0o775)
+                    finally:directory.chmod(0o755)
+
+    def test_restore_menu_failure_stops_session_and_preserves_recovery_contract(self):
+        import json
+        from test_personal_backup import relocated
+        archive=self.f.backup()
+        self.f.write('/etc/x-ui/target-marker','previous target')
+        before=json.loads((self.f.root/'services.json').read_text())
+        helper=self.f.path('/usr/local/bin/x-ui-backup');helper.parent.mkdir(parents=True,exist_ok=True)
+        helper.write_bytes(self.f.script.read_bytes());helper.chmod(0o755)
+        library=relocated((ROOT/'x-ui-latest.sh').read_text(),self.f.root)
+        library=library.replace(str(self.f.root)+'/proc/','/proc/').replace('/run/3x-ui-auto-nginx',str(self.f.root)+'/run/3x-ui-auto-nginx')
+        library=library.replace(' /usr ', ' '+str(self.f.root/'usr')+' ')
+        script=self.f.root/'menu.sh';script.write_text(library)
+        for scenario,flags in (('pre-mutation',{'FAIL_NGINX':'1'}),
+                               ('verified',{'FAIL_HEALTH_SERVICE':'mtr-backend','FAIL_ONCE':'1'}),
+                               ('unverified',{'FAIL_HEALTH_SERVICE':'mtr-backend'})):
+            with self.subTest(scenario=scenario):
+                (self.f.root/'commands').write_text('');(self.f.root/'fault-used').unlink(missing_ok=True)
+                code,text=tty_run(script,b'3\n3\n'+str(archive).encode()+b'\nYES\n1\n',timeout=90,env={**self.f.env,**flags})
+                self.assertNotEqual(code,0,text)
+                self.assertIn('FAILED (exit ',text);self.assertNotIn('SUCCESS',text)
+                self.assertEqual(text.count('1. Installation'),1)
+                self.assertEqual(text.count('BACKUPS'),1)
+                self.assertEqual(self.f.path('/etc/x-ui/target-marker').read_text(),'previous target')
+                self.assertEqual(json.loads((self.f.root/'services.json').read_text()),before)
+                retained=list(self.f.path('/var/backups/x-ui').glob('.rollback-*'))
+                self.assertEqual(bool(retained),scenario=='unverified')
+                if scenario=='pre-mutation':
+                    self.assertFalse(any(c[:2]==['systemctl','stop'] for c in self.f.commands()))
+                elif scenario=='verified':self.assertIn('Previous managed state/service states restored and checked',text)
+                else:self.assertIn('Automatic rollback could not be verified',text)
 
     def test_inspect_machine_result_marker_and_historical_roundtrip(self):
         import hashlib,json
@@ -231,7 +292,7 @@ class ManagerBackup(unittest.TestCase):
         # Keep the real /proc view in the common lock routine.
         lock=self.lock_script('acquire_stack_lock || exit $?')
         helpers='\n'.join(relocated(function(n),self.f.root) for n in
-                         ('backup_helper_compatible','install_backup_tool','prepare_backup_helper'))
+                         ('backup_helper_path_safe','backup_helper_compatible','install_backup_tool','prepare_backup_helper'))
         old=self.f.path('/usr/local/bin/x-ui-backup');old.parent.mkdir(parents=True,exist_ok=True)
         old.write_text('#!/bin/bash\nexit 0\n');old.chmod(0o755);original=old.read_bytes()
         # Candidate is the actual relocated utility, not a mocked capability string.

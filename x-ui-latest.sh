@@ -1794,10 +1794,27 @@ tune_system() {
     return 0
 }
 
+backup_helper_path_safe() {
+    local directory mode
+    for directory in / /usr /usr/local /usr/local/bin; do
+        if [[ ! -L "$directory" && ! -e "$directory" ]]; then continue; fi
+        if [[ ! -d "$directory" || -L "$directory" || $(stat -c %u "$directory") != 0 ]]; then
+            msg_err "Unsafe Backup helper directory: $directory; not changed."
+            return 1
+        fi
+        mode=$(stat -c %a "$directory") || return 1
+        if (( (8#$mode & 0022) != 0 )); then
+            msg_err "Writable Backup helper directory: $directory; not changed."
+            return 1
+        fi
+    done
+}
+
 install_backup_tool() {
     local temporary
+    backup_helper_path_safe || return 1
     mkdir -p /usr/local/bin || return 1
-    [[ ! -L /usr/local/bin && $(stat -c '%u' /usr/local/bin) == 0 ]] || return 1
+    backup_helper_path_safe || return 1
     if [[ -e /usr/local/bin/x-ui-backup || -L /usr/local/bin/x-ui-backup ]]; then
         [[ -f /usr/local/bin/x-ui-backup && ! -L /usr/local/bin/x-ui-backup &&
            $(stat -c '%u:%g:%a' /usr/local/bin/x-ui-backup) == 0:0:755 ]] || return 1
@@ -3056,6 +3073,7 @@ pin_project_source() {
 
 backup_helper_compatible() {
     local helper=${1:-/usr/local/bin/x-ui-backup} status=0
+    backup_helper_path_safe || return 1
     [[ -f "$helper" && ! -L "$helper" && $(stat -c '%u:%g:%a' "$helper") == 0:0:755 ]] || return 1
     [[ $(bash "$helper" capabilities) == 'xui-backup:1 inspect backup-json lock-fd9' ]] || return 1
     # Functional contention probe: a version string alone does not prove locking.
@@ -3065,6 +3083,7 @@ backup_helper_compatible() {
 }
 
 prepare_backup_helper() {
+    backup_helper_path_safe || return 1
     backup_helper_compatible && return 0
     [[ -n ${PROJECT_SOURCE_SHA:-} && $PROJECT_SOURCE_SHA == "${PROJECT_REF:-}" ]] || pin_project_source || return 1
     install_backup_tool || return 1

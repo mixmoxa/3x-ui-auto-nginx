@@ -683,7 +683,7 @@ class PersonalBackup(unittest.TestCase):
         download.write_text('#!/bin/bash\necho \"xui-backup:1 inspect backup-json lock-fd9\"\n')
         mock = ('backup_helper_compatible() { :; }; curl() { [[ "$2" == "$GITHUB_RAW/assets/backup/x-ui-backup.sh" ]] || return 9; '
                 'cp "$DOWNLOAD" "$4"; }\nmsg_err() { echo "$*" >&2; }\n')
-        install = relocated(tool, self.root)
+        install = relocated(function('backup_helper_path_safe')+'\n'+tool, self.root)
         result = subprocess.run(['bash', '-eu', '-c', mock + install + '\ninstall_backup_tool\n'],
                                 env={**self.env, 'GITHUB_RAW': 'https://fixture.example/personal', 'DOWNLOAD': str(download)},
                                 capture_output=True, text=True)
