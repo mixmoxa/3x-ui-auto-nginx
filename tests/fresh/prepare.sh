@@ -60,6 +60,7 @@ EOF
 cat > root/etc/systemd/system/pilot-external-network.service <<'EOF'
 [Unit]
 After=network.target
+Before=AdGuardHome.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes

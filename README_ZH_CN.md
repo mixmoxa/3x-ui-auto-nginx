@@ -41,6 +41,8 @@
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
+当前稳定版 v2.1.7 会直接开始安装。v2.2.0 发布后，上述命令将打开菜单：**1 — Installation**、**3 — Backups**、**0 — Exit**。菜单需要使用 `ssh -t` 分配 TTY；没有 TTY 时应使用明确的安装参数。[菜单与备份命令](docs/MANAGER.md)。
+
 <details>
 <summary><strong>备用下载 — GitHub Releases 不可用时</strong></summary>
 

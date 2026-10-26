@@ -155,8 +155,8 @@ CD_COUNT=0
         startup = SOURCE[SOURCE.index("msg_ok()"):SOURCE.index("# ─── Pre-flight checks")]
         result = subprocess.run(["bash", "-eu", "-c", startup], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("3X-UI AUTO NGINX", result.stdout)
-        self.assertEqual(re.sub(r'\x1b\[[0-9;]*m','',result.stdout).strip(),"3X-UI AUTO NGINX")
+        self.assertEqual(result.stdout, "")
+        self.assertIn("3X-UI AUTO NGINX", function("manager_menu"))
         self.assertNotIn("X-UI-PRO", result.stdout.upper())
         self.assertNotIn("X-UI Secure Panel", SOURCE)
         helpers = '\n'.join(re.findall(r'^msg_\w+\(\).*$', SOURCE, re.M))
@@ -223,7 +223,7 @@ printf 'CPU_STATE|%s|%s\n' "$CPU_SUPPORT_LEVEL" "$CPU_SUPPORT_TEXT"
                 warnings = [line for line in lines if not line.startswith("CPU_STATE|")]
                 if level == "warn":
                     self.assertTrue(warnings)
-                    self.assertTrue(all("\x1b[1;33m" in line for line in warnings))
+                    self.assertTrue(all("\x1b" not in line for line in warnings))
                     self.assertIn("Xray can run", result.stdout)
                     self.assertIn("Continuing installation.", result.stdout)
                 else:
@@ -238,10 +238,10 @@ printf 'CPU_STATE|%s|%s\n' "$CPU_SUPPORT_LEVEL" "$CPU_SUPPORT_TEXT"
         helpers = '\n'.join(re.findall(r'^msg_\w+\(\).*$', SOURCE, re.M))
         # Run the actual main ordering/summary on files; installer operations are no-ops.
         mocks = '\n'.join(name + '() { :; }' for name in (
-            "preflight_base_os", "prepare_base_os", "prepare_system_dns", "finish_initial_reboot",
+            "preflight_base_os", "prepare_base_os", "prepare_system_dns", "finish_initial_reboot", "write_managed_state",
             "select_security", "select_vision", "select_client", "preflight_integrated_features", "select_amneziawg", "preflight_amneziawg", "preflight_panel_release", "make_port", "select_adguard", "cleanup_adguard", "validate_domains", "clean_previous_install", "install_packages", "setup_firewall", "get_server_ip",
             "get_ssl_certs", "install_panel", "configure_nginx", "configure_xui_db", "install_clash_sub",
-            "install_fake_site", "install_diagnostics", "tune_system", "install_backup_tool", "setup_certificate_renewal", "setup_acme_http", "confirm_destructive_reinstall",
+            "install_fake_site", "install_diagnostics", "tune_system", "install_backup_tool", "setup_certificate_renewal", "setup_acme_http", "confirm_destructive_reinstall", "write_managed_state",
         )) + r'''
 systemctl() { echo "systemctl $*" >> "$SUMMARY_LOG"; [[ "$*" == 'is-enabled --quiet x-ui' ]]; }
 x-ui() { echo "x-ui $*" >> "$SUMMARY_LOG"; [[ "$*" == restart ]]; }
@@ -326,7 +326,7 @@ echo 'x-ui 3.9.0'
                     self.assertIn(item, text)
                 self.assertEqual("(3X-UI 3.9.0)" in text, not failed_version)
                 cpu_line = next(line for line in result.stdout.splitlines() if "CPU support" in line)
-                self.assertIn({"ok": "\x1b[1;32m", "warn": "\x1b[1;33m", "info": "\x1b[1;34m"}[cpu_level], cpu_line)
+                self.assertNotIn("\x1b", cpu_line)
                 self.assertIn({"ok": "[✓]", "warn": "[!]", "info": "[i]"}[cpu_level], cpu_line)
                 self.assertIn("Compatible", cpu_line)
                 self.assertIn({"ok": "hardware AES available", "warn": "hardware AES unavailable",
@@ -335,7 +335,7 @@ echo 'x-ui 3.9.0'
                 self.assertLess(text.index("3X-UI / Xray"), text.index("CPU support"))
                 self.assertLess(text.index("CPU support"), text.index("nginx"))
                 firewall_line = next(line for line in result.stdout.splitlines() if "Firewall / UFW" in line)
-                self.assertIn("\x1b[1;32m" if state == "active" else "\x1b[1;33m", firewall_line)
+                self.assertNotIn("\x1b", firewall_line)
                 self.assertIn("[✓]" if state == "active" else "[!]", firewall_line)
                 self.assertIn(state.capitalize(), firewall_line)
                 if state != "active":
@@ -343,7 +343,7 @@ echo 'x-ui 3.9.0'
                 for label in ("TLS certificates", "Diagnostics", "Backup / Restore"):
                     line = next(line for line in result.stdout.splitlines() if label in line and ("[✓]" in line or "[!]" in line))
                     warning = missing_assets or (label == "TLS certificates" and missing_certificate is not None)
-                    self.assertIn("\x1b[1;33m" if warning else "\x1b[1;32m", line)
+                    self.assertNotIn("\x1b", line)
                     self.assertIn("[!]" if warning else "[✓]", line)
                     if label == "TLS certificates":
                         self.assertIn("Check certificate files" if warning else "Ready", line)
@@ -901,11 +901,14 @@ sleep() { :; }
                     selected = ref or 'main'
                     self.assertIn(f'REF|{selected}|https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/{selected}', result.stdout)
                 else: self.assertIn('Invalid XUI_AUTO_REF', result.stderr)
-        self.assertLess(SOURCE.index('configure_project_source || exit 1'), SOURCE.index('clean_previous_install()'))
+        self.assertLess(SOURCE.index('configure_project_source || return 1'), SOURCE.index('clean_previous_install()'))
 
     def test_all_project_assets_follow_selected_ref(self):
         from certificate_fixtures import relocate
         mock = r'''
+backup_helper_compatible() { :; }
+backup_helper_path_safe() { :; }
+stat() { echo 0; }
 msg_err() { echo "$*" >&2; }
 msg_ok() { :; }
 chown() { :; }
@@ -921,7 +924,7 @@ curl() {
         previous=$arg
     done
     printf '%s\n' "$url" >> "$ASSET_LOG"
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$output"
+    printf '#!/usr/bin/env bash\necho \"xui-backup:1 inspect backup-json lock-fd9\"\n' > "$output"
 }
 '''
         initialization = SOURCE[SOURCE.index('PROJECT_REF='):SOURCE.index('FAKE_SITE_COUNT=')]
@@ -994,15 +997,14 @@ sys.exit(1 if sys.argv[1] == os.environ["FAIL_PANEL_COMMAND"] else 0)
                 self.assertNotIn(FIXTURE["panel_port"], [rule.split("/")[0] for rule in allowed])
 
     def test_panel_version_minimum_is_checked_before_destructive_actions(self):
-        start = SOURCE.index('while [ "$#" -gt 0 ]; do')
-        end = SOURCE.index("# ─── Detect package manager")
-        preflight = SOURCE[start:end]
-        self.assertLess(end, SOURCE.index('    uninstall_xui || exit 1\n'))
+        preflight = function('parse_installation_args')+'\n'+function('_validate_panel_version')
+        dispatch=SOURCE.split('run_installation() (')[1].split('manager_menu()')[0]
+        self.assertLess(dispatch.index('_validate_panel_version'),dispatch.index('uninstall_xui'))
         for version, accepted in (("v3.7.0", False), ("v3.7.99", False), ("v3.8.0", True), ("v3.8.5", True),
                                   ("v3.9.0", True), ("3.10.0", True), ("v4.0.0", True),
                                   ("v3.08.0", False), ("v3.8", False), ("latest", False), ("", False)):
             with self.subTest(version=version):
-                script = 'PANEL_VERSION=""\nmsg_err() { echo "$*" >&2; }\n' + preflight + '\necho destructive-actions\n'
+                script = 'PANEL_VERSION=""\nmsg_err() { echo "$*" >&2; }\n' + preflight + '\nparse_installation_args \"$@\"; _validate_panel_version \"$PANEL_VERSION\" || exit 1; echo destructive-actions\n'
                 result = subprocess.run(["bash", "-u", "-c", script, "fixture", "-version", version], capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0 if accepted else 1, result.stderr)
                 self.assertEqual("destructive-actions" in result.stdout, accepted)

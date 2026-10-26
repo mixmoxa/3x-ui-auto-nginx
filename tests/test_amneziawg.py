@@ -13,7 +13,7 @@ class AmneziaWG(unittest.TestCase):
                'preflight_integrated_features','prepare_base_os','prepare_system_dns','install_packages','setup_firewall',
                'get_server_ip','setup_acme_http','get_ssl_certs','install_panel','configure_nginx','configure_xui_db',
                'install_clash_sub','install_fake_site','install_diagnostics','tune_system','install_backup_tool',
-               'setup_certificate_renewal','check_installation','install_amneziawg','finish_initial_reboot')
+               'setup_certificate_renewal','check_installation','install_amneziawg','finish_initial_reboot','write_managed_state')
         stubs='\n'.join(name+'() { :; }' for name in names)
         stubs+='''
 msg_err() { echo "$*" >&2; }
@@ -132,6 +132,16 @@ else: sys.exit(1)
                         try: os.killpg(pid,signal.SIGTERM)
                         except ProcessLookupError: pass
                     process.wait(timeout=5)
+                    # SIGTERM is asynchronous; every known listener must release its sockets.
+                    children=[int((root/name).read_text()) for name in ('child-pid','hog-pid') if (root/name).exists()]
+                    deadline=time.monotonic()+5
+                    for pid in children:
+                        while time.monotonic()<deadline:
+                            try: state=Path(f'/proc/{pid}/stat').read_text().split(') ',1)[1].split()[0]
+                            except FileNotFoundError: break
+                            if state=='Z': break
+                            time.sleep(.01)
+                        else: self.fail('Private UDP fixture child did not terminate')
 
     def test_opt_in_defaults_and_eof(self):
         for answer, expected in [('', 'n'), ('\n','n'), ('N\n','n'), ('y\n','y'), ('Y\n','y'), ('invalid\nN\n','n')]:

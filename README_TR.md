@@ -41,6 +41,8 @@
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
+Mevcut kararlı v2.1.7 sürümü kurulumu doğrudan başlatır. v2.2.0 yayımlandıktan sonra yukarıdaki komut menüyü açacaktır: **1 — Installation**, **3 — Backups**, **0 — Exit**. Menü için `ssh -t` ile TTY ayırın; TTY yoksa açık kurulum seçeneklerini kullanın. [Menü ve yedekleme komutları](docs/MANAGER.md).
+
 <details>
 <summary><strong>Alternatif indirme — GitHub Releases kullanılamıyorsa</strong></summary>
 

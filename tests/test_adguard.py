@@ -274,7 +274,7 @@ class AdGuardInstaller(unittest.TestCase):
         self.assertFalse((self.root/'opt/AdGuardHome').exists())
 
     def test_core_first_and_opt_out_has_no_optional_installation(self):
-        operations=('preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot','select_security','select_vision','select_client','preflight_integrated_features','select_amneziawg','preflight_amneziawg','preflight_panel_release','make_port','confirm_destructive_reinstall','validate_domains','clean_previous_install','install_packages',
+        operations=('preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state','select_security','select_vision','select_client','preflight_integrated_features','select_amneziawg','preflight_amneziawg','preflight_panel_release','make_port','confirm_destructive_reinstall','validate_domains','clean_previous_install','install_packages',
                     'setup_firewall','get_server_ip','setup_acme_http','get_ssl_certs','install_panel','configure_nginx',
                     'configure_xui_db','install_clash_sub','install_fake_site','install_diagnostics','tune_system',
                     'install_backup_tool','setup_certificate_renewal','check_installation','show_results')
@@ -437,7 +437,7 @@ class AdGuardInstaller(unittest.TestCase):
 
     def final_result(self, requested, failure='', unverified=False):
         # Exercise the actual main, optional install/rollback and summary on private state.
-        operations = ('preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot','select_security','select_vision','select_client','preflight_integrated_features','select_amneziawg','preflight_amneziawg','preflight_panel_release','make_port','confirm_destructive_reinstall', 'validate_domains', 'clean_previous_install',
+        operations = ('preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state','select_security','select_vision','select_client','preflight_integrated_features','select_amneziawg','preflight_amneziawg','preflight_panel_release','make_port','confirm_destructive_reinstall', 'validate_domains', 'clean_previous_install',
                       'install_packages', 'setup_firewall', 'get_server_ip', 'setup_acme_http',
                       'get_ssl_certs', 'install_panel', 'configure_nginx', 'configure_xui_db',
                       'install_clash_sub', 'install_fake_site', 'install_diagnostics', 'tune_system',

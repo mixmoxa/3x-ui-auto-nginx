@@ -296,7 +296,11 @@ class PersonalBackup(unittest.TestCase):
             self.fail('sqlite3 CLI is required (CI installs it; local runs may set SQLITE3_BIN).')
         (self.bin / 'sqlite3').symlink_to(sqlite)
         self.script = Path(self.temp.name) / 'backup.sh'
-        self.script.write_text(relocated(SOURCE, self.root))
+        script=relocated(SOURCE, self.root)
+        lock=re.search(r'^acquire_stack_lock\(\) \{.*?^\}',script,re.M|re.S)[0]
+        script=script.replace(lock,lock.replace(str(self.root)+'/proc','/proc').replace('/run/3x-ui-auto-nginx',str(self.root)+'/run/3x-ui-auto-nginx'))
+        (self.root/'run').mkdir()
+        self.script.write_text(script)
         self.env = {**os.environ, 'PATH': str(self.bin) + ':' + os.environ['PATH'],
                     'FIXTURE_ROOT': str(self.root), 'REAL_CP': shutil.which('cp'),
                     'REAL_PYTHON3': sys.executable,
@@ -386,7 +390,7 @@ class PersonalBackup(unittest.TestCase):
 
     def run_tool(self, *args, **env):
         # Sourcing allows a root-check stub for unprivileged fixture execution.
-        result = subprocess.run(['bash', '-c', 'source "$1"; shift; require_root() { :; }; main "$@"',
+        result = subprocess.run(['bash', '-c', 'source "$1"; shift; require_root() { :; }; '+('acquire_stack_lock() { :; }; ' if os.geteuid()!=0 else '')+'main "$@"',
                                  'fixture', str(self.script), *map(str, args)],
                                 env={**self.env, **env}, text=True, capture_output=True)
         self.assertNotIn('fixture-secret-not-for-output', result.stdout + result.stderr)
@@ -676,10 +680,10 @@ class PersonalBackup(unittest.TestCase):
         self.assertNotIn('mozaroc', tool)
         self.assertRegex(function('main'), r'    install_backup_tool \|\| \{ msg_err [^\n]*; exit 1; \}')
         download = Path(self.temp.name) / 'download.sh'
-        download.write_text('#!/bin/bash\necho backup-tool\n')
-        mock = ('curl() { [[ "$2" == "$GITHUB_RAW/assets/backup/x-ui-backup.sh" ]] || return 9; '
+        download.write_text('#!/bin/bash\necho \"xui-backup:1 inspect backup-json lock-fd9\"\n')
+        mock = ('backup_helper_compatible() { :; }; curl() { [[ "$2" == "$GITHUB_RAW/assets/backup/x-ui-backup.sh" ]] || return 9; '
                 'cp "$DOWNLOAD" "$4"; }\nmsg_err() { echo "$*" >&2; }\n')
-        install = relocated(tool, self.root)
+        install = relocated(function('backup_helper_path_safe')+'\n'+tool, self.root)
         result = subprocess.run(['bash', '-eu', '-c', mock + install + '\ninstall_backup_tool\n'],
                                 env={**self.env, 'GITHUB_RAW': 'https://fixture.example/personal', 'DOWNLOAD': str(download)},
                                 capture_output=True, text=True)

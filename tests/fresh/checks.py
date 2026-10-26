@@ -1,4 +1,4 @@
-"""Read-only installed-stack and actual subscription consumer checks inside the guest."""
+"""Installed-stack, Backup UI and actual subscription consumer checks in the guest."""
 import base64
 import importlib.util
 import json
@@ -18,7 +18,7 @@ import urllib.request
 import uuid
 import ssl
 
-from diagnostics import probe_dns
+from diagnostics import probe_dns, validate_dns
 
 ROOT = Path('/root/pilot')
 os.umask(0o077)
@@ -31,6 +31,23 @@ def load(name):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+def adguard_state(rewrite=None):
+    """Private API assertions; never publish AGH credentials or configuration."""
+    metadata=json.loads(Path('/opt/AdGuardHome/managed.json').read_text())
+    log=re.sub(r'\x1b\[[0-9;]*m','',(ROOT/'installer.raw.log').read_text())
+    password=re.search(r'Login: admin\n Password: (\S+)',log)[1]
+    headers={'Authorization':'Basic '+base64.b64encode(('admin:'+password).encode()).decode(),
+             'Content-Type':'application/json'}
+    def request(path,body=None):
+        req=urllib.request.Request(f'http://127.0.0.1:{metadata["web_port"]}/control/'+path,
+            data=json.dumps(body).encode() if body is not None else None,headers=headers)
+        with urllib.request.urlopen(req,timeout=10) as response:data=response.read()
+        return json.loads(data) if data else None
+    if rewrite is not None:request('rewrite/add',rewrite)
+    dns=request('dns_info')
+    return {'upstreams':{k:dns[k] for k in ('upstream_dns','bootstrap_dns','fallback_dns','upstream_mode') if k in dns},
+            'rewrites':request('rewrite/list')}
 
 def installed(cold=False):
     root=ROOT; checks={}
@@ -47,6 +64,11 @@ def installed(cold=False):
         time.sleep(0.5)
     for unit in units:run('systemctl','is-enabled','--quiet',unit)
     checks['services_enabled_active']=True
+    if cold:
+        fixture=int(run('systemctl','show','pilot-external-network','-p','ActiveEnterTimestampMonotonic','--value'))
+        agh=int(run('systemctl','show','AdGuardHome','-p','ActiveEnterTimestampMonotonic','--value'))
+        assert 0<fixture<agh,'External DNS fixture must be ready before AGH starts'
+        checks['test_DNS_fixture_ready_before_AGH']=True
     run('/usr/sbin/sshd','-t');checks['ssh_configuration']=True
     baseline=json.loads((root/'baseline.json').read_text())
     xui_version=re.search(r'[0-9]+\.[0-9]+\.[0-9]+',run('/usr/local/x-ui/x-ui','-v'))[0]
@@ -121,6 +143,15 @@ def installed(cold=False):
                 return response.read()
         probe_dns('doh_'+method.lower(), ident, doh_query, publish_dns)
     checks['AGH_native_DNS_and_HTTPS_DoH_GET_POST']=True
+    baseline=root/'backup-adguard.private.json'
+    if baseline.exists():
+        saved=json.loads(baseline.read_text())
+        assert adguard_state()==saved,'AGH upstream/rewrite settings changed after Backup or reboot'
+        rewrite=next(r for r in saved['rewrites'] if r['domain'].startswith('backup-persist-'))
+        question=b''.join(bytes([len(label)])+label.encode() for label in rewrite['domain'].split('.'))+b'\0'+struct.pack('!HH',1,1)
+        packet=ident+struct.pack('!5H',0x100,1,0,0,0)+question
+        validate_dns(native_query(),ident,'native_udp',0)
+        checks['AGH_Backup_upstreams_and_rewrite_persisted']=True
     run('fail2ban-client','status','sshd')
     for unit in ('apt-daily.timer','apt-daily-upgrade.timer'):run('systemctl','is-active','--quiet',unit)
     checks['fail2ban_APT_timers']=True
@@ -324,3 +355,45 @@ def renewal():
     after = [run('openssl','x509','-in',str(cert),'-noout','-serial') for cert in certificates]
     assert all(a != b for a,b in zip(before,after)), 'Renewal did not replace every managed certificate'
     return {'three_real_renewals':True, **installed()}
+
+
+def manager_backup():
+    """Actual Bash menu on a TTY, actual installed Backup, private raw output."""
+    import ast, pty, select
+    state=json.loads(Path('/etc/x-ui/auto-nginx-managed.json').read_text())
+    assert state['format']==1 and re.fullmatch('[0-9a-f]{40}',state['source_ref'])
+    assert state['features']==dict(adguard=True,vision=True,amneziawg=True)
+    assert set(state['inbound_roles'])=={'reality','ws','xhttp','grpc','hysteria2','vision','amneziawg'}
+    agh=adguard_state({'domain':'backup-persist-'+os.urandom(6).hex()+'.example.test','answer':'203.0.113.7'})
+    (ROOT/'backup-adguard.private.json').write_text(json.dumps(agh))
+    before={unit:run('systemctl','is-active',unit) for unit in ('x-ui','nginx','AdGuardHome','certbot.timer')}
+    master,slave=pty.openpty()
+    proc=subprocess.Popen(['bash',str(ROOT/'x-ui-latest.sh')],stdin=slave,stdout=slave,stderr=slave,
+                          env={**os.environ,'TERM':'dumb','NO_COLOR':'1'})
+    os.close(slave); output=bytearray();deadline=time.monotonic()+120
+    os.write(master,b'3\n1\n3\n2\n0\n')
+    try:
+        while time.monotonic()<deadline:
+            if select.select([master],[],[],.2)[0]:
+                try:part=os.read(master,65536)
+                except OSError:break
+                if not part:break
+                output.extend(part)
+            if proc.poll() is not None:break
+        proc.wait(timeout=2)
+        assert proc.returncode==0,'Backup menu failed (private output retained in guest)'
+    finally:
+        if proc.poll() is None:proc.kill();proc.wait()
+        os.close(master)
+        (ROOT/'manager-backup.private.log').write_bytes(output)
+    text=output.decode(errors='replace')
+    assert text.count('BACKUPS')>=2 and 'FAILED' not in text
+    exact=ast.literal_eval(re.search(r'Created archive: ([^\r\n]+)',text)[1])
+    archive=Path(exact);assert archive.is_file() and archive.stat().st_mode&0o777==0o600
+    inspected=json.loads(run('bash','/usr/local/bin/x-ui-backup','inspect',str(archive)))
+    assert inspected['format_version']==3 and inspected['adguard_home'] is True
+    for unit,value in before.items():assert run('systemctl','is-active',unit)==value
+    assert adguard_state()==agh,'Backup changed AGH upstream/rewrite settings'
+    # The next consumer phase verifies that the resumed official Xray still transfers data.
+    return {'actual_menu_backup_and_list':True,'service_states_preserved':True,'managed_state':True,
+            'AGH_upstreams_and_nonempty_rewrite_preserved':True}
