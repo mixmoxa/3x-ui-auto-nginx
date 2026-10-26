@@ -2989,10 +2989,10 @@ with sqlite3.connect('file:'+path+'?mode=ro',uri=True) as db:
     share=','.join(name if name in columns else "''" for name in ('share_addr_strategy','share_addr'))
     rows=db.execute('SELECT id,protocol,listen,port,stream_settings,'+share+' FROM inbounds').fetchall()
     def single(role,predicate):
-        found=[r for r in rows if predicate(r,json.loads(r[4]))]
+        found=[r for r in rows if predicate(r,json.loads(r[4] or '{}'))]
         if len(found)!=1: raise ValueError('Ambiguous installed role: '+role)
         roles[role]=found[0][0]
-        return json.loads(found[0][4])
+        return json.loads(found[0][4] or '{}')
     single('reality',lambda r,s:r[1:4]==('vless','127.0.0.1',8443) and s.get('security')=='reality' and
            s.get('realitySettings',{}).get('serverNames')==[reality] and s.get('realitySettings',{}).get('target')=='127.0.0.1:9443')
     for role,proto,network in (('ws','vless','ws'),('grpc','trojan','grpc')):

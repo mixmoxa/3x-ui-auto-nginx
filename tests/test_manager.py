@@ -202,6 +202,16 @@ class ManagerBackup(unittest.TestCase):
         self.assertTrue(all(i>=20 for i in state['inbound_roles'].values()))
         self.assertFalse(any(state['features'].values()));self.assertIsNone(state['domains']['vision'])
         self.assertEqual(marker.stat().st_mode&0o777,0o600)
+        # Official 3x-ui normalizes native AWG stream_settings to the empty string.
+        with sqlite3.connect(dbpath) as db:
+            db.execute('INSERT INTO inbounds VALUES(?,?,?,?,?,?,?)',(777,'amneziawg','0.0.0.0',8443,'','custom','example.com'))
+        native=subprocess.run(['bash','-c',code.replace('AWG_RESULT=not_requested','AWG_RESULT=configured'),'fixture',str(dbpath)],capture_output=True,text=True)
+        self.assertEqual(native.returncode,0,native.stderr)
+        native_state=json.loads(marker.read_bytes())
+        self.assertTrue(native_state['features']['amneziawg']);self.assertEqual(native_state['inbound_roles']['amneziawg'],777)
+        restored=subprocess.run(['bash','-c',code,'fixture',str(dbpath)],capture_output=True,text=True)
+        self.assertEqual(restored.returncode,0,restored.stderr)
+        self.assertEqual(marker.read_bytes(),old)
         with sqlite3.connect(dbpath) as db:
             db.execute('ALTER TABLE inbounds DROP COLUMN share_addr_strategy')
             db.execute('ALTER TABLE inbounds DROP COLUMN share_addr')
