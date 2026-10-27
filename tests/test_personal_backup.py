@@ -116,6 +116,8 @@ if name == 'systemctl':
         sys.exit(0 if active else 3)
     if command == 'show' and service == 'AdGuardHome':
         print(str(root / 'etc/systemd/system/AdGuardHome.service') if 'FragmentPath' in ' '.join(args) else '12345')
+    if command == 'show' and service == 'x-ui':
+        print('54321')
     if command == 'disable':
         enabled[service] = False; enabled_path.write_text(json.dumps(enabled))
     if command == 'cat':
@@ -146,6 +148,12 @@ if name == 'systemctl':
                 with open(root/'commands','a') as log: log.write(json.dumps(['fault','running-db'])+'\n')
                 (root / 'etc/x-ui/x-ui.db').write_bytes(b'corrupt')
 elif name == 'ss':
+    if '-ltnp' in args:
+        if os.environ.get('PANEL_LISTENER') != 'missing':
+            address = '0.0.0.0' if os.environ.get('PANEL_LISTENER') == 'public' else '127.0.0.1'
+            pid = 99999 if os.environ.get('PANEL_LISTENER') == 'foreign' else 54321
+            print(f'LISTEN 0 128 {address}:10002 0.0.0.0:* users:(("x-ui",pid={pid},fd=1))')
+        sys.exit(0)
     services = json.loads((root/'services.json').read_text())
     if services.get('x-ui') == 'active':
         broken = os.environ.get('DEAD_XRAY') or (os.environ.get('FAIL_INCOMING_XRAY') and
@@ -337,6 +345,8 @@ class PersonalBackup(unittest.TestCase):
                                  [relocated(value, self.root) if isinstance(value,str) else value
                                   for value in row.values()])
         self.write('/usr/local/x-ui/x-ui', '#!/bin/sh\necho 3.9.0\n', 0o755)
+        self.path('/proc/54321').mkdir(parents=True)
+        self.path('/proc/54321/exe').symlink_to(self.path('/usr/local/x-ui/x-ui'))
         self.write('/usr/local/x-ui/bin/xray-linux-amd64', '#!/bin/sh\necho Xray 26.9.30\n', 0o755)
         self.write('/usr/bin/x-ui', '#!/bin/sh\necho 3.9.0\n', 0o755)
         self.write('/usr/local/lib/3x-ui-pro/mtr-backend.py', '# backend\n', 0o755)
@@ -943,6 +953,42 @@ class PersonalBackup(unittest.TestCase):
                 self.assertEqual(db.execute('PRAGMA quick_check').fetchone(),('ok',))
             self.assertIn(['ufw','allow','8443/udp'],self.commands())
             self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
+
+    def test_native_awg_empty_stream_survives_restore(self):
+        self.seed_amneziawg()
+        with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
+            db.execute("UPDATE inbounds SET stream_settings='' WHERE protocol='amneziawg'")
+            saved = db.execute("SELECT * FROM inbounds WHERE protocol='amneziawg'").fetchall()
+        archive = self.backup()
+        result = self.run_tool('restore', archive)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
+            self.assertEqual(db.execute("SELECT * FROM inbounds WHERE protocol='amneziawg'").fetchall(), saved)
+            db.execute("UPDATE inbounds SET protocol='hysteria2' WHERE protocol='amneziawg'")
+        archive.unlink()
+        invalid = self.backup()
+        (self.root/'commands').write_text('')
+        result = self.run_tool('restore', invalid)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(c[:2] == ['systemctl','stop'] and c[-1] == 'x-ui' for c in self.commands()))
+
+    def test_panel_listener_failure_recovers_and_stopped_panel_stays_stopped(self):
+        archive = self.backup()
+        self.write('/etc/x-ui/target-marker', 'previous target')
+        for fault in ('missing', 'foreign', 'public'):
+            with self.subTest(fault=fault):
+                result = self.run_tool('restore', archive, PANEL_LISTENER=fault)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('Previous managed state/service states restored and checked', result.stderr)
+                self.assertEqual(self.path('/etc/x-ui/target-marker').read_text(), 'previous target')
+        states = json.loads((self.root/'services.json').read_text())
+        states['x-ui'] = 'inactive'
+        (self.root/'services.json').write_text(json.dumps(states))
+        archive.unlink()
+        archive = self.backup()
+        result = self.run_tool('restore', archive, PANEL_LISTENER='missing')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads((self.root/'services.json').read_text())['x-ui'], 'inactive')
 
     def test_round_trip_cron_firewall_diagnostics_and_sysctl(self):
         self.write('/var/www/acme/.well-known/acme-challenge/stale', 'stale challenge must not be archived')

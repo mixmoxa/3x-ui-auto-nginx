@@ -29,10 +29,11 @@ def launch(args, name, env=None):
     return process
 
 
-def ssh(command, timeout=30, tty=False):
+def ssh(command, timeout=30, tty=False, input=None, port=22220):
     return subprocess.run(['ssh', *(['-tt'] if tty else []), '-i', '/pilot/ssh-key', '-o', 'StrictHostKeyChecking=accept-new',
         '-o', 'UserKnownHostsFile=/pilot/known_hosts', '-o', 'ConnectTimeout=3',
-        '-p', '22220', 'root@127.0.0.1', command], capture_output=True, timeout=timeout)
+        '-o', 'ControlMaster=no', '-o', 'ControlPath=none',
+        '-p', str(port), 'root@127.0.0.1', command], input=input, capture_output=True, timeout=timeout)
 
 
 def failure_location(output):
@@ -49,10 +50,11 @@ def boot():
     started = time.monotonic()
     kernel = (ROOT/'kernel.path').read_text().strip()
     report['kernel'] = Path(kernel).name
+    extra_ssh = ',hostfwd=tcp:127.0.0.1:22221-:2222' if os.environ.get('XUI_RESTORE_ACCEPTANCE') == '1' else ''
     vm = launch(['qemu-system-x86_64', '-machine', 'accel=tcg', '-cpu', 'max', '-m', '4096',
         '-smp', '2', '-nodefaults', '-no-reboot', '-display', 'none', '-serial', 'stdio',
         '-monitor', 'none', '-drive', 'file=/pilot/disk.raw,format=raw,if=virtio',
-        '-netdev', 'user,id=n0,hostfwd=tcp:127.0.0.1:22220-:22,hostfwd=tcp:127.0.0.1:18080-:80',
+        '-netdev', 'user,id=n0,hostfwd=tcp:127.0.0.1:22220-:22,hostfwd=tcp:127.0.0.1:18080-:80'+extra_ssh,
         '-device', 'virtio-net-pci,netdev=n0', '-kernel', kernel, '-initrd', '/pilot/initrd.img',
         '-append', 'root=/dev/vda rw rootfstype=ext4 console=ttyS0 panic=1 quiet net.ifnames=0 '
                    'systemd.show_status=true systemd.log_target=console'], phase+'-serial')
@@ -198,6 +200,35 @@ def fixtures():
                 time.sleep(.05)
 
 
+def restore_acceptance(ref):
+    """One minimal source and one clean target, using the same QEMU/SSH harness."""
+    global phase
+    phase = 'minimal-source'
+    fresh_disk(); boot(); install('restore-source', ref)
+    invoke('checks.restore_source()', 'restore-source', 180)
+    for source, target in (('$(cat /root/pilot/restore-archive-path)', 'restore.tar.gz'),
+                           ('/root/pilot/restore-expected.json', 'restore-expected.json')):
+        result = ssh('cat '+source, 90)
+        assert result.returncode == 0
+        (ROOT/target).write_bytes(result.stdout)
+    poweroff()
+    phase = 'clean-target-restore-security'
+    fresh_disk(); boot()
+    for name in ('restore.tar.gz', 'restore-expected.json'):
+        result = ssh('cat > /root/pilot/'+name, 90, input=(ROOT/name).read_bytes())
+        assert result.returncode == 0
+    invoke('checks.restore_target()', 'restore-target', 900)
+    assert ssh('true', port=22221).returncode == 0, 'New external SSH connection failed after UFW enable'
+    report['new_external_ssh_after_ufw'] = 'PASS'
+    invoke('checks.restore_verified()', 'restore-verified')
+    poweroff()
+    phase = 'restored-cold-boot'
+    boot()
+    assert ssh('true', port=22221).returncode == 0, 'New external SSH connection failed after cold boot'
+    invoke('checks.restore_verified(cold=True)', 'restore-cold')
+    poweroff()
+
+
 if __name__ == '__main__':
     ref = os.environ['XUI_AUTO_REF']
     assert re.fullmatch('[0-9a-f]{40}', ref)
@@ -220,46 +251,49 @@ if __name__ == '__main__':
         report['image_prepare_seconds'] = int((ROOT/'images.ready').read_text())-int((ROOT/'started').read_text())
         report['disk_prepare_seconds'] = int((ROOT/'disk.ready').read_text())-int((ROOT/'images.ready').read_text())
         fixtures()
-        fresh_disk()
-        phase = 'maximum-install'
-        boot()
-        install('positive', ref)
-        invoke('checks.installed()', 'installed')
-        phase = 'manager-backup'
-        invoke('checks.manager_backup()', 'manager-backup', 150, tty=True)
-        phase = 'transport-consumers'
-        invoke('checks.transports()', 'transports', 300)
-        phase = 'AWG-payload'
-        invoke('checks.amneziawg()', 'awg', 120)
-        phase = 'tech0-RED-GREEN'
-        invoke('checks.search_domain_regression()', 'tech0', 120)
-        phase = 'installed-renewal-hooks'
-        invoke('checks.renewal()', 'renewal', 300)
-        identity = ssh('cat /proc/sys/kernel/random/boot_id', 10)
-        assert identity.returncode == 0 and re.fullmatch(rb'[a-f0-9-]{36}\n', identity.stdout)
-        # The second QEMU process boots exactly the same installed disk.
-        command = "tr -d '-' < /proc/sys/kernel/random/boot_id > /root/pilot/first-boot-id"
-        assert ssh(command, 10).returncode == 0
-        poweroff()
-        phase = 'cold-boot'
-        boot()
-        invoke('checks.installed(cold=True)', 'cold')
-        phase = 'cold-transport-consumers'
-        invoke('checks.transports()', 'cold-transports', 300)
-        poweroff()
-        phase = 'mandatory-dependency-negative'
-        fresh_disk()
-        boot()
-        install('dependency', ref)
-        poweroff()
-        phase = 'DoT-outage-partial-install'
-        fresh_disk()
-        (ROOT/'dot-outage').touch()
-        boot()
-        install('dot-outage', ref)
-        phase = 'DoT-outage-core-consumers'
-        invoke('checks.transports(vision=False)', 'partial-transports', 240)
-        poweroff()
+        if os.environ.get('XUI_RESTORE_ACCEPTANCE') == '1':
+            restore_acceptance(ref)
+        else:
+            fresh_disk()
+            phase = 'maximum-install'
+            boot()
+            install('positive', ref)
+            invoke('checks.installed()', 'installed')
+            phase = 'manager-backup'
+            invoke('checks.manager_backup()', 'manager-backup', 150, tty=True)
+            phase = 'transport-consumers'
+            invoke('checks.transports()', 'transports', 300)
+            phase = 'AWG-payload'
+            invoke('checks.amneziawg()', 'awg', 120)
+            phase = 'tech0-RED-GREEN'
+            invoke('checks.search_domain_regression()', 'tech0', 120)
+            phase = 'installed-renewal-hooks'
+            invoke('checks.renewal()', 'renewal', 300)
+            identity = ssh('cat /proc/sys/kernel/random/boot_id', 10)
+            assert identity.returncode == 0 and re.fullmatch(rb'[a-f0-9-]{36}\n', identity.stdout)
+            # The second QEMU process boots exactly the same installed disk.
+            command = "tr -d '-' < /proc/sys/kernel/random/boot_id > /root/pilot/first-boot-id"
+            assert ssh(command, 10).returncode == 0
+            poweroff()
+            phase = 'cold-boot'
+            boot()
+            invoke('checks.installed(cold=True)', 'cold')
+            phase = 'cold-transport-consumers'
+            invoke('checks.transports()', 'cold-transports', 300)
+            poweroff()
+            phase = 'mandatory-dependency-negative'
+            fresh_disk()
+            boot()
+            install('dependency', ref)
+            poweroff()
+            phase = 'DoT-outage-partial-install'
+            fresh_disk()
+            (ROOT/'dot-outage').touch()
+            boot()
+            install('dot-outage', ref)
+            phase = 'DoT-outage-core-consumers'
+            invoke('checks.transports(vision=False)', 'partial-transports', 240)
+            poweroff()
         report['result'] = 'PASS'
     except Exception as error:
         (ROOT/'failure.private.log').write_text(traceback.format_exc())

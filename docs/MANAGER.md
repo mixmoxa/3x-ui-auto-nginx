@@ -16,8 +16,48 @@ that operation. Listing shows UTC file dates and byte sizes, without opening eac
 archive. A listed filename is not evidence of integrity or trusted provenance.
 Restore accepts a list number or absolute path, shows archive metadata and asks
 for `YES` before replacing managed data. Restore keeps the existing Backup v3
-OS/version/architecture and recovery contracts; additional security configuration
-and domain changes are not part of this menu.
+OS/version/architecture and recovery contracts. Domain changes are not part of
+this menu.
+
+Restore offers two independent options, both **No** by default:
+
+- **Automatic security updates + SSH Fail2ban**: one combined choice, using the
+  existing Security helper without system DoT or initial installation. The policy
+  permits automatic reboot at **04:38 server time, including with active users**;
+  the menu warns before asking for consent.
+- **UFW with SSH protection**: after Restore has added project rules, preserve an
+  already active UFW without changing it, or enable inactive UFW only on a simple
+  supported Ubuntu 24.04/26.04 configuration. It validates sshd, standard
+  `ssh.service`/`ssh.socket`, actual listeners and owners, packaged UFW defaults,
+  simple project/SSH allows and absence of other kernel firewall rules. It allows
+  the confirmed SSH TCP ports before enabling UFW and verifies effective rules.
+  Nonstandard SSH ports and socket activation are supported. Custom before/after
+  files, policies, DENY/route/application rules, another firewall manager or
+  ambiguous listeners cause refusal; rules are never deleted or reordered.
+  The distro `nftables` inspection tool is installed if missing.
+
+When either option is selected, the manager pins its exact source revision and
+prepares the matching helper **before** Restore, in a private root-owned 0700
+temporary directory under `/run`, outside restored trees. It runs Python in
+isolated mode and never executes a helper from the archive or reloads mutable
+`main` afterwards. If preparation fails, explicitly choose ordinary Restore
+without Security or cancel.
+
+Security starts only after the foreground Restore process has completely exited,
+including EXIT cleanup, with status 0. The existing operation lock remains held
+through all requested actions. Results show Restore, APT, Fail2ban, UFW and
+Overall separately. Security failure returns nonzero with `Overall: PARTIAL`
+while retaining successfully restored data; it does not trigger Restore rollback.
+Installed package changes are not rolled back. A possibly enabled but unverified
+firewall is reported `FAILED_UNVERIFIED`; check `ufw status verbose` and establish
+a new external SSH connection before relying on access. Interruption can leave
+Security state unverified and does not promise rollback.
+
+The standalone `x-ui-backup restore` keeps its existing contract and does not run
+these optional actions. Backup v3 layout/metadata remain unchanged. Restore
+accepts the native AmneziaWG empty `stream_settings` without rewriting that value;
+an expected active panel must own its saved localhost web listener. Saved stopped
+panel state is preserved.
 
 The standalone CLI remains available:
 
@@ -74,6 +114,22 @@ original exit code and exits, allowing inspection of the reported recovery state
 before further changes. Exit/EOF without an operation, or after success, returns 0.
 Direct operation calls preserve their error status. Ctrl-C uses normal shell
 signal handling; it does not start another menu action.
+
+The lightweight real Restore acceptance reuses the existing networked QEMU/SSH
+stand; it creates one minimal source installation and real Backup v3, restores to
+a clean target of the same Ubuntu version, configures Security, opens a new SSH
+connection from outside the VM (including socket port 2222), and checks a cold
+boot. Run each version once from a committed, remotely available exact HEAD:
+
+```bash
+XUI_RESTORE_ACCEPTANCE=1 XUI_TEST_DISTRO=ubuntu:24.04 bash tests/fresh/run.sh
+XUI_RESTORE_ACCEPTANCE=1 XUI_TEST_DISTRO=ubuntu:26.04 bash tests/fresh/run.sh
+```
+
+This opt-in mode does not change the ordinary CI jobs or the default full fresh
+installer acceptance. It selects no Vision, AWG, AGH or client/Mihomo integration.
+Private archives, database digests, keys and logs stay in the disposable stand and
+are removed by its existing cleanup; only fixed check results are public.
 
 ## Installed description
 

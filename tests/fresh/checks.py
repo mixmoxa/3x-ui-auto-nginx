@@ -26,6 +26,75 @@ os.umask(0o077)
 def run(*args):
     return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT, timeout=45)
 
+
+def restore_content():
+    """Private content digests, never credentials or database rows in reports."""
+    import hashlib
+    with sqlite3.connect('/etc/x-ui/x-ui.db') as db:
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        content = {name: db.execute('SELECT * FROM '+name+' ORDER BY rowid').fetchall()
+                   for name in ('settings','inbounds','users','clients') if name in tables}
+    result = {'sqlite': hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()}
+    for name in ('/etc/x-ui/pr2-persist', '/root/cert/panel.example.test/fullchain.pem',
+                 '/root/cert/panel.example.test/privkey.pem'):
+        result[name] = hashlib.sha256(Path(name).read_bytes()).hexdigest()
+    return result
+
+
+def restore_source():
+    Path('/etc/x-ui/pr2-persist').write_text('PR2-lite persistent data\n')
+    result = subprocess.run(['bash','/usr/local/bin/x-ui-backup','backup','--json'],
+                            capture_output=True, timeout=150)
+    (ROOT/'source-backup.private.log').write_bytes(result.stderr)
+    assert result.returncode == 0
+    archive = json.loads(result.stdout)['archive']
+    assert json.loads(run('bash','/usr/local/bin/x-ui-backup','inspect',archive))['format_version'] == 3
+    (ROOT/'restore-archive-path').write_text(archive)
+    (ROOT/'restore-expected.json').write_text(json.dumps(restore_content()))
+    return {'real_backup_v3':True, 'minimal_source':True}
+
+
+def restore_target():
+    assert not Path('/usr/local/x-ui').exists() and not Path('/etc/x-ui').exists()
+    env = {**os.environ, **json.loads((ROOT/'environment.json').read_text()),
+           'CURL_CA_BUNDLE':'/etc/ssl/certs/ca-certificates.crt'}
+    subprocess.run(['update-ca-certificates'], check=True, capture_output=True, timeout=120)
+    # Real socket activation, including a nonstandard port, with both forwarded
+    # SSH endpoints checked by the host after UFW and after a fresh QEMU boot.
+    drop = Path('/etc/systemd/system/ssh.socket.d/90-pilot.conf'); drop.parent.mkdir(exist_ok=True)
+    drop.write_text('[Socket]\nListenStream=\nListenStream=0.0.0.0:22\nListenStream=0.0.0.0:2222\n')
+    run('systemctl','daemon-reload')
+    run('systemctl','stop','ssh.service','ssh.socket')
+    run('systemctl','enable','--now','ssh.socket')
+    result = subprocess.run(['bash','-c','source "$1"; backup_action restore','fixture',str(ROOT/'x-ui-latest.sh')],
+                            input=b'/root/pilot/restore.tar.gz\ny\ny\nYES\n', capture_output=True, env=env, timeout=850)
+    (ROOT/'restore-security.private.log').write_bytes(result.stdout+result.stderr)
+    assert result.returncode == 0, 'Restore/Security failed; private log retained'
+    text = result.stdout.decode()
+    for line in ('Restore: SUCCESS','APT: CONFIGURED','Fail2ban: CONFIGURED','UFW: CONFIGURED','Overall: SUCCESS'):
+        assert line in text
+    assert restore_content() == json.loads((ROOT/'restore-expected.json').read_text())
+    (ROOT/'restore-boot-id').write_text(Path('/proc/sys/kernel/random/boot_id').read_text())
+    return {'clean_target_restore':True, 'security_without_dot':True, 'socket_and_nonstandard_ssh':True,
+            'restored_content_preserved':True}
+
+
+def restore_verified(cold=False):
+    assert restore_content() == json.loads((ROOT/'restore-expected.json').read_text())
+    for service in ('x-ui','nginx','mtr-backend','certbot.timer','fail2ban','apt-daily.timer','apt-daily-upgrade.timer'):
+        run('systemctl','is-active','--quiet',service)
+    assert run('ufw','status').startswith('Status: active')
+    assert not Path('/etc/systemd/resolved.conf.d/90-3x-ui-auto-nginx.conf').exists()
+    security = load('current-security')
+    security.verify_fail2ban([22,2222])
+    security.verify_apt('ubuntu', set())
+    before = {str(p):p.read_bytes() for p in Path('/etc/ufw').rglob('*') if p.is_file()}
+    assert json.loads(run('/usr/bin/python3','-I',str(ROOT/'current-security.py'),'--enable-ufw'))['status'] == 'preserved'
+    assert before == {str(p):p.read_bytes() for p in Path('/etc/ufw').rglob('*') if p.is_file()}
+    if cold:
+        assert Path('/proc/sys/kernel/random/boot_id').read_text() != (ROOT/'restore-boot-id').read_text()
+    return {'services_active':True, 'ufw_active':True, 'restored_content_preserved':True, 'boot_verified':True}
+
 def load(name):
     spec = importlib.util.spec_from_file_location(name, ROOT / (name + '.py'))
     module = importlib.util.module_from_spec(spec)

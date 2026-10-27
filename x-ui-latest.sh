@@ -3104,9 +3104,72 @@ backup_list() {
     (( number )) || printf 'No backups in /var/backups/x-ui.\n'
 }
 
+prepare_restore_security() {
+    [[ -n ${PROJECT_SOURCE_SHA:-} && $PROJECT_SOURCE_SHA == "${PROJECT_REF:-}" ]] || pin_project_source || return 1
+    RESTORE_SECURITY_DIR=$(mktemp -d /run/xui-restore-security.XXXXXXXX) || return 1
+    [[ $(stat -c '%u:%g:%a' "$RESTORE_SECURITY_DIR") == 0:0:700 ]] || return 1
+    curl -q -fsSL --connect-timeout 10 --max-time 30 \
+        "$GITHUB_RAW/assets/security/managed.py" -o "$RESTORE_SECURITY_DIR/managed.py" || return 1
+    chmod 0600 "$RESTORE_SECURITY_DIR/managed.py" || return 1
+    /usr/bin/python3 -I -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$RESTORE_SECURITY_DIR/managed.py"
+}
+
+post_restore_security() (
+    local directory=$1 apt=$2 ufw=$3 apt_code=0 ufw_code=0
+    cd / || exit 1
+    # Isolated Python ignores cwd, PYTHONPATH and user site packages. No archive code.
+    export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+    if [[ "$apt" == y ]]; then
+        /usr/bin/python3 -I "$directory/managed.py" < /dev/null > "$directory/apt.json" || apt_code=$?
+    fi
+    if [[ "$ufw" == y ]]; then
+        /usr/bin/python3 -I "$directory/managed.py" --enable-ufw < /dev/null > "$directory/ufw.json" || ufw_code=$?
+    fi
+    /usr/bin/python3 -I - "$directory" "$apt" "$ufw" "$apt_code" "$ufw_code" <<'PYSECURITY'
+import json, pathlib, sys
+directory, apt, ufw, apt_code, ufw_code = sys.argv[1:]
+results = dict(APT='NOT_REQUESTED', Fail2ban='NOT_REQUESTED', UFW='NOT_REQUESTED')
+def read(name):
+    try:
+        value = json.loads((pathlib.Path(directory) / name).read_text())
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+def warnings(data):
+    for warning in data.get('warnings', []):
+        if isinstance(warning, str): print('Security warning: ' + ascii(warning))
+if apt == 'y':
+    data = read('apt.json')
+    warnings(data)
+    for label, key in (('APT', 'apt'), ('Fail2ban', 'fail2ban')):
+        value = data.get(key)
+        results[label] = {'configured':'CONFIGURED', 'failed_rolled_back':'FAILED',
+                          'failed_unverified':'FAILED_UNVERIFIED'}.get(value, 'FAILED_UNVERIFIED')
+    if apt_code != '0' and all(results[k] == 'CONFIGURED' for k in ('APT', 'Fail2ban')):
+        results['APT'] = results['Fail2ban'] = 'FAILED_UNVERIFIED'
+if ufw == 'y':
+    data = read('ufw.json')
+    warnings(data)
+    results['UFW'] = {'configured':'CONFIGURED', 'preserved':'PRESERVED', 'failed':'FAILED',
+                      'failed_unverified':'FAILED_UNVERIFIED'}.get(data.get('status'), 'FAILED_UNVERIFIED')
+    if ufw_code != '0' and results['UFW'] in ('CONFIGURED', 'PRESERVED'):
+        results['UFW'] = 'FAILED_UNVERIFIED'
+for key, value in results.items(): print(key + ': ' + value)
+failed = any(v in ('FAILED', 'FAILED_UNVERIFIED') for v in results.values())
+if failed:
+    state = 'STATE_UNVERIFIED' if 'FAILED_UNVERIFIED' in results.values() else (
+        'PARTIAL' if any(v in ('CONFIGURED', 'PRESERVED') for v in results.values()) else 'FAILED')
+    print('Security: ' + state)
+    print('Restored data retained. Check ufw status verbose, SSH access, and Security services before retrying.')
+print('Overall: ' + ('PARTIAL' if failed else 'SUCCESS'))
+sys.exit(1 if failed else 0)
+PYSECURITY
+)
+
 backup_action() (
     acquire_stack_lock || exit $?
-    local action=$1 choice archive answer
+    local action=$1 choice archive answer apt=n ufw=n RESTORE_SECURITY_DIR=''
+    trap '[[ -z "$RESTORE_SECURITY_DIR" ]] || rm -rf -- "$RESTORE_SECURITY_DIR"' EXIT
     if [[ "$action" == list ]]; then backup_list; exit $?; fi
     prepare_backup_helper || exit 1
     if [[ "$action" == backup ]]; then
@@ -3125,10 +3188,31 @@ backup_action() (
     elif [[ "$choice" == /* ]]; then archive=$choice
     else msg_err 'Enter an archive number or absolute path.'; exit 1; fi
     bash /usr/local/bin/x-ui-backup inspect "$archive" || exit $?
+    printf 'Optional Security configures automatic security updates and SSH Fail2ban.\nAutomatic reboot is allowed at 04:38 server time, including with active users.\nConfigure automatic security updates and SSH Fail2ban? [y/N] '
+    IFS= read -r answer || exit 0
+    [[ "$answer" != y && "$answer" != Y ]] || apt=y
+    printf 'Enable UFW with SSH protection after Restore? [y/N] '
+    IFS= read -r answer || exit 0
+    [[ "$answer" != y && "$answer" != Y ]] || ufw=y
     printf 'Restore replaces project-managed data. Trust this archive before continuing.\nType YES to restore: '
     IFS= read -r answer || exit 0
     [[ "$answer" == YES ]] || { printf 'Cancelled.\n'; exit 0; }
-    bash /usr/local/bin/x-ui-backup restore "$archive"
+    if [[ "$apt" == y || "$ufw" == y ]]; then
+        if ! prepare_restore_security; then
+            printf 'Trusted Security helper unavailable. Continue ordinary Restore without Security? [y/N] '
+            IFS= read -r answer || exit 0
+            [[ "$answer" == y || "$answer" == Y ]] || { printf 'Cancelled.\n'; exit 0; }
+            apt=n ufw=n
+        fi
+    fi
+    local status=0
+    bash /usr/local/bin/x-ui-backup restore "$archive" || status=$?
+    # The foreground child has exited, including its EXIT cleanup.
+    if (( status )); then printf 'Restore: FAILED (exit %d)\nOverall: FAILED\n' "$status"; exit "$status"; fi
+    printf 'Restore: SUCCESS\n'
+    trap 'printf "Security: STATE_UNVERIFIED\nOverall: PARTIAL\nCheck UFW, SSH access and Security services. Restored data retained.\n" >&2; exit 130' INT
+    trap 'printf "Security: STATE_UNVERIFIED\nOverall: PARTIAL\nCheck UFW, SSH access and Security services. Restored data retained.\n" >&2; exit 143' TERM
+    post_restore_security "$RESTORE_SECURITY_DIR" "$apt" "$ufw"
 )
 
 run_installation() (
@@ -3153,8 +3237,9 @@ run_installation() (
 )
 
 manager_menu() {
-    local choice status=0
+    local choice status=0 reported=0
     while true; do
+        reported=0
         printf '\n'
         msg_inf '3X-UI AUTO NGINX'
         printf '\n1. Installation\n3. Backups\n\n0. Exit\n\nSelect an option: '
@@ -3169,16 +3254,18 @@ manager_menu() {
                     0) continue ;;
                     1) backup_action backup; status=$? ;;
                     2) backup_action list; status=$? ;;
-                    3) backup_action restore; status=$? ;;
+                    3) backup_action restore; status=$?; reported=1 ;;
                     *) printf 'Invalid selection.\n'; continue ;;
                 esac ;;
             *) printf 'Invalid selection.\n'; continue ;;
         esac
         if (( status )); then
-            printf 'FAILED (exit %d). Check the reported recovery state before another operation.\n' "$status" >&2
+            if (( ! reported )); then
+                printf 'FAILED (exit %d). Check the reported recovery state before another operation.\n' "$status" >&2
+            fi
             return "$status"
         fi
-        printf 'SUCCESS\n'
+        (( reported )) || printf 'SUCCESS\n'
     done
 }
 

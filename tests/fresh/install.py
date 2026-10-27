@@ -68,6 +68,7 @@ def install(scenario, ref):
             Path('/etc/apt/preferences.d/pilot-mandatory-failure').write_text(
                 'Package: nginx-full\nPin: version *\nPin-Priority: -1\n')
         answers = b'y\ny\nvision.example.test\ny\ny\ny\n' if scenario != 'dot-outage' else b'y\nn\nn\nn\ny\n'
+        if scenario == 'restore-source': answers = b'n\nn\nn\nn\nn\n'
         started = time.monotonic()
         with (ROOT/'installer.raw.log').open('wb') as log:
             result = subprocess.run(['bash', str(ROOT/'x-ui-latest.sh'), '-subdomain',
@@ -104,6 +105,12 @@ def install(scenario, ref):
             assert 'nginx-full' in private and 'no installation candidate' in private.lower()
             assert 'Installation Result' not in private, 'Mandatory failure displayed success summary'
             assert not Path('/usr/local/x-ui/x-ui').exists()
+        elif scenario == 'restore-source':
+            assert result.returncode == 0, 'Minimal source installation failed'
+            for unit in ('ssh','nginx','x-ui','mtr-backend','certbot.timer'):
+                subprocess.run(['systemctl','is-active','--quiet',unit], check=True, timeout=10)
+            assert not Path('/opt/AdGuardHome').exists()
+            assert not Path('/etc/fail2ban/jail.d/90-3x-ui-auto-nginx.local').exists()
         else:
             required = [u for u in UNITS if scenario == 'positive' or u != 'AdGuardHome']
             for unit in required:

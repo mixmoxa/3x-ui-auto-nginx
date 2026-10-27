@@ -19,6 +19,54 @@ def helper(name):
 
 
 class IntegratedFeatures(unittest.TestCase):
+    def test_minimal_ufw_preserves_active_and_refuses_ambiguous_ssh_or_firewall(self):
+        import hashlib
+        for scenario in ('active', 'service', 'socket', 'missing', 'foreign', 'deny', 'custom-before', 'nft', 'enable-fails'):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as directory:
+                security = helper('security'); root = Path(directory); calls = []; active = scenario == 'active'
+                for name in ('etc/ufw', 'usr/share/ufw', 'etc/default', 'usr/sbin', 'proc/123'):
+                    (root/name).mkdir(parents=True, exist_ok=True)
+                (root/'usr/sbin/sshd').touch(); (root/'proc/123/exe').symlink_to(root/'usr/sbin/sshd')
+                (root/'etc/os-release').write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+                for name in ('before.rules','before6.rules','after.rules','after6.rules','before.init','after.init'):
+                    for folder in ('etc/ufw','usr/share/ufw'): (root/folder/name).write_text('stock\n')
+                for name in ('user.rules','user6.rules'): (root/'etc/ufw'/name).write_text('*filter\nCOMMIT\n')
+                (root/'etc/ufw/ufw.conf').write_text('ENABLED=no\nLOGLEVEL=low\n')
+                conffiles = ''
+                for name in ('etc/default/ufw','etc/ufw/sysctl.conf'):
+                    (root/name).write_text('stock\n')
+                    conffiles += ' /'+name+' '+hashlib.md5((root/name).read_bytes()).hexdigest()+'\n'
+                if scenario == 'deny': (root/'etc/ufw/user.rules').write_text('-A ufw-user-input -p tcp --dport 2222 -j DROP\n')
+                if scenario == 'custom-before': (root/'etc/ufw/before.rules').write_text('custom\n')
+                def command(*args, **kwargs):
+                    nonlocal active
+                    calls.append(args)
+                    if args == ('ufw','status'): return 'Status: active' if active else 'Status: inactive'
+                    if args == ('ufw','--force','enable'):
+                        active = True
+                        if scenario == 'enable-fails': raise ValueError('Injected failure after enable')
+                    if args == ('/usr/sbin/sshd','-T'): return 'port 22' if scenario == 'socket' else 'port 2222'
+                    if args[:2] == ('systemctl','is-active'):
+                        return 'active' if args[-1] == 'ssh.service' or (args[-1] == 'ssh.socket' and scenario == 'socket') else 'inactive'
+                    if args[:2] == ('systemctl','show'): return '[::]:2222 (Stream)' if args[-2] == 'Listen' else '123'
+                    if args == ('ss','-H','-ltnp'):
+                        if scenario == 'missing': return ''
+                        pid = '456' if scenario == 'foreign' else '1' if scenario == 'socket' else '123'
+                        return f'LISTEN 0 128 0.0.0.0:2222 0.0.0.0:* users:(("sshd",pid={pid},fd=1))'
+                    if args[0] == 'dpkg-query': return conffiles
+                    if args[0] == 'nft': return json.dumps({'nftables':[{'rule':{}}] if scenario == 'nft' else []})
+                    if args[0] in ('iptables','ip6tables'):
+                        return 'iptables v1.8 (nf_tables)' if args[-1] == '--version' else '-P INPUT DROP'
+                    return ''
+                with patch.object(security,'command',side_effect=command), patch.dict(os.environ, {'SSH_CONNECTION':''}):
+                    result = security.enable_ufw(root)
+                expected = 'preserved' if scenario == 'active' else 'configured' if scenario in ('service','socket') else 'failed_unverified' if scenario == 'enable-fails' else 'failed'
+                self.assertEqual(result['status'], expected, result)
+                if scenario == 'active': self.assertEqual(calls, [('ufw','status')])
+                elif expected == 'failed': self.assertNotIn(('ufw','--force','enable'), calls)
+                else:
+                    self.assertLess(calls.index(('ufw','allow','2222/tcp')), calls.index(('ufw','--force','enable')))
+
     def test_xtls_uses_existing_country_flag_without_new_geolocation(self):
         from test_personal_backup import relocated
         vision = helper('vision')
