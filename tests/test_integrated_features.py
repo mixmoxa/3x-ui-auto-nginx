@@ -21,7 +21,7 @@ def helper(name):
 class IntegratedFeatures(unittest.TestCase):
     def test_minimal_ufw_preserves_active_and_refuses_ambiguous_ssh_or_firewall(self):
         import hashlib
-        for scenario in ('active', 'service', 'socket', 'missing', 'foreign', 'deny', 'custom-before', 'nft', 'enable-fails'):
+        for scenario in ('active', 'service', 'socket', 'missing', 'foreign', 'deny', 'custom-before', 'nft', 'legacy', 'enable-fails'):
             with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as directory:
                 security = helper('security'); root = Path(directory); calls = []; active = scenario == 'active'
                 for name in ('etc/ufw', 'usr/share/ufw', 'etc/default', 'usr/sbin', 'proc/123'):
@@ -38,6 +38,9 @@ class IntegratedFeatures(unittest.TestCase):
                     conffiles += ' /'+name+' '+hashlib.md5((root/name).read_bytes()).hexdigest()+'\n'
                 if scenario == 'deny': (root/'etc/ufw/user.rules').write_text('-A ufw-user-input -p tcp --dport 2222 -j DROP\n')
                 if scenario == 'custom-before': (root/'etc/ufw/before.rules').write_text('custom\n')
+                if scenario == 'legacy':
+                    (root/'proc/net').mkdir()
+                    (root/'proc/net/ip_tables_names').write_text('filter\n')
                 def command(*args, **kwargs):
                     nonlocal active
                     calls.append(args)
@@ -53,7 +56,7 @@ class IntegratedFeatures(unittest.TestCase):
                         if scenario == 'missing': return ''
                         pid = '456' if scenario == 'foreign' else '1' if scenario == 'socket' else '123'
                         return f'LISTEN 0 128 0.0.0.0:2222 0.0.0.0:* users:(("sshd",pid={pid},fd=1))'
-                    if args[0] == 'dpkg-query': return conffiles
+                    if args[0] == 'dpkg-query': return conffiles.strip()
                     if args[0] == 'nft': return json.dumps({'nftables':[{'rule':{}}] if scenario == 'nft' else []})
                     if args[0] in ('iptables','ip6tables'):
                         return 'iptables v1.8 (nf_tables)' if args[-1] == '--version' else '-P INPUT DROP'

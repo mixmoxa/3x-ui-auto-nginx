@@ -763,7 +763,12 @@ class PersonalBackup(unittest.TestCase):
                         self.assertEqual(restored.get(name,'inactive'),'inactive' if state=='failed' else state)
                     self.assertEqual(json.loads((f.root/'enabled.json').read_text()),flags)
                     if active!='active':self.assertNotIn(['systemctl','start',service],f.commands())
-                    self.assertFalse(any(c[0] in ('curl','ss') for c in f.commands()))
+                    self.assertFalse(any(c[0] == 'curl' for c in f.commands()))
+                    for call in f.commands():
+                        if call[0] == 'ss':
+                            self.assertEqual(call, ['ss','-H','-ltnp','sport = :10002'])
+                    if states['x-ui'] != 'active':
+                        self.assertFalse(any(c[0] == 'ss' for c in f.commands()))
                     with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
                         self.assertEqual(db.execute('PRAGMA quick_check').fetchone()[0],'ok')
                         self.assertEqual({name:db.execute('SELECT * FROM "'+name+'" ORDER BY rowid').fetchall()
@@ -1239,7 +1244,10 @@ class PersonalBackup(unittest.TestCase):
                     self.assertEqual(db.execute('PRAGMA quick_check').fetchone()[0],'ok')
                     self.assertEqual(db.execute('SELECT id,enable,settings,stream_settings FROM inbounds ORDER BY id').fetchall(),expected)
                 self.assertEqual(archive.read_bytes(),original)
-                self.assertFalse(any(c[0] in ('curl','ss') for c in f.commands()))
+                self.assertFalse(any(c[0] == 'curl' for c in f.commands()))
+                for call in f.commands():
+                    if call[0] == 'ss':
+                        self.assertEqual(call, ['ss','-H','-ltnp','sport = :10002'])
                 self.assertFalse(list(f.path('/var/backups/x-ui').glob('.rollback-*')))
 
     def test_backup_still_fails_for_corrupt_db_or_failed_service_resume(self):

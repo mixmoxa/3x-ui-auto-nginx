@@ -66,9 +66,19 @@ def restore_target():
     run('systemctl','daemon-reload')
     run('systemctl','stop','ssh.service','ssh.socket')
     run('systemctl','enable','--now','ssh.socket')
+    # Stopping ssh.service removes its RuntimeDirectory. Start the standard
+    # socket-backed daemon before validating sshd, even in this retained session.
+    run('systemctl','start','ssh.service')
+    assert Path('/run/sshd').is_dir()
     result = subprocess.run(['bash','-c','source "$1"; backup_action restore','fixture',str(ROOT/'x-ui-latest.sh')],
                             input=b'/root/pilot/restore.tar.gz\ny\ny\nYES\n', capture_output=True, env=env, timeout=850)
     (ROOT/'restore-security.private.log').write_bytes(result.stdout+result.stderr)
+    if result.returncode:
+        # Only the helper's fixed statuses/sanitized warnings cross the failure
+        # boundary; never publish the installer/Restore log or database contents.
+        for line in result.stdout.decode(errors='replace').splitlines():
+            if line.startswith(('Restore:', 'APT:', 'Fail2ban:', 'UFW:', 'Security:', 'Overall:', 'Security warning:')):
+                print(line, flush=True)
     assert result.returncode == 0, 'Restore/Security failed; private log retained'
     text = result.stdout.decode()
     for line in ('Restore: SUCCESS','APT: CONFIGURED','Fail2ban: CONFIGURED','UFW: CONFIGURED','Overall: SUCCESS'):

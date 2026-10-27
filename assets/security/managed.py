@@ -378,7 +378,7 @@ def ufw_preflight(root, ports):
             raise ValueError('Custom UFW before/after configuration; automatic enable refused')
     conffiles = command('dpkg-query', '-W', '-f=${Conffiles}', 'ufw')
     for filename in ('/etc/default/ufw', '/etc/ufw/sysctl.conf'):
-        match = re.search(r'^ '+re.escape(filename)+r' ([0-9a-f]{32})$', conffiles, re.M)
+        match = re.search(r'^[ \t]*'+re.escape(filename)+r' ([0-9a-f]{32})$', conffiles, re.M)
         path = root/filename.lstrip('/')
         if not match or path.is_symlink() or hashlib.md5(path.read_bytes()).hexdigest() != match[1]:
             raise ValueError('Nonstandard UFW defaults; automatic enable refused')
@@ -395,6 +395,10 @@ def ufw_preflight(root, ports):
     for tool in ('iptables', 'ip6tables'):
         if '(nf_tables)' not in command(tool, '--version'):
             raise ValueError('Only the standard nft-backed Ubuntu iptables is supported')
+    for name in ('ip_tables_names', 'ip6_tables_names'):
+        path = root/'proc/net'/name
+        if path.exists() and path.read_text().strip():
+            raise ValueError('Legacy kernel firewall tables exist; automatic enable refused')
     for entry in json.loads(command('nft', '-j', 'list', 'ruleset'))['nftables']:
         if set(entry) == {'metainfo'}: continue
         if set(entry) == {'table'}:
