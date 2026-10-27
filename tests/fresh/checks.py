@@ -56,6 +56,9 @@ def restore_source():
 
 def restore_target():
     assert not Path('/usr/local/x-ui').exists() and not Path('/etc/x-ui').exists()
+    fixture = Path('/etc/letsencrypt/cli.ini')
+    assert fixture.read_text() == 'server = https://10.0.2.2:14000/dir\n'
+    fixture.unlink()
     env = {**os.environ, **json.loads((ROOT/'environment.json').read_text()),
            'CURL_CA_BUNDLE':'/etc/ssl/certs/ca-certificates.crt'}
     subprocess.run(['update-ca-certificates'], check=True, capture_output=True, timeout=120)
