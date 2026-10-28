@@ -28,7 +28,8 @@ BACKUP = (ROOT / 'assets/backup/x-ui-backup.sh').read_text()
 
 def function(name, source=INSTALLER):
     # A SQL JSON value can end with }', which is not the shell function boundary.
-    return re.findall(r'^' + name + r'\(\)\s*\{.*?^\}$', source, re.M | re.S)[0]
+    body = re.findall(r'^' + name + r'\(\)\s*\{.*?^\}$', source, re.M | re.S)[0]
+    return (function('ui_text', source) + '\n' if name != 'ui_text' and 'ui_text ' in body else '') + body
 
 
 class AuditInstaller(unittest.TestCase):

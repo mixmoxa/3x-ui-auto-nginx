@@ -3,17 +3,32 @@
 # Installer menu, domain changes and Backup management
 
 Download the installer to a file using the README command, then run it from an
-interactive terminal. Remote sessions need a TTY (`ssh -t`). The menu is English:
-**1 Installation**, **2 Change Domains**, **3 Backups**, **0 Exit**. With no
+interactive terminal. Remote sessions need a TTY (`ssh -t`). With no arguments,
+first choose **1 English**, **2 Русский**, or **3 Exit / Выход**. Invalid input
+repeats this question; EOF exits safely. Language selection and this Exit require
+no root access, downloads, network checks or system changes, including when a
+domain recovery journal exists. The language lasts for this invocation only and
+is not asked again when returning to the main menu.
+
+The main menu is **1 Installation / Установка**, **2 Change Domains / Смена
+доменов**, **3 Backups / Резервные копии**, **0 Exit / Выход**. With no
 unfinished domain operation, opening it, Back and Exit need no root access and
 perform no downloads, IP lookups or system preparation. An unfinished domain
 journal instead requires root and verified recovery before another menu action.
 
 Installation is the existing destructive fresh install/rebuild, with the same
 `YES` confirmation for an existing deployment. Existing explicit installation and
-uninstall arguments run directly. Without arguments and without an interactive
+uninstall arguments run directly in English, without language selection.
+Without arguments and without an interactive
 stdin/stdout TTY, the script refuses to install. Do not pipe the script into Bash;
 download it to a file so prompts keep their terminal input.
+
+Russian covers the main menus, installation questions, confirmations, warnings
+and result summaries. Product/protocol names, commands, paths, `YES`, `y/N`,
+`Y/n`, technical status markers and machine formats stay unchanged. System logs
+and internal Python/Backup/Restore/Change Domains diagnostics remain in English;
+user-facing explanations can accompany them. Language selection changes no
+installation, Backup/Restore or recovery behavior.
 
 Backups offers Create, List and Restore. Create reports the exact archive made by
 that operation. Listing shows UTC file dates and byte sizes, without opening each

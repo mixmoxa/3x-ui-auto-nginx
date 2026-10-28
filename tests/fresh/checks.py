@@ -459,7 +459,7 @@ def manager_backup():
     proc=subprocess.Popen(['bash',str(ROOT/'x-ui-latest.sh')],stdin=slave,stdout=slave,stderr=slave,
                           env={**os.environ,'TERM':'dumb','NO_COLOR':'1'})
     os.close(slave); output=bytearray();deadline=time.monotonic()+120
-    os.write(master,b'3\n1\n3\n2\n0\n')
+    os.write(master,b'1\n3\n1\n3\n2\n0\n')
     try:
         while time.monotonic()<deadline:
             if select.select([master],[],[],.2)[0]:
@@ -513,7 +513,8 @@ def change_domains():
         master,slave=pty.openpty();output=bytearray()
         process=subprocess.Popen(['bash',str(ROOT/'x-ui-latest.sh')],stdin=slave,stdout=slave,stderr=slave,env=env)
         os.close(slave)
-        answers='2\n'+choice+'\n'+(new_panel+'\n' if choice in ('1','3') else '')+(new_reality+'\n' if choice in ('2','3') else '')+'YES\n0\n'
+        language='1' if choice=='1' else '2'
+        answers=language+'\n2\n'+choice+'\n'+(new_panel+'\n' if choice in ('1','3') else '')+(new_reality+'\n' if choice in ('2','3') else '')+'YES\n0\n'
         # Full Backup v3 alone is slow in TCG; include ACME and verified health.
         os.write(master,answers.encode());deadline=time.monotonic()+360
         try:

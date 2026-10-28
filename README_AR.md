@@ -41,7 +41,7 @@
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-يبدأ الإصدار المستقر الحالي v2.1.7 التثبيت مباشرةً. بعد نشر v2.2.0، سيفتح الأمر أعلاه القائمة: **1 — Installation**، **2 — Change Domains**، **3 — Backups**، **0 — Exit**. خصص TTY باستخدام `ssh -t` للقائمة؛ وبدون TTY استخدم خيارات التثبيت الصريحة. [القائمة وأوامر النسخ الاحتياطي](docs/MANAGER.md).
+يبدأ الإصدار المستقر الحالي v2.1.7 التثبيت مباشرةً. بعد نشر v2.2.0، يطلب التشغيل التفاعلي أولًا اختيار English أو Русский للجلسة الحالية ثم يفتح القائمة: **1 — Installation**، **2 — Change Domains**، **3 — Backups**، **0 — Exit**. خصص TTY باستخدام `ssh -t` للقائمة؛ وبدون TTY استخدم خيارات التثبيت الصريحة. يحتفظ CLI بالمخرجات الإنجليزية دون اختيار اللغة. [القائمة وأوامر النسخ الاحتياطي](docs/MANAGER.md).
 
 <details>
 <summary><strong>تنزيل احتياطي — إذا تعذّر الوصول إلى GitHub Releases</strong></summary>

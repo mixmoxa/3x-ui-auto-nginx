@@ -37,7 +37,8 @@ def complete_function(name):
     # nginx heredocs contain column-zero braces; stop at the next shell function.
     text=SOURCE[SOURCE.index(name+'() {'):]
     headers=list(re.finditer(r'^\w+\(\)\s*\{',text,re.M))
-    return text[:headers[1].start()] if len(headers)>1 else text
+    body = text[:headers[1].start()] if len(headers)>1 else text
+    return (function('ui_text') + '\n' if name != 'ui_text' and 'ui_text ' in body else '') + body
 
 
 def dns_name(length, letter='a'):
@@ -455,7 +456,7 @@ install() { local -a args=(); while (($#)); do case "$1" in -o|-g) shift 2;; *) 
              'a..example','panel.example.','панель.example','a'*64+'.example',
              '.'.join(['a'*63]*4))
         stubs='\n'.join(n+'() { :; };' for n in re.findall(r'^(\w+)\(\)\s*\{',SOURCE,re.M)
-                        if n not in ('main','validate_domains','valid_hostname','msg_err'))
+                        if n not in ('main','validate_domains','valid_hostname','msg_err','ui_text'))
         stubs+='\nclean_previous_install() { echo CLEANUP_REACHED; return 1; };\n'
         for panel,reality in [(b,'reality.example') for b in bad]+[('Panel.Example','panel.example')]:
             with self.subTest(panel=panel):

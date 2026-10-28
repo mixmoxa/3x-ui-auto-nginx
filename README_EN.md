@@ -41,7 +41,9 @@ Configure the DNS records for **two domains** to point to your VPS IP address: o
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-The current stable release v2.1.7 starts installation directly. After v2.2.0 is published, the command above will open the menu: **1 — Installation**, **2 — Change Domains**, **3 — Backups**, **0 — Exit**. Allocate a TTY with `ssh -t` for the menu; without a TTY, use explicit installation flags. [Menu and Backup CLI](docs/MANAGER.md).
+The current stable release v2.1.7 starts installation directly. After v2.2.0 is published, an interactive launch first offers **1 — English**, **2 — Русский**, or **3 — Exit / Выход**. It then opens the menu: **1 — Installation**, **2 — Change Domains**, **3 — Backups**, **0 — Exit**.
+
+The language lasts for the current invocation only. Main questions, confirmations and summaries are translated; technical logs and status markers retain their original text. Dangerous operations still require exact **YES**. Allocate a TTY with `ssh -t` for the menu. Ordinary CLI invocations with explicit installation flags keep English output without language selection; use this mode without a TTY. [Menu and Backup CLI](docs/MANAGER.md).
 
 <details>
 <summary><strong>Fallback download — if GitHub Releases is unavailable</strong></summary>

@@ -2,10 +2,41 @@
 # 3x-ui Auto Nginx - based on x-ui-pro-refactor by mozaroc (github.com/mozaroc/3x-ui-pro)
 
 # ─── Output helpers ──────────────────────────────────────────────────────────
+# Per invocation only: CLI and sourced helpers always start in English.
+UI_LANG=en
+ui_text() {
+    local format=$1
+    [[ ${UI_LANG:-en} != ru ]] || format=$2
+    shift 2
+    # Formats are literal UI text; domains, URLs and credentials are arguments.
+    # shellcheck disable=SC2059
+    printf "$format" "$@"
+}
+
 msg_ok() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;32m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
 msg_err() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;41m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
 msg_inf() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;34m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
 msg_warn() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;33m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
+
+select_language() {
+    local answer
+    while true; do
+        printf '\n3X-UI AUTO NGINX\n\nSelect language / Выберите язык\n\n1. English\n2. Русский\n3. Exit / Выход\n\nSelect / Выбор: '
+        IFS= read -r answer || return 1
+        case "$answer" in
+            1) UI_LANG=en; return 0 ;;
+            2) UI_LANG=ru; return 0 ;;
+            3) return 1 ;;
+            *) printf 'Invalid selection / Неверный выбор.\n' ;;
+        esac
+    done
+}
+
+# The first interactive question must precede even source-ref validation.
+# Importing the library and every CLI invocation keep their original startup.
+if [[ ${BASH_SOURCE[0]:-} == "$0" && $# == 0 && -t 0 && -t 1 ]]; then
+    select_language || exit 0
+fi
 
 
 # ─── Pre-flight checks ───────────────────────────────────────────────────────
@@ -25,16 +56,16 @@ check_os() {
             ;;
     esac
 
-    msg_err "Unsupported OS: ${os_id} ${os_version}"
-    echo -e "\nThis script supports:\n  Ubuntu 24.04 / 26.04\n  Debian 13"
-    echo -e "\nPlease reinstall your server with one of the supported OS versions and try again."
+    msg_err "$(ui_text 'Unsupported OS: %s %s' 'Неподдерживаемая ОС: %s %s' "$os_id" "$os_version")"
+    ui_text '\nThis script supports:\n  Ubuntu 24.04 / 26.04\n  Debian 13\n' '\nПоддерживаемые ОС:\n  Ubuntu 24.04 / 26.04\n  Debian 13\n'
+    ui_text '\nPlease reinstall your server with one of the supported OS versions and try again.\n' '\nУстановите на сервер одну из поддерживаемых версий ОС и повторите запуск.\n'
     exit 1
 }
 
 check_cpu() {
     local cpuinfo="${1:-/proc/cpuinfo}" arch feature_field cpu_model cpu_flags
     CPU_SUPPORT_LEVEL="info"
-    CPU_SUPPORT_TEXT="Compatible (acceleration not assessed)"
+    CPU_SUPPORT_TEXT=$(ui_text 'Compatible (acceleration not assessed)' 'Совместим (ускорение не проверялось)')
     arch=$(uname -m 2>/dev/null) || return 0
     case "$arch" in
         x86_64|i386|i486|i586|i686) feature_field="flags" ;;
@@ -48,15 +79,15 @@ check_cpu() {
 
     if [[ " $cpu_flags " =~ [[:space:]]aes[[:space:]] ]]; then
         CPU_SUPPORT_LEVEL="ok"
-        CPU_SUPPORT_TEXT="Compatible (hardware AES available)"
+        CPU_SUPPORT_TEXT=$(ui_text 'Compatible (hardware AES available)' 'Совместим (аппаратный AES доступен)')
     else
         CPU_SUPPORT_LEVEL="warn"
-        CPU_SUPPORT_TEXT="Compatible — hardware AES unavailable"
-        msg_warn "Hardware AES unavailable. Xray can run, but cryptographic performance may be lower."
+        CPU_SUPPORT_TEXT=$(ui_text 'Compatible — hardware AES unavailable' 'Совместим — аппаратный AES недоступен')
+        msg_warn "$(ui_text 'Hardware AES unavailable. Xray can run, but cryptographic performance may be lower.' 'Аппаратный AES недоступен. Xray может работать, но скорость шифрования может быть ниже.')"
         if [[ "${cpu_model,,}" == *qemu* ]]; then
-            msg_warn "Generic QEMU/KVM CPU detected: host-passthrough / AES exposure is recommended when available."
+            msg_warn "$(ui_text 'Generic QEMU/KVM CPU detected: host-passthrough / AES exposure is recommended when available.' 'Обнаружен стандартный CPU QEMU/KVM: при возможности включите host-passthrough / доступ к AES.')"
         fi
-        msg_warn "Continuing installation."
+        msg_warn "$(ui_text 'Continuing installation.' 'Установка продолжается.')"
     fi
 }
 
@@ -251,13 +282,13 @@ confirm_destructive_reinstall() {
     detect_existing_installation
     (( ${#EXISTING_INSTALL_CATEGORIES[@]} )) || return 0
     msg_warn '============================================================'
-    msg_warn '  Existing installation detected'
+    msg_warn "$(ui_text '  Existing installation detected' '  Обнаружена существующая установка')"
     msg_warn '============================================================'
     for category in "${EXISTING_INSTALL_CATEGORIES[@]}"; do msg_warn " [!] $category"; done
-    printf '\nContinuing will run a full OS dist-upgrade (services may restart),\nremove data in project-managed installation paths and replace nginx configuration.\nUse a clean dedicated VPS; this is a full rebuild, not an update.\nThe OS upgrade cannot be rolled back. Copy a backup off-host first.\n\n'
-    printf 'Type YES to remove the existing deployment and continue: '
+    ui_text '\nContinuing will run a full OS dist-upgrade (services may restart),\nremove data in project-managed installation paths and replace nginx configuration.\nUse a clean dedicated VPS; this is a full rebuild, not an update.\nThe OS upgrade cannot be rolled back. Copy a backup off-host first.\n\n' '\nПродолжение запустит полный dist-upgrade ОС (службы могут перезапуститься),\nудалит данные в управляемых проектом каталогах и заменит конфигурацию nginx.\nИспользуйте чистый выделенный VPS: это полная переустановка, а не обновление.\nОбновление ОС нельзя откатить. Сначала скопируйте Backup за пределы VPS.\n\n'
+    ui_text 'Type YES to remove the existing deployment and continue: ' 'Чтобы удалить существующую установку и продолжить, введите YES: '
     if ! IFS= read -r answer || [[ "$answer" != YES ]]; then
-        msg_err 'Cancelled. Existing deployment was not changed.'
+        msg_err "$(ui_text 'Cancelled. Existing deployment was not changed.' 'Отменено. Существующая установка не изменена.')"
         return 1
     fi
 }
@@ -295,7 +326,7 @@ cleanup_adguard() {
 }
 
 uninstall_xui() {
-    cleanup_adguard || { msg_err "Cannot clean AdGuard Home; core deployment was not removed."; return 1; }
+    cleanup_adguard || { msg_err "$(ui_text 'Cannot clean AdGuard Home; core deployment was not removed.' 'Не удалось удалить управляемый AdGuard Home; основной стек не удалён.')"; return 1; }
     remove_legacy_certbot_cron || { msg_err "Cannot remove the exact legacy certificate renewal job."; return 1; }
     rm -f /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx || return 1
     printf 'y\n' | x-ui uninstall 2>/dev/null || true
@@ -345,10 +376,10 @@ validate_domains() {
     local LC_ALL=C
     while true; do
         [[ -n "$domain" ]] && break
-        printf 'Enter the domain for your 3X-UI panel: '
-        IFS= read -r domain || { msg_err "Panel domain is required."; return 1; }
+        ui_text 'Enter the domain for your 3X-UI panel: ' 'Введите домен панели 3X-UI: '
+        IFS= read -r domain || { msg_err "$(ui_text 'Panel domain is required.' 'Необходимо указать домен панели.')"; return 1; }
     done
-    valid_hostname "$domain" || { msg_err 'Invalid panel hostname: use ASCII DNS labels (punycode supported), without URL, whitespace or terminal dot.'; return 1; }
+    valid_hostname "$domain" || { msg_err "$(ui_text 'Invalid panel hostname: use ASCII DNS labels (punycode supported), without URL, whitespace or terminal dot.' 'Некорректный домен панели: используйте DNS-имя в ASCII (punycode поддерживается), без URL, пробелов и точки в конце.')"; return 1; }
     domain=${domain,,}
     SubDomain=$(echo "$domain"   | sed 's/^[^ ]* \|\..*//g')
     MainDomain=$(echo "$domain"  | sed 's/.*\.\([^.]*\..*\)$/\1/')
@@ -356,17 +387,17 @@ validate_domains() {
 
     while true; do
         [[ -n "$reality_domain" ]] && break
-        printf 'Enter the domain for VLESS REALITY: '
-        IFS= read -r reality_domain || { msg_err "REALITY domain is required."; return 1; }
+        ui_text 'Enter the domain for VLESS REALITY: ' 'Введите домен VLESS REALITY: '
+        IFS= read -r reality_domain || { msg_err "$(ui_text 'REALITY domain is required.' 'Необходимо указать домен REALITY.')"; return 1; }
     done
-    valid_hostname "$reality_domain" || { msg_err 'Invalid REALITY hostname: use ASCII DNS labels (punycode supported), without URL, whitespace or terminal dot.'; return 1; }
+    valid_hostname "$reality_domain" || { msg_err "$(ui_text 'Invalid REALITY hostname: use ASCII DNS labels (punycode supported), without URL, whitespace or terminal dot.' 'Некорректный домен REALITY: используйте DNS-имя в ASCII (punycode поддерживается), без URL, пробелов и точки в конце.')"; return 1; }
     reality_domain=${reality_domain,,}
     RealitySubDomain=$(echo "$reality_domain" | sed 's/^[^ ]* \|\..*//g')
     RealityMainDomain=$(echo "$reality_domain" | sed 's/.*\.\([^.]*\..*\)$/\1/')
     [[ "${RealitySubDomain}.${RealityMainDomain}" != "${reality_domain}" ]] && RealityMainDomain=${reality_domain}
 
     if [[ "$domain" == "$reality_domain" ]]; then
-        msg_err "Panel domain and REALITY domain must be different! Got: ${domain}"
+        msg_err "$(ui_text 'Panel domain and REALITY domain must be different! Got: %s' 'Домены панели и REALITY должны различаться! Указано: %s' "$domain")"
         exit 1
     fi
 }
@@ -521,13 +552,13 @@ verify_base_os() {
 }
 
 prepare_base_os() {
-    msg_warn 'Preparing OS: full dist-upgrade; package changes cannot be rolled back.'
-    apt_system -o APT::Update::Error-Mode=any update || { msg_err "APT list refresh failed (exit $?). Package changes are not rolled back."; return 1; }
+    msg_warn "$(ui_text 'Preparing OS: full dist-upgrade; package changes cannot be rolled back.' 'Подготовка ОС: полный dist-upgrade; изменения пакетов нельзя откатить.')"
+    apt_system -o APT::Update::Error-Mode=any update || { msg_err "$(ui_text 'APT list refresh failed (exit %s). Package changes are not rolled back.' 'Не удалось обновить списки APT (exit %s). Изменения пакетов не откатываются.' "$?")"; return 1; }
     # Show the full upgrade plan before applying it with normal APT safeguards.
-    apt_system -s -y dist-upgrade || { msg_err "Full upgrade simulation failed (exit $?). No deployment cleanup was performed."; return 1; }
-    apt_system -y dist-upgrade || { msg_err "Full OS upgrade failed (exit $?). Package changes are not rolled back."; return 1; }
+    apt_system -s -y dist-upgrade || { msg_err "$(ui_text 'Full upgrade simulation failed (exit %s). No deployment cleanup was performed.' 'Проверка полного обновления завершилась ошибкой (exit %s). Данные установки не удалялись.' "$?")"; return 1; }
+    apt_system -y dist-upgrade || { msg_err "$(ui_text 'Full OS upgrade failed (exit %s). Package changes are not rolled back.' 'Полное обновление ОС завершилось ошибкой (exit %s). Изменения пакетов не откатываются.' "$?")"; return 1; }
     apt_system -y --no-install-recommends install curl wget jq python3 openssl \
-        ca-certificates procps iproute2 ufw tar gzip || { msg_err "System dependency installation failed (exit $?). Package changes are not rolled back."; return 1; }
+        ca-certificates procps iproute2 ufw tar gzip || { msg_err "$(ui_text 'System dependency installation failed (exit %s). Package changes are not rolled back.' 'Установка системных зависимостей завершилась ошибкой (exit %s). Изменения пакетов не откатываются.' "$?")"; return 1; }
     verify_base_os || return 1
     BASE_OS_RESULT=configured
 }
@@ -542,7 +573,7 @@ prepare_system_dns() {
         if [[ "$status" == failed_rolled_back ]]; then
             DNS_PREPARED=n
             DOT_RESULT=failed_rolled_back
-            msg_warn 'DoT unavailable; original DNS restored. Continuing core, Fail2ban and APT installation. Inspect the DNS failure above.'
+            msg_warn "$(ui_text 'DoT unavailable; original DNS restored. Continuing core, Fail2ban and APT installation. Inspect the DNS failure above.' 'DoT недоступен; исходные настройки DNS восстановлены. Установка основного стека, Fail2ban и APT продолжается. Проверьте ошибку DNS выше.')"
             verify_base_os
             return $?
         fi
@@ -568,9 +599,9 @@ rollback_system_dns() {
 finish_initial_reboot() {
     [[ -e /var/run/reboot-required ]] || return 0
     if (( $1 != 0 )); then
-        msg_warn 'Reboot required, but installation failed. Inspect the failure before rebooting manually: sudo reboot'
+        msg_warn "$(ui_text 'Reboot required, but installation failed. Inspect the failure before rebooting manually: sudo reboot' 'Нужна перезагрузка, но установка завершилась ошибкой. Разберитесь с ошибкой перед ручной перезагрузкой: sudo reboot')"
     else
-        msg_warn 'Initial upgrade requires a manual reboot: sudo reboot. Post-reboot acceptance is pending.'
+        msg_warn "$(ui_text 'Initial upgrade requires a manual reboot: sudo reboot. Post-reboot acceptance is pending.' 'После первоначального обновления нужна ручная перезагрузка: sudo reboot. Проверка после перезагрузки ещё не выполнена.')"
     fi
 }
 
@@ -580,7 +611,7 @@ install_packages() {
         version=$(grep -oP '(?<=VERSION_ID=")[0-9]+' /etc/os-release)
         [[ "$version" == "20" || "$version" == "22" ]] && echo "System: Ubuntu $version"
 
-        apt_system -o APT::Update::Error-Mode=any update || { msg_err "APT list refresh failed (exit $?). Package changes are not rolled back."; return 1; }
+        apt_system -o APT::Update::Error-Mode=any update || { msg_err "$(ui_text 'APT list refresh failed (exit %s). Package changes are not rolled back.' 'Не удалось обновить списки APT (exit %s). Изменения пакетов не откатываются.' "$?")"; return 1; }
         apt_system -y install curl wget jq bash sudo nginx-full certbot sqlite3 ufw netcat-openbsd mtr-tiny python3 python3-configobj python3-cryptography libcap2-bin openssl procps iproute2 tar gzip tzdata ca-certificates || return 1
         if ! ipv6_available; then
             rm -f /etc/nginx/sites-enabled/default || return 1
@@ -646,7 +677,7 @@ get_ssl_certs() {
             local a
             a=$(getent ahostsv4 "$d" 2>/dev/null | awk 'NR==1{print $1}')
             if [[ "$a" != "$IP4" ]]; then
-                msg_err "Auto-domain $d does not resolve to $IP4. Fix DNS and retry."
+                msg_err "$(ui_text 'Auto-domain %s does not resolve to %s. Fix DNS and retry.' 'Домен %s не разрешается в %s. Исправьте DNS и повторите попытку.' "$d" "$IP4")"
                 resolve_ok=false
             fi
         done
@@ -658,7 +689,7 @@ get_ssl_certs() {
     for d in "$domain" "$reality_domain"; do
         if [[ -e "/etc/letsencrypt/live/$d" || -e "/etc/letsencrypt/renewal/$d.conf" ]]; then
             [[ -d "/etc/letsencrypt/live/$d" && -f "/etc/letsencrypt/renewal/$d.conf" ]] || {
-                msg_err "Incomplete certificate lineage: $d. Resolve it before rebuilding."; return 1;
+                msg_err "$(ui_text 'Incomplete certificate lineage: %s. Resolve it before rebuilding.' 'Неполные данные сертификата (lineage): %s. Исправьте их перед переустановкой.' "$d")"; return 1;
             }
             check_certificate_identity "$d" || return 1
             if ! check_webroot_lineage "$d" 2>/dev/null; then
@@ -666,7 +697,7 @@ get_ssl_certs() {
                     --pre-hook '' --post-hook '' --non-interactive || return 1
             fi
         elif compgen -G "/etc/letsencrypt/live/$d-*" >/dev/null || compgen -G "/etc/letsencrypt/renewal/$d-*.conf" >/dev/null; then
-            msg_err "Ambiguous certificate lineage for $d. Resolve it before rebuilding."; return 1
+            msg_err "$(ui_text 'Ambiguous certificate lineage for %s. Resolve it before rebuilding.' 'Неоднозначный сертификат (lineage) для %s. Исправьте это перед переустановкой.' "$d")"; return 1
         else
             certbot certonly --webroot --webroot-path /var/www/acme --cert-name "$d" -d "$d" \
                 --non-interactive --agree-tos --register-unsafely-without-email || return 1
@@ -1111,7 +1142,7 @@ EOF
         msg_err "${domain} nginx config not found!" && exit 1
     fi
 
-    nginx -t || { msg_err "nginx configuration test failed; see nginx error above."; return 1; }
+    nginx -t || { msg_err "$(ui_text 'nginx configuration test failed; see nginx error above.' 'Проверка конфигурации nginx не пройдена; см. ошибку nginx выше.')"; return 1; }
 
     systemctl reload nginx || return 1
 }
@@ -1147,7 +1178,7 @@ _panel_initial_config() {
         (SELECT value FROM settings WHERE key='webPort'),
         (SELECT value FROM settings WHERE key='webBasePath');") || return 1
     [[ "$initialized" == "$config_username|127.0.0.1|$panel_port|/$panel_path/" ]] || {
-        msg_err "3X-UI initial settings were not saved correctly."
+        msg_err "$(ui_text '3X-UI initial settings were not saved correctly.' 'Первоначальные настройки 3X-UI не удалось сохранить корректно.')"
         return 1
     }
 }
@@ -1182,7 +1213,7 @@ bootstrap_panel_dependencies() {
     done
     [[ -s /etc/ssl/certs/ca-certificates.crt ]] || missing=1
     if (( missing )); then
-        apt_system -o APT::Update::Error-Mode=any update || { msg_err "APT list refresh failed (exit $?). Package changes are not rolled back."; return 1; }
+        apt_system -o APT::Update::Error-Mode=any update || { msg_err "$(ui_text 'APT list refresh failed (exit %s). Package changes are not rolled back.' 'Не удалось обновить списки APT (exit %s). Изменения пакетов не откатываются.' "$?")"; return 1; }
         apt_system -y --no-install-recommends install \
             curl ca-certificates python3 tar gzip iproute2 || return 1
     fi
@@ -1231,7 +1262,7 @@ _download_panel_archive() {
     if ! curl -fLsS --retry 3 --connect-timeout 15 --max-time 300 "$url" -o "$archive" ||
        ! curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 "${url}.sha256" -o "$checksum"; then
         rm -f "$archive" "$checksum"
-        msg_err "Failed to download the 3X-UI release or checksum."
+        msg_err "$(ui_text 'Failed to download the 3X-UI release or checksum.' 'Не удалось загрузить релиз 3X-UI или контрольную сумму.')"
         return 1
     fi
     expected=$(python3 - "$checksum" "${url##*/}" <<'PY'
@@ -1252,13 +1283,13 @@ PY
     rm -f "$checksum"
     if [[ "$expected" != "$actual" || ( -n "$pinned" && "$pinned" != "$actual" ) ]]; then
         rm -f "$archive"
-        msg_err "3X-UI release checksum verification failed."
+        msg_err "$(ui_text '3X-UI release checksum verification failed.' 'Проверка контрольной суммы релиза 3X-UI не пройдена.')"
         return 1
     fi
 }
 
 preflight_panel_release() {
-    bootstrap_panel_dependencies || { msg_err "Release preflight dependency setup failed."; return 1; }
+    bootstrap_panel_dependencies || { msg_err "$(ui_text 'Release preflight dependency setup failed.' 'Не удалось подготовить зависимости для проверки релиза.')"; return 1; }
     # Curl/CA bootstrap may install base tools; managed state is still untouched.
     pin_project_source || return 1
     prepare_backup_helper || return 1
@@ -1280,7 +1311,7 @@ preflight_panel_release() {
         msg_warn "Explicit 3X-UI $PANEL_TAG selection: not the verified baseline; compatibility and full installer acceptance are not assured."
         curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 \
             "https://api.github.com/repos/MHSanaei/3x-ui/releases/tags/${PANEL_TAG}" \
-            -o "$PANEL_STAGE/release.json" || { msg_err "Stable 3X-UI release $PANEL_TAG is unavailable."; return 1; }
+            -o "$PANEL_STAGE/release.json" || { msg_err "$(ui_text 'Stable 3X-UI release %s is unavailable.' 'Стабильный релиз 3X-UI %s недоступен.' "$PANEL_TAG")"; return 1; }
         pinned=$(python3 - "$PANEL_STAGE/release.json" "$PANEL_TAG" "$asset" <<'PY'
 import json, re, sys
 release = json.load(open(sys.argv[1]))
@@ -1297,22 +1328,22 @@ if not isinstance(digest, str) or not re.fullmatch(r'sha256:[0-9a-f]{64}', diges
     raise ValueError('Release asset lacks an official SHA-256 digest')
 print(digest[7:])
 PY
-        ) || { msg_err "Unsupported or unverifiable 3X-UI release $PANEL_TAG."; return 1; }
+        ) || { msg_err "$(ui_text 'Unsupported or unverifiable 3X-UI release %s.' 'Релиз 3X-UI %s не поддерживается или не может быть проверен.' "$PANEL_TAG")"; return 1; }
     fi
     PANEL_ARCHIVE="$PANEL_STAGE/$asset"
     _download_panel_archive \
         "https://github.com/MHSanaei/3x-ui/releases/download/${PANEL_TAG}/$asset" \
         "$PANEL_ARCHIVE" "$pinned" || return 1
-    _validate_panel_archive "$PANEL_ARCHIVE" "$PANEL_ARCH" || { msg_err "Invalid 3X-UI release archive."; return 1; }
+    _validate_panel_archive "$PANEL_ARCHIVE" "$PANEL_ARCH" || { msg_err "$(ui_text 'Invalid 3X-UI release archive.' 'Некорректный архив релиза 3X-UI.')"; return 1; }
     chmod 400 "$PANEL_ARCHIVE" || return 1
-    msg_ok "3X-UI $PANEL_TAG archive verified before deployment cleanup."
+    msg_ok "$(ui_text '3X-UI %s archive verified before deployment cleanup.' 'Архив 3X-UI %s проверен до удаления существующей установки.' "$PANEL_TAG")"
 }
 
 install_panel() {
     local tag_version="${PANEL_TAG:?Release preflight is required}" archive="${PANEL_ARCHIVE:?Release preflight is required}"
-    [[ -f "$archive" ]] || { msg_err "Verified release archive is unavailable."; return 1; }
+    [[ -f "$archive" ]] || { msg_err "$(ui_text 'Verified release archive is unavailable.' 'Проверенный архив релиза недоступен.')"; return 1; }
     cd /usr/local/ || return 1
-    echo "Installing 3X-UI ${tag_version} ..."
+    ui_text 'Installing 3X-UI %s ...\n' 'Установка 3X-UI %s ...\n' "$tag_version"
 
     [[ -d /usr/local/x-ui/ ]] && systemctl stop x-ui 2>/dev/null; rm -rf /usr/local/x-ui/
     if ! tar zxvf "$archive" -C /usr/local; then
@@ -1350,7 +1381,7 @@ install_panel() {
     fi
     systemctl daemon-reload || return 1
 
-    msg_ok "3X-UI ${tag_version} installed."
+    msg_ok "$(ui_text '3X-UI %s installed.' '3X-UI %s установлен.' "$tag_version")"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1631,9 +1662,9 @@ install_clash_sub() {
         sed -i "s|\${SUB_PATH}|${sub_path}|g" "${clash_dir}/clash.yaml.tpl" || return 1
         chown -R www-data:www-data "${clash_dir}" 2>/dev/null || return 1
         chmod 644 "${clash_dir}/clash.yaml.tpl" || return 1
-        msg_ok "Clash subscription template installed."
+        msg_ok "$(ui_text 'Clash subscription template installed.' 'Шаблон подписки Clash установлен.')"
     else
-        msg_err "Failed to download clash.yaml from GitHub."
+        msg_err "$(ui_text 'Failed to download clash.yaml from GitHub.' 'Не удалось загрузить clash.yaml с GitHub.')"
         return 1
     fi
 }
@@ -1648,9 +1679,9 @@ install_fake_site() {
     if curl -fsSL "$url" -o /var/www/html/index.html; then
         chown -R www-data:www-data /var/www/html 2>/dev/null || return 1
         chmod 644 /var/www/html/index.html || return 1
-        msg_ok "Fake cover site '${site_id}' installed."
+        msg_ok "$(ui_text 'Fake cover site '\''%s'\'' installed.' 'Сайт прикрытия '\''%s'\'' установлен.' "$site_id")"
     else
-        msg_err "Failed to download fake site ${site_id} from GitHub."
+        msg_err "$(ui_text 'Failed to download fake site %s from GitHub.' 'Не удалось загрузить сайт прикрытия %s с GitHub.' "$site_id")"
         return 1
     fi
 }
@@ -1747,7 +1778,7 @@ EOF
     systemctl enable mtr-backend || return 1
     systemctl restart mtr-backend || return 1
 
-    msg_ok "Network diagnostics installed at https://${domain}/${panel_path}/diag (panel login required)"
+    msg_ok "$(ui_text 'Network diagnostics installed at https://%s/%s/diag (panel login required)' 'Сетевая диагностика доступна по адресу https://%s/%s/diag (нужен вход в панель)' "$domain" "$panel_path")"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1823,14 +1854,14 @@ install_backup_tool() {
     if ! curl -fsSL "${GITHUB_RAW}/assets/backup/x-ui-backup.sh" -o "$temporary" ||
        ! bash -n "$temporary" || [[ $(bash "$temporary" capabilities) != 'xui-backup:1 inspect backup-json lock-fd9' ]]; then
         rm -f "$temporary"
-        msg_err "Failed to download a valid backup tool."
+        msg_err "$(ui_text 'Failed to download a valid backup tool.' 'Не удалось загрузить корректную утилиту Backup.')"
         return 1
     fi
     if ! chown root:root "$temporary" || ! chmod 0755 "$temporary" ||
        ! backup_helper_compatible "$temporary" ||
        ! mv -fT "$temporary" /usr/local/bin/x-ui-backup; then
         rm -f "$temporary"
-        msg_err "Failed to install the backup tool."
+        msg_err "$(ui_text 'Failed to install the backup tool.' 'Не удалось установить утилиту Backup.')"
         return 1
     fi
 }
@@ -2146,12 +2177,12 @@ select_amneziawg() {
     INSTALL_AWG=n
     local answer
     while true; do
-        printf 'Set up an additional AmneziaWG connection? [y/N]: '
+        ui_text 'Set up an additional AmneziaWG connection? [y/N]: ' 'Настроить дополнительное подключение AmneziaWG? [y/N]: '
         IFS= read -r answer || return 0
         case "$answer" in
             ''|n|N) return 0 ;;
             y|Y) INSTALL_AWG=y; return 0 ;;
-            *) printf 'Please enter y or n.\n' ;;
+            *) ui_text 'Please enter y or n.\n' 'Введите y или n.\n' ;;
         esac
     done
 }
@@ -2220,7 +2251,7 @@ preflight_amneziawg() {
     [[ "${INSTALL_AWG:-n}" == y ]] || return 0
     [[ "${PANEL_TAG:-}" == v3.9.0 || "${PANEL_TAG:-}" == v3.10.0 || "${PANEL_TAG:-}" == v3.10.2 ||
        ( -n "${PANEL_TAG:-}" && "$PANEL_TAG" == "$(verified_panel_release | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')" ) ]] || {
-        msg_err 'AmneziaWG 3.1 requires the verified baseline or historical 3X-UI v3.9.0/v3.10.0/v3.10.2.'; return 1;
+        msg_err "$(ui_text 'AmneziaWG 3.1 requires the verified baseline or historical 3X-UI v3.9.0/v3.10.0/v3.10.2.' 'Для AmneziaWG 3.1 нужна проверенная базовая версия или 3X-UI v3.9.0/v3.10.0/v3.10.2.')"; return 1;
     }
     local port_result=0
     awg_port_available || port_result=$?
@@ -2247,16 +2278,16 @@ select_adguard() {
     INSTALL_AGH=n
     local answer
     while true; do
-        printf 'Install and configure AdGuard Home? [y/N]: '
+        ui_text 'Install and configure AdGuard Home? [y/N]: ' 'Установить и настроить AdGuard Home? [y/N]: '
         if ! IFS= read -r answer; then return 0; fi
         case "$answer" in
             ''|n|N) return 0 ;;
             y|Y)
                 case "$(uname -m)" in
                     x86_64|aarch64|arm64) INSTALL_AGH=y; return 0 ;;
-                    *) msg_err 'AdGuard Home supports only amd64/arm64; existing deployment was not changed.'; return 1 ;;
+                    *) msg_err "$(ui_text 'AdGuard Home supports only amd64/arm64; existing deployment was not changed.' 'AdGuard Home поддерживает только amd64/arm64; существующая установка не изменена.')"; return 1 ;;
                 esac ;;
-            *) printf 'Please enter y or n.\n' ;;
+            *) ui_text 'Please enter y or n.\n' 'Введите y или n.\n' ;;
         esac
     done
 }
@@ -2430,7 +2461,7 @@ install_adguard() {
         had_snippet=1
     fi
     if ! adguard_stage; then
-        msg_err 'AdGuard Home stage failed.'
+        msg_err "$(ui_text 'AdGuard Home stage failed.' 'Настройка AdGuard Home завершилась ошибкой.')"
         cleanup_adguard || result=1
         if (( had_snippet )); then
             cp -a "$AGH_TEMP/previous" /etc/nginx/snippets/x-ui-auto-optional/adguard.conf || result=1
@@ -2441,9 +2472,9 @@ install_adguard() {
         AGH_PASSWORD=''
         if (( result == 0 )); then
             AGH_RESULT=failed_rolled_back
-            msg_warn 'Core 3X-UI stack remains operational.'
+            msg_warn "$(ui_text 'Core 3X-UI stack remains operational.' 'Основной стек 3X-UI продолжает работать.')"
         else
-            msg_err 'Rollback could not be verified. Inspect nginx and core services.'
+            msg_err "$(ui_text 'Rollback could not be verified. Inspect nginx and core services.' 'Не удалось подтвердить откат. Проверьте nginx и основные службы.')"
         fi
         rm -rf "$AGH_TEMP"
         return 1
@@ -2459,144 +2490,144 @@ show_results() {
 
     echo
     msg_inf '============================================================'
-    msg_inf " [i] Base OS                ${BASE_OS_RESULT:-not_prepared} (full upgrade is not rollbackable)"
-    msg_inf " [i] Local timezone         $(timedatectl show -p Timezone --value)"
+    msg_inf "$(ui_text ' [i] Base OS                %s (full upgrade is not rollbackable)' ' [i] Базовая ОС             %s (полное обновление нельзя откатить)' "${BASE_OS_RESULT:-not_prepared}")"
+    msg_inf "$(ui_text ' [i] Local timezone         %s' ' [i] Часовой пояс           %s' "$(timedatectl show -p Timezone --value)")"
     if [[ "${APT_RESULT:-not_requested}" == configured ]]; then
-        msg_inf ' [i] APT schedule           update 02:30 / upgrade 02:50; reboot 04:38, including logged-in users'
+        msg_inf "$(ui_text ' [i] APT schedule           update 02:30 / upgrade 02:50; reboot 04:38, including logged-in users' ' [i] Расписание APT         update 02:30 / upgrade 02:50; перезагрузка 04:38, даже при активных пользователях')"
     fi
-    [[ ! -e /var/run/reboot-required ]] || msg_warn ' [!] Reboot required; post-reboot acceptance pending'
-    msg_inf '  3X-UI Auto Nginx — Installation Result'
+    [[ ! -e /var/run/reboot-required ]] || msg_warn "$(ui_text ' [!] Reboot required; post-reboot acceptance pending' ' [!] Нужна перезагрузка; проверка после неё ещё не выполнена')"
+    msg_inf "$(ui_text '  3X-UI Auto Nginx — Installation Result' '  3X-UI Auto Nginx — Результат установки')"
     msg_inf '============================================================'
     # The core passed its initial gate; optional rollback may leave its current health unverified.
     if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_warn ' [!] 3X-UI / Xray           Post-rollback health not verified'
+        msg_warn "$(ui_text ' [!] 3X-UI / Xray           Post-rollback health not verified' ' [!] 3X-UI / Xray           Работа после отката не подтверждена')"
     else
-        msg_ok " [✓] 3X-UI / Xray           Running${version_label}"
+        msg_ok "$(ui_text ' [✓] 3X-UI / Xray           Running%s' ' [✓] 3X-UI / Xray           Работает%s' "$version_label")"
     fi
     case "${CPU_SUPPORT_LEVEL:-info}" in
-        ok)   msg_ok " [✓] CPU support             ${CPU_SUPPORT_TEXT}" ;;
-        warn) msg_warn " [!] CPU support             ${CPU_SUPPORT_TEXT}" ;;
-        *)    msg_inf " [i] CPU support             ${CPU_SUPPORT_TEXT:-Compatible (acceleration not assessed)}" ;;
+        ok)   msg_ok "$(ui_text ' [✓] CPU support             %s' ' [✓] Поддержка CPU          %s' "$CPU_SUPPORT_TEXT")" ;;
+        warn) msg_warn "$(ui_text ' [!] CPU support             %s' ' [!] Поддержка CPU          %s' "$CPU_SUPPORT_TEXT")" ;;
+        *)    msg_inf "$(ui_text ' [i] CPU support             %s' ' [i] Поддержка CPU          %s' "${CPU_SUPPORT_TEXT:-$(ui_text 'Compatible (acceleration not assessed)' 'Совместим (ускорение не проверялось)')}")" ;;
     esac
     if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_warn ' [!] nginx                  Post-rollback health not verified'
+        msg_warn "$(ui_text ' [!] nginx                  Post-rollback health not verified' ' [!] nginx                  Работа после отката не подтверждена')"
     else
-        msg_ok ' [✓] nginx                  Running'
+        msg_ok "$(ui_text ' [✓] nginx                  Running' ' [✓] nginx                  Работает')"
     fi
     if [[ -s "/etc/letsencrypt/live/${domain}/fullchain.pem" && -s "/etc/letsencrypt/live/${domain}/privkey.pem" &&
           -s "/etc/letsencrypt/live/${reality_domain}/fullchain.pem" && -s "/etc/letsencrypt/live/${reality_domain}/privkey.pem" &&
           -s "/root/cert/${domain}/fullchain.pem" && -s "/root/cert/${domain}/privkey.pem" ]]; then
-        msg_ok ' [✓] TLS certificates       Ready'
+        msg_ok "$(ui_text ' [✓] TLS certificates       Ready' ' [✓] Сертификаты TLS        Готовы')"
     else
-        msg_warn ' [!] TLS certificates       Check certificate files'
+        msg_warn "$(ui_text ' [!] TLS certificates       Check certificate files' ' [!] Сертификаты TLS        Проверьте файлы сертификатов')"
     fi
     if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_warn ' [!] XHTTP                  Post-rollback health not verified'
+        msg_warn "$(ui_text ' [!] XHTTP                  Post-rollback health not verified' ' [!] XHTTP                  Работа после отката не подтверждена')"
     else
-        msg_ok ' [✓] XHTTP                  Ready'
+        msg_ok "$(ui_text ' [✓] XHTTP                  Ready' ' [✓] XHTTP                  Готов')"
     fi
     if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_warn ' [!] Diagnostics            Post-rollback health not verified'
+        msg_warn "$(ui_text ' [!] Diagnostics            Post-rollback health not verified' ' [!] Диагностика            Работа после отката не подтверждена')"
     elif [[ -s /var/www/diagnostics/index.html && -s /var/www/diagnostics/speedtest.js &&
           -s /var/www/diagnostics/speedtest_worker.js && -s /usr/local/lib/3x-ui-pro/mtr-backend.py ]]; then
-        msg_ok ' [✓] Diagnostics            Ready'
+        msg_ok "$(ui_text ' [✓] Diagnostics            Ready' ' [✓] Диагностика            Готова')"
     else
-        msg_warn ' [!] Diagnostics            Check diagnostics files'
+        msg_warn "$(ui_text ' [!] Diagnostics            Check diagnostics files' ' [!] Диагностика            Проверьте файлы диагностики')"
     fi
     if [[ -x /usr/local/bin/x-ui-backup ]]; then
-        msg_ok ' [✓] Backup / Restore       Installed'
+        msg_ok "$(ui_text ' [✓] Backup / Restore       Installed' ' [✓] Backup / Restore       Установлен')"
     else
-        msg_warn ' [!] Backup / Restore       Backup utility unavailable'
+        msg_warn "$(ui_text ' [!] Backup / Restore       Backup utility unavailable' ' [!] Backup / Restore       Утилита Backup недоступна')"
     fi
     case "${AWG_RESULT:-not_requested}" in
-        configured) msg_ok " [✓] AmneziaWG              Configured (UDP/8443)" ;;
-        failed) msg_warn " [!] AmneziaWG              Not configured" ;;
+        configured) msg_ok "$(ui_text ' [✓] AmneziaWG              Configured (UDP/8443)' ' [✓] AmneziaWG              Настроен (UDP/8443)')" ;;
+        failed) msg_warn "$(ui_text ' [!] AmneziaWG              Not configured' ' [!] AmneziaWG              Не настроен')" ;;
     esac
     local component state
     for component in "Global DoT:${DOT_RESULT:-not_requested}" "Fail2ban:${F2BAN_RESULT:-not_requested}" "APT security:${APT_RESULT:-not_requested}"; do
         state=${component#*:}; component=${component%%:*}
         case "$state" in
-            configured) msg_ok " [✓] $component — Configured" ;;
-            failed_rolled_back) msg_warn " [!] $component — Failed, rolled back / unchanged" ;;
-            failed_unverified) msg_warn " [!] $component — Failed, rollback not verified" ;;
+            configured) msg_ok "$(ui_text ' [✓] %s — Configured' ' [✓] %s — Настроен' "$component")" ;;
+            failed_rolled_back) msg_warn "$(ui_text ' [!] %s — Failed, rolled back / unchanged' ' [!] %s — Ошибка, выполнен откат / без изменений' "$component")" ;;
+            failed_unverified) msg_warn "$(ui_text ' [!] %s — Failed, rollback not verified' ' [!] %s — Ошибка, откат не подтверждён' "$component")" ;;
         esac
     done
     case "${TUNING_RESULT:-}" in
-        applied) msg_ok ' [✓] Kernel tuning — Applied' ;;
-        partially_skipped) msg_warn ' [!] Kernel tuning — Partially skipped; core unaffected' ;;
+        applied) msg_ok "$(ui_text ' [✓] Kernel tuning — Applied' ' [✓] Параметры ядра — Применены')" ;;
+        partially_skipped) msg_warn "$(ui_text ' [!] Kernel tuning — Partially skipped; core unaffected' ' [!] Параметры ядра — Частично пропущены; основной стек не затронут')" ;;
     esac
     case "${SWAP_RESULT:-not_requested}" in
-        created) msg_ok ' [✓] SWAP 1 GiB             Created and enabled' ;;
-        existing) msg_inf ' [i] SWAP                   Already configured' ;;
-        skipped) msg_warn " [!] SWAP                   Skipped ($SWAP_REASON)" ;;
+        created) msg_ok "$(ui_text ' [✓] SWAP 1 GiB             Created and enabled' ' [✓] SWAP 1 GiB             Создан и включён')" ;;
+        existing) msg_inf "$(ui_text ' [i] SWAP                   Already configured' ' [i] SWAP                   Уже настроен')" ;;
+        skipped) msg_warn "$(ui_text ' [!] SWAP                   Skipped (%s)' ' [!] SWAP                   Пропущен (%s)' "$SWAP_REASON")" ;;
     esac
     case "${VISION_RESULT:-not_requested}" in
-        configured) msg_ok " [✓] VLESS TLS Vision       Ready ($vision_domain:443)" ;;
-        failed_rolled_back) msg_warn ' [!] VLESS TLS Vision       Failed — rolled back' ;;
-        failed_unverified) msg_warn ' [!] VLESS TLS Vision       Failed — rollback not verified' ;;
+        configured) msg_ok "$(ui_text ' [✓] VLESS TLS Vision       Ready (%s:443)' ' [✓] VLESS TLS Vision       Готов (%s:443)' "$vision_domain")" ;;
+        failed_rolled_back) msg_warn "$(ui_text ' [!] VLESS TLS Vision       Failed — rolled back' ' [!] VLESS TLS Vision       Ошибка — выполнен откат')" ;;
+        failed_unverified) msg_warn "$(ui_text ' [!] VLESS TLS Vision       Failed — rollback not verified' ' [!] VLESS TLS Vision       Ошибка — откат не подтверждён')" ;;
     esac
     case "${CLIENT_RESULT:-not_requested}" in
         configured)
-            msg_ok ' [✓] Client                  Created'
-            msg_ok ' [✓] Subscription            Ready'
+            msg_ok "$(ui_text ' [✓] Client                  Created' ' [✓] Клиент                 Создан')"
+            msg_ok "$(ui_text ' [✓] Subscription            Ready' ' [✓] Подписка               Готова')"
             ;;
-        failed_unverified) msg_warn ' [!] Client / Subscription   Failed verification — inspect panel before retrying' ;;
+        failed_unverified) msg_warn "$(ui_text ' [!] Client / Subscription   Failed verification — inspect panel before retrying' ' [!] Клиент / Подписка       Проверка не пройдена — проверьте панель перед повторной попыткой')" ;;
     esac
     case "${AGH_RESULT:-not_requested}" in
         installed)
-            msg_ok ' [✓] AdGuard Home           Running (v0.107.79)'
-            msg_ok ' [✓] DNS-over-HTTPS         Ready' ;;
+            msg_ok "$(ui_text ' [✓] AdGuard Home           Running (v0.107.79)' ' [✓] AdGuard Home           Работает (v0.107.79)')"
+            msg_ok "$(ui_text ' [✓] DNS-over-HTTPS         Ready' ' [✓] DNS-over-HTTPS         Готов')" ;;
         failed_rolled_back)
-            msg_warn ' [!] AdGuard Home           Failed — rolled back'
-            msg_warn ' [!] DNS-over-HTTPS         Not installed' ;;
+            msg_warn "$(ui_text ' [!] AdGuard Home           Failed — rolled back' ' [!] AdGuard Home           Ошибка — выполнен откат')"
+            msg_warn "$(ui_text ' [!] DNS-over-HTTPS         Not installed' ' [!] DNS-over-HTTPS         Не установлен')" ;;
         failed_unverified)
-            msg_warn ' [!] AdGuard Home           Failed — rollback not verified'
-            msg_warn ' [!] DNS-over-HTTPS         State not verified' ;;
+            msg_warn "$(ui_text ' [!] AdGuard Home           Failed — rollback not verified' ' [!] AdGuard Home           Ошибка — откат не подтверждён')"
+            msg_warn "$(ui_text ' [!] DNS-over-HTTPS         State not verified' ' [!] DNS-over-HTTPS         Состояние не подтверждено')" ;;
     esac
     if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_warn ' [!] Certificate renewal    Post-rollback health not verified'
+        msg_warn "$(ui_text ' [!] Certificate renewal    Post-rollback health not verified' ' [!] Продление сертификатов Работа после отката не подтверждена')"
     else
-        msg_ok ' [✓] Certificate renewal    Webroot + systemd timer'
+        msg_ok "$(ui_text ' [✓] Certificate renewal    Webroot + systemd timer' ' [✓] Продление сертификатов Webroot + таймер systemd')"
     fi
     firewall=$(LC_ALL=C ufw status 2>/dev/null) || firewall=""
     case "$firewall" in
-        "Status: active"*)   msg_ok ' [✓] Firewall / UFW         Active' ;;
-        "Status: inactive"*) msg_warn ' [!] Firewall / UFW         Inactive — review firewall settings' ;;
-        *)                   msg_warn ' [!] Firewall / UFW         Unknown — review firewall settings' ;;
+        "Status: active"*)   msg_ok "$(ui_text ' [✓] Firewall / UFW         Active' ' [✓] Firewall / UFW         Активен')" ;;
+        "Status: inactive"*) msg_warn "$(ui_text ' [!] Firewall / UFW         Inactive — review firewall settings' ' [!] Firewall / UFW         Неактивен — проверьте настройки firewall')" ;;
+        *)                   msg_warn "$(ui_text ' [!] Firewall / UFW         Unknown — review firewall settings' ' [!] Firewall / UFW         Состояние неизвестно — проверьте настройки firewall')" ;;
     esac
 
-    printf '\n Enabled by default: REALITY · XHTTP · Hysteria2\n Optional profiles: WS · Trojan gRPC\n'
-    msg_inf "\n Panel:"
+    ui_text '\n Enabled by default: REALITY · XHTTP · Hysteria2\n Optional profiles: WS · Trojan gRPC\n' '\n Включены по умолчанию: REALITY · XHTTP · Hysteria2\n Дополнительные профили: WS · Trojan gRPC\n'
+    msg_inf "$(ui_text '\\n Panel:' '\n Панель:')"
     msg_inf " https://${domain}/${panel_path}/"
-    msg_inf "\n Diagnostics (panel login required):"
+    msg_inf "$(ui_text '\\n Diagnostics (panel login required):' '\n Диагностика (нужен вход в панель):')"
     msg_inf " https://${domain}/${panel_path}/diag"
-    printf '\n Username: %s\n Password: %s\n' "$config_username" "$config_password"
+    ui_text '\n Username: %s\n Password: %s\n' '\n Логин: %s\n Пароль: %s\n' "$config_username" "$config_password"
     if [[ "${CLIENT_RESULT:-not_requested}" == configured ]]; then
         local subscription_url
         subscription_url=$(printf '%s' "$CLIENT_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["url"])')
-        msg_inf "\n Subscription:"
+        msg_inf "$(ui_text '\\n Subscription:' '\n Подписка:')"
         msg_inf " $subscription_url"
         printf '%s' "$CLIENT_OUTPUT" | python3 -c 'import json,sys; print(" " + " / ".join(json.load(sys.stdin)["protocols"]))'
         CLIENT_OUTPUT=''
     fi
     if [[ "${AWG_RESULT:-not_requested}" == configured ]]; then
         msg_inf "\n AmneziaWG:"
-        msg_inf ' AWG vpn:// export requires an Amnezia-compatible application.'
+        msg_inf "$(ui_text ' AWG vpn:// export requires an Amnezia-compatible application.' ' Для экспорта AWG vpn:// требуется приложение с поддержкой Amnezia.')"
     fi
-    msg_inf "\n Backup:"
+    msg_inf "$(ui_text '\\n Backup:' '\n Резервная копия:')"
     printf ' x-ui-backup backup\n\n'
     if [[ "${AGH_RESULT:-not_requested}" == installed ]]; then
         msg_inf " AdGuard Home:"
         msg_inf " https://${domain}/${AGH_PATH}/"
-        printf ' Login: admin\n Password: %s\n DoH: https://%s/dns-query\n\n' "$AGH_PASSWORD" "$domain"
+        ui_text ' Login: admin\n Password: %s\n DoH: https://%s/dns-query\n\n' ' Логин: admin\n Пароль: %s\n DoH: https://%s/dns-query\n\n' "$AGH_PASSWORD" "$domain"
         AGH_PASSWORD=''
     elif [[ "${AGH_RESULT:-not_requested}" == failed_rolled_back ]]; then
-        msg_warn ' AdGuard Home was not installed. The core 3X-UI stack remains operational.'
+        msg_warn "$(ui_text ' AdGuard Home was not installed. The core 3X-UI stack remains operational.' ' AdGuard Home не установлен. Основной стек 3X-UI продолжает работать.')"
     elif [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_warn ' Post-rollback core health could not be verified. Inspect nginx and core services.'
+        msg_warn "$(ui_text ' Post-rollback core health could not be verified. Inspect nginx and core services.' ' Работа основного стека после отката не подтверждена. Проверьте nginx и основные службы.')"
     fi
     msg_inf '============================================================'
-    msg_inf ' Save these credentials before closing the terminal.'
+    msg_inf "$(ui_text ' Save these credentials before closing the terminal.' ' Сохраните эти учётные данные перед закрытием терминала.')"
     msg_inf '============================================================'
 }
 
@@ -2606,12 +2637,12 @@ show_results() {
 select_security() {
     local answer
     INSTALL_SECURITY=n
-    printf 'Enhance VPS security? [Y/n]: '
+    ui_text 'Enhance VPS security? [Y/n]: ' 'Усилить безопасность VPS? [Y/n]: '
     while IFS= read -r answer; do
         case "$answer" in
             ''|y|Y) INSTALL_SECURITY=y; return 0 ;;
             n|N) return 0 ;;
-            *) printf 'Please enter y or n.\n' ;;
+            *) ui_text 'Please enter y or n.\n' 'Введите y или n.\n' ;;
         esac
     done
     return 0
@@ -2621,15 +2652,15 @@ select_vision() {
     local LC_ALL=C answer
     INSTALL_VISION=n
     while true; do
-        printf 'Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]: '
+        ui_text 'Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]: ' 'Настроить дополнительное подключение VLESS TCP/TLS (XTLS Vision)? Нужен отдельный домен. [y/N]: '
         IFS= read -r answer || return 0
         case "$answer" in
             ''|n|N) return 0 ;;
             y|Y) break ;;
-            *) printf 'Please enter y or n.\n' ;;
+            *) ui_text 'Please enter y or n.\n' 'Введите y или n.\n' ;;
         esac
     done
-    printf 'Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains): '
+    ui_text 'Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains): ' 'Введите домен VLESS TLS Vision (отличный от доменов панели и REALITY): '
     IFS= read -r vision_domain || return 1
     vision_domain=${vision_domain,,}
     [[ -n "$vision_domain" ]] || return 1
@@ -2640,12 +2671,12 @@ select_client() {
     local answer
     CREATE_CLIENT=n
     while true; do
-        printf 'Create a client in 3X-UI and display a subscription link after installation? [Y/n]: '
+        ui_text 'Create a client in 3X-UI and display a subscription link after installation? [Y/n]: ' 'Создать клиента в 3X-UI и показать ссылку подписки после установки? [Y/n]: '
         IFS= read -r answer || return 0
         case "$answer" in
             ''|y|Y) CREATE_CLIENT=y; return 0 ;;
             n|N) return 0 ;;
-            *) printf 'Please enter y or n.\n' ;;
+            *) ui_text 'Please enter y or n.\n' 'Введите y или n.\n' ;;
         esac
     done
 }
@@ -2702,13 +2733,13 @@ preflight_integrated_features() {
     if [[ "${INSTALL_VISION:-n}" == y ]]; then
         vision_domain=${vision_domain,,}
         valid_hostname "$vision_domain" && [[ "$vision_domain" != "${domain,,}" && "$vision_domain" != "${reality_domain,,}" ]] || {
-            msg_err 'Invalid/conflicting Vision hostname: use a distinct ASCII domain without URL, whitespace or terminal dot.'; return 1;
+            msg_err "$(ui_text 'Invalid/conflicting Vision hostname: use a distinct ASCII domain without URL, whitespace or terminal dot.' 'Некорректный или конфликтующий домен Vision: укажите отдельный домен в ASCII без URL, пробелов и точки в конце.')"; return 1;
         }
     fi
     if [[ "${INSTALL_VISION:-n}" == y || "${CREATE_CLIENT:-n}" == y ]]; then
         [[ "$PANEL_TAG" == v3.9.0 || "$PANEL_TAG" == v3.10.0 || "$PANEL_TAG" == v3.10.2 ||
            ( -n "$PANEL_TAG" && "$PANEL_TAG" == "$(verified_panel_release | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')" ) ]] || {
-            msg_err 'Vision and initial client require the verified baseline or historical 3X-UI v3.9.0/v3.10.0/v3.10.2; select N with other versions.'; return 1;
+            msg_err "$(ui_text 'Vision and initial client require the verified baseline or historical 3X-UI v3.9.0/v3.10.0/v3.10.2; select N with other versions.' 'Для Vision и первоначального клиента нужна проверенная базовая версия или 3X-UI v3.9.0/v3.10.0/v3.10.2; с другими версиями выберите N.')"; return 1;
         }
         # Reuse the existing authenticated local HTTPS/CSRF implementation.
         AWG_HELPER="$PANEL_STAGE/managed-amneziawg.py"
@@ -2817,7 +2848,7 @@ install_vision() {
             certbot delete --cert-name "$vision_domain" --non-interactive || result=1
         fi
     else
-        msg_warn 'Vision rollback is unverified; retained certificate and managed renewal artifacts for inspection.'
+        msg_warn "$(ui_text 'Vision rollback is unverified; retained certificate and managed renewal artifacts for inspection.' 'Откат Vision не подтверждён; сертификат и управляемые файлы продления сохранены для проверки.')"
     fi
     nginx -t && systemctl reload nginx && check_installation || result=1
     if (( result != 0 )); then VISION_RESULT=failed_unverified; fi
@@ -2898,55 +2929,55 @@ main() {
     select_amneziawg || exit 1
     select_adguard || exit 1
     select_client || exit 1
-    printf '\nPreparing system...\n'
-    msg_warn 'Initial full OS upgrade is mandatory; services may restart. A required initial reboot is manual (sudo reboot).'
-    preflight_base_os || { msg_err 'Base OS preflight failed; existing deployment was not removed.'; exit 1; }
-    preflight_panel_release || { msg_err "Release preflight failed; existing deployment was not removed."; exit 1; }
+    ui_text '\nPreparing system...\n' '\nПодготовка системы...\n'
+    msg_warn "$(ui_text 'Initial full OS upgrade is mandatory; services may restart. A required initial reboot is manual (sudo reboot).' 'Первоначальное полное обновление ОС обязательно; службы могут перезапуститься. При необходимости перезагрузите сервер вручную (sudo reboot).')"
+    preflight_base_os || { msg_err "$(ui_text 'Base OS preflight failed; existing deployment was not removed.' 'Предварительная проверка ОС не пройдена; существующая установка не удалена.')"; exit 1; }
+    preflight_panel_release || { msg_err "$(ui_text 'Release preflight failed; existing deployment was not removed.' 'Предварительная проверка релиза не пройдена; существующая установка не удалена.')"; exit 1; }
     make_port sub_port panel_port ws_port trojan_port mtr_backend_port || exit 1
-    preflight_amneziawg || { msg_err "AmneziaWG preflight failed; existing deployment was not removed."; exit 1; }
-    preflight_integrated_features || { msg_err 'Feature preparation stopped before cleanup; see the component error above.'; exit 1; }
+    preflight_amneziawg || { msg_err "$(ui_text 'AmneziaWG preflight failed; existing deployment was not removed.' 'Предварительная проверка AmneziaWG не пройдена; существующая установка не удалена.')"; exit 1; }
+    preflight_integrated_features || { msg_err "$(ui_text 'Feature preparation stopped before cleanup; see the component error above.' 'Подготовка компонентов остановлена до удаления данных; проверьте ошибку компонента выше.')"; exit 1; }
     setup_swap || { SWAP_RESULT=skipped; SWAP_REASON='setup failed'; }
-    prepare_base_os || { msg_err 'OS preparation failed; deployment was not removed, package changes may remain.'; exit 1; }
-    prepare_system_dns || { msg_err 'DNS preparation failed; existing deployment was not removed.'; exit 1; }
+    prepare_base_os || { msg_err "$(ui_text 'OS preparation failed; deployment was not removed, package changes may remain.' 'Подготовка ОС завершилась ошибкой; установка не удалена, но изменения пакетов могли сохраниться.')"; exit 1; }
+    prepare_system_dns || { msg_err "$(ui_text 'DNS preparation failed; existing deployment was not removed.' 'Подготовка DNS завершилась ошибкой; существующая установка не удалена.')"; exit 1; }
     local awg_xui_stopped=n
     if [[ "${AWG_REINSTALL:-n}" == y ]]; then
-        prepare_awg_reinstall || { msg_err 'AWG reinstall preparation failed; deployment was not removed.'; exit 1; }
+        prepare_awg_reinstall || { msg_err "$(ui_text 'AWG reinstall preparation failed; deployment was not removed.' 'Подготовка переустановки AWG завершилась ошибкой; установка не удалена.')"; exit 1; }
         awg_xui_stopped=y
     fi
     cleanup_adguard || {
-        msg_err "Cannot clean AdGuard Home; core deployment was not removed."
+        msg_err "$(ui_text 'Cannot clean AdGuard Home; core deployment was not removed.' 'Не удалось удалить управляемый AdGuard Home; основной стек не удалён.')"
         if [[ "$awg_xui_stopped" == y ]]; then
             if systemctl start x-ui && systemctl is-active --quiet x-ui; then
-                msg_warn 'Reinstall aborted; previous x-ui is active and its configuration retained. AdGuard Home may require inspection.'
+                msg_warn "$(ui_text 'Reinstall aborted; previous x-ui is active and its configuration retained. AdGuard Home may require inspection.' 'Переустановка прервана; прежний x-ui работает, его конфигурация сохранена. Может потребоваться проверка AdGuard Home.')"
             else
-                msg_warn 'Reinstall aborted; previous x-ui could not be confirmed active. Configuration retained; recover manually with sudo systemctl start x-ui. AdGuard Home may require inspection.'
+                msg_warn "$(ui_text 'Reinstall aborted; previous x-ui could not be confirmed active. Configuration retained; recover manually with sudo systemctl start x-ui. AdGuard Home may require inspection.' 'Переустановка прервана; работа прежнего x-ui не подтверждена. Конфигурация сохранена; восстановите службу вручную: sudo systemctl start x-ui. Может потребоваться проверка AdGuard Home.')"
             fi
         fi
         exit 1
     }
-    clean_previous_install || { msg_err "Previous deployment cleanup failed (exit $?). See the cause above; installation stopped."; exit 1; }
-    install_packages || { msg_err "Dependency setup failed."; exit 1; }
-    setup_firewall || { msg_err "Firewall setup failed."; exit 1; }
-    get_server_ip || { msg_err "VPS IP detection failed (exit $?). See the cause above; installation stopped."; exit 1; }
-    setup_acme_http || { msg_err "ACME HTTP setup failed."; exit 1; }
-    get_ssl_certs || { msg_err "Webroot certificate setup failed."; exit 1; }
+    clean_previous_install || { msg_err "$(ui_text 'Previous deployment cleanup failed (exit %s). See the cause above; installation stopped.' 'Удаление прежней установки завершилось ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
+    install_packages || { msg_err "$(ui_text 'Dependency setup failed.' 'Не удалось установить зависимости.')"; exit 1; }
+    setup_firewall || { msg_err "$(ui_text 'Firewall setup failed.' 'Не удалось настроить firewall.')"; exit 1; }
+    get_server_ip || { msg_err "$(ui_text 'VPS IP detection failed (exit %s). See the cause above; installation stopped.' 'Не удалось определить IP VPS (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
+    setup_acme_http || { msg_err "$(ui_text 'ACME HTTP setup failed.' 'Не удалось настроить HTTP для ACME.')"; exit 1; }
+    get_ssl_certs || { msg_err "$(ui_text 'Webroot certificate setup failed.' 'Не удалось получить или настроить сертификаты через webroot.')"; exit 1; }
 
-    install_panel || { msg_err "3X-UI installation failed (exit $?). See the cause above; installation stopped."; exit 1; }
+    install_panel || { msg_err "$(ui_text '3X-UI installation failed (exit %s). See the cause above; installation stopped.' 'Установка 3X-UI завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
 
-    configure_nginx || { msg_err "nginx configuration failed (exit $?). See the cause above; installation stopped."; exit 1; }
-    configure_xui_db || { msg_err "3X-UI database configuration failed (exit $?). See the cause above; installation stopped."; exit 1; }
-    install_clash_sub || { msg_err "Clash template download/setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
-    install_fake_site || { msg_err "Cover site download/setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
-    install_diagnostics || { msg_err "Diagnostics download/setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
-    tune_system || { TUNING_RESULT=partially_skipped; msg_warn "Kernel tuning failed; core installation continues."; }
-    install_backup_tool || { msg_err "Backup tool setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
-    setup_certificate_renewal || { msg_err "Certificate renewal setup failed."; exit 1; }
+    configure_nginx || { msg_err "$(ui_text 'nginx configuration failed (exit %s). See the cause above; installation stopped.' 'Настройка nginx завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
+    configure_xui_db || { msg_err "$(ui_text '3X-UI database configuration failed (exit %s). See the cause above; installation stopped.' 'Настройка базы 3X-UI завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
+    install_clash_sub || { msg_err "$(ui_text 'Clash template download/setup failed (exit %s). See the cause above; installation stopped.' 'Загрузка или настройка шаблона Clash завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
+    install_fake_site || { msg_err "$(ui_text 'Cover site download/setup failed (exit %s). See the cause above; installation stopped.' 'Загрузка или настройка сайта прикрытия завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
+    install_diagnostics || { msg_err "$(ui_text 'Diagnostics download/setup failed (exit %s). See the cause above; installation stopped.' 'Загрузка или настройка диагностики завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
+    tune_system || { TUNING_RESULT=partially_skipped; msg_warn "$(ui_text 'Kernel tuning failed; core installation continues.' 'Не удалось настроить параметры ядра; установка основного стека продолжается.')"; }
+    install_backup_tool || { msg_err "$(ui_text 'Backup tool setup failed (exit %s). See the cause above; installation stopped.' 'Установка утилиты Backup завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
+    setup_certificate_renewal || { msg_err "$(ui_text 'Certificate renewal setup failed.' 'Не удалось настроить продление сертификатов.')"; exit 1; }
 
     if ! systemctl is-enabled --quiet x-ui; then
-        systemctl daemon-reload && systemctl enable x-ui.service || { msg_err "3X-UI service enablement failed (exit $?). Installation stopped."; exit 1; }
+        systemctl daemon-reload && systemctl enable x-ui.service || { msg_err "$(ui_text '3X-UI service enablement failed (exit %s). Installation stopped.' 'Не удалось включить службу 3X-UI (exit %s). Установка остановлена.' "$?")"; exit 1; }
     fi
-    x-ui restart || { msg_err "3X-UI restart failed (exit $?). Installation stopped."; exit 1; }
-    check_installation || { msg_err "Installation failed mandatory health checks."; exit 1; }
+    x-ui restart || { msg_err "$(ui_text '3X-UI restart failed (exit %s). Installation stopped.' 'Перезапуск 3X-UI завершился ошибкой (exit %s). Установка остановлена.' "$?")"; exit 1; }
+    check_installation || { msg_err "$(ui_text 'Installation failed mandatory health checks.' 'Установка не прошла обязательные проверки работоспособности.')"; exit 1; }
     DNS_FINALIZED=y  # Core is ready; later optional failures must not undo working DNS.
 
     local install_result=0
@@ -2982,7 +3013,7 @@ main() {
         if ! check_installation; then CORE_RESULT=failed_unverified; install_result=1; fi
     fi
     if [[ "$CORE_RESULT" == configured ]]; then
-        write_managed_state || { msg_err "Managed-state could not be recorded; core data retained."; install_result=1; }
+        write_managed_state || { msg_err "$(ui_text 'Managed-state could not be recorded; core data retained.' 'Не удалось записать сведения об управляемой установке; данные основного стека сохранены.')"; install_result=1; }
     fi
     show_results
     finish_initial_reboot "$install_result" || install_result=1
@@ -3099,9 +3130,9 @@ backup_list() {
         number=$((number+1))
         size=$(stat -c %s -- "$archive") || return 1
         timestamp=$(date -u -r "$archive" '+%Y-%m-%d %H:%M UTC') || return 1
-        printf '%d. %q  %s  %s bytes\n' "$number" "$archive" "$timestamp" "$size"
+        ui_text '%d. %q  %s  %s bytes\n' '%d. %q  %s  %s байт\n' "$number" "$archive" "$timestamp" "$size"
     done
-    (( number )) || printf 'No backups in /var/backups/x-ui.\n'
+    (( number )) || ui_text 'No backups in /var/backups/x-ui.\n' 'В /var/backups/x-ui нет резервных копий.\n'
 }
 
 prepare_restore_security() {
@@ -3176,44 +3207,51 @@ backup_action() (
     if [[ "$action" == backup ]]; then
         local result
         result=$(bash /usr/local/bin/x-ui-backup backup --json) || exit $?
-        printf '%s\n' "$result" | python3 -c 'import json,sys; r=json.load(sys.stdin); r.get("status")=="success" or sys.exit(1); print("Created archive: "+ascii(r["archive"]))' || exit 1
+        printf '%s\n' "$result" | python3 -c 'import json,sys; r=json.load(sys.stdin); r.get("status")=="success" or sys.exit(1); print(sys.argv[1]+ascii(r["archive"]))' "$(ui_text 'Created archive: ' 'Создан архив: ')" || exit 1
         exit 0
     fi
     backup_list || exit 1
-    printf 'Archive number or absolute path (empty to cancel): '
+    ui_text 'Archive number or absolute path (empty to cancel): ' 'Номер архива или абсолютный путь (пустой ввод — отмена): '
     IFS= read -r choice || exit 0
     [[ -n "$choice" ]] || exit 0
     if [[ "$choice" =~ ^[0-9]+$ && ${#choice} -lt 8 ]]; then
-        (( 10#$choice > 0 && 10#$choice <= ${#BACKUP_CHOICES[@]} )) || { msg_err 'Invalid archive number.'; exit 1; }
+        (( 10#$choice > 0 && 10#$choice <= ${#BACKUP_CHOICES[@]} )) || { msg_err "$(ui_text 'Invalid archive number.' 'Некорректный номер архива.')"; exit 1; }
         archive=${BACKUP_CHOICES[10#$choice-1]}
     elif [[ "$choice" == /* ]]; then archive=$choice
-    else msg_err 'Enter an archive number or absolute path.'; exit 1; fi
+    else msg_err "$(ui_text 'Enter an archive number or absolute path.' 'Укажите номер архива или абсолютный путь.')"; exit 1; fi
     bash /usr/local/bin/x-ui-backup inspect "$archive" || exit $?
-    printf 'Optional Security configures automatic security updates and SSH Fail2ban.\nAutomatic reboot is allowed at 04:38 server time, including with active users.\nConfigure automatic security updates and SSH Fail2ban? [y/N] '
+    ui_text 'Optional Security configures automatic security updates and SSH Fail2ban.\nAutomatic reboot is allowed at 04:38 server time, including with active users.\nConfigure automatic security updates and SSH Fail2ban? [y/N] ' 'Опция Security настраивает автоматические обновления безопасности и Fail2ban для SSH.\nАвтоматическая перезагрузка разрешена в 04:38 по времени сервера, даже при активных пользователях.\nНастроить автоматические обновления безопасности и Fail2ban для SSH? [y/N] '
     IFS= read -r answer || exit 0
     [[ "$answer" != y && "$answer" != Y ]] || apt=y
-    printf 'Enable UFW with SSH protection after Restore? [y/N] '
+    ui_text 'Enable UFW with SSH protection after Restore? [y/N] ' 'Включить UFW с защитой доступа по SSH после Restore? [y/N] '
     IFS= read -r answer || exit 0
     [[ "$answer" != y && "$answer" != Y ]] || ufw=y
-    printf 'Restore replaces project-managed data. Trust this archive before continuing.\nType YES to restore: '
+    ui_text 'Restore replaces project-managed data. Trust this archive before continuing.\nType YES to restore: ' 'Restore заменяет данные, управляемые проектом. Продолжайте только с доверенным архивом.\nДля восстановления введите YES: '
     IFS= read -r answer || exit 0
-    [[ "$answer" == YES ]] || { printf 'Cancelled.\n'; exit 0; }
+    [[ "$answer" == YES ]] || { ui_text 'Cancelled.\n' 'Отменено.\n'; exit 0; }
     if [[ "$apt" == y || "$ufw" == y ]]; then
         if ! prepare_restore_security; then
-            printf 'Trusted Security helper unavailable. Continue ordinary Restore without Security? [y/N] '
+            ui_text 'Trusted Security helper unavailable. Continue ordinary Restore without Security? [y/N] ' 'Не удалось подготовить доверенный компонент Security. Продолжить обычный Restore без Security? [y/N] '
             IFS= read -r answer || exit 0
-            [[ "$answer" == y || "$answer" == Y ]] || { printf 'Cancelled.\n'; exit 0; }
+            [[ "$answer" == y || "$answer" == Y ]] || { ui_text 'Cancelled.\n' 'Отменено.\n'; exit 0; }
             apt=n ufw=n
         fi
     fi
     local status=0
     bash /usr/local/bin/x-ui-backup restore "$archive" || status=$?
     # The foreground child has exited, including its EXIT cleanup.
-    if (( status )); then printf 'Restore: FAILED (exit %d)\nOverall: FAILED\n' "$status"; exit "$status"; fi
+    if (( status )); then
+        printf 'Restore: FAILED (exit %d)\nOverall: FAILED\n' "$status"
+        ui_text '' 'Ошибка Restore. Проверьте диагностику и состояние отката перед новой операцией.\n'
+        exit "$status"
+    fi
     printf 'Restore: SUCCESS\n'
-    trap 'printf "Security: STATE_UNVERIFIED\nOverall: PARTIAL\nCheck UFW, SSH access and Security services. Restored data retained.\n" >&2; exit 130' INT
-    trap 'printf "Security: STATE_UNVERIFIED\nOverall: PARTIAL\nCheck UFW, SSH access and Security services. Restored data retained.\n" >&2; exit 143' TERM
-    post_restore_security "$RESTORE_SECURITY_DIR" "$apt" "$ufw"
+    ui_text '' 'Данные восстановлены.\n'
+    trap 'printf "Security: STATE_UNVERIFIED\nOverall: PARTIAL\n" >&2; ui_text "Check UFW, SSH access and Security services. Restored data retained.\n" "Проверьте UFW, доступ по SSH и службы Security. Восстановленные данные сохранены.\n" >&2; exit 130' INT
+    trap 'printf "Security: STATE_UNVERIFIED\nOverall: PARTIAL\n" >&2; ui_text "Check UFW, SSH access and Security services. Restored data retained.\n" "Проверьте UFW, доступ по SSH и службы Security. Восстановленные данные сохранены.\n" >&2; exit 143' TERM
+    post_restore_security "$RESTORE_SECURITY_DIR" "$apt" "$ufw" || status=$?
+    if (( status )); then ui_text '' 'Restore завершён частично: данные сохранены, но настройка Security не завершена. Проверьте UFW, доступ по SSH и службы Security.\n'; fi
+    exit "$status"
 )
 
 run_installation() (
@@ -3227,7 +3265,7 @@ run_installation() (
     if [[ ${UNINSTALL} == *y* ]]; then
         confirm_destructive_reinstall || exit 1
         uninstall_xui || exit 1
-        msg_ok '3X-UI Auto Nginx completely uninstalled.'
+        msg_ok "$(ui_text '3X-UI Auto Nginx completely uninstalled.' '3X-UI Auto Nginx полностью удалён.')"
         exit 0
     fi
     initialize_installation
@@ -3257,7 +3295,7 @@ prepare_domains_tools() {
         cat "$DOMAINS_STAGE/adguard.sh"
         local name
         for name in check_certificate_identity check_webroot_lineage check_no_legacy_certbot_cron check_acme_http \
-                    check_certificate_renewal render_certificate_hook check_xray_runtime check_installation check_awg_reinstall_owner msg_err; do
+                    check_certificate_renewal render_certificate_hook check_xray_runtime check_installation check_awg_reinstall_owner ui_text msg_err; do
             declare -f "$name" || return 1
         done
         cat <<'DOMAIN_CHECKS'
@@ -3293,47 +3331,56 @@ recover_domain_operation() (
     acquire_stack_lock || exit $?
     local DOMAINS_STAGE=''
     trap '[[ -z "$DOMAINS_STAGE" ]] || rm -rf -- "$DOMAINS_STAGE"' EXIT
-    prepare_domains_tools || { msg_err 'ROLLBACK_UNVERIFIED: trusted domain recovery helper unavailable. Recovery data retained in /var/lib/3x-ui-auto-nginx/change-domains; no new operation started.'; exit 1; }
-    domains_tool recover
+    prepare_domains_tools || { msg_err "$(ui_text 'ROLLBACK_UNVERIFIED: trusted domain recovery helper unavailable. Recovery data retained in /var/lib/3x-ui-auto-nginx/change-domains; no new operation started.' 'ROLLBACK_UNVERIFIED: доверенный компонент восстановления доменов недоступен. Данные восстановления сохранены в /var/lib/3x-ui-auto-nginx/change-domains; новая операция не запущена.')"; exit 1; }
+    local status=0
+    domains_tool recover || status=$?
+    if (( status )); then ui_text '' 'Не удалось подтвердить восстановление доменов. Сохраните Backup и журнал восстановления; новые изменения заблокированы.\n' >&2; fi
+    exit "$status"
 )
 
 change_domains_action() (
     acquire_stack_lock || exit $?
     recover_domain_operation || exit $?
     check_os
-    [[ -f /etc/x-ui/x-ui.db ]] || { msg_err 'No supported local installation found. Change Domains requires a working managed stack.'; exit 1; }
+    [[ -f /etc/x-ui/x-ui.db ]] || { msg_err "$(ui_text 'No supported local installation found. Change Domains requires a working managed stack.' 'Поддерживаемая локальная установка не найдена. Для смены доменов нужен работающий управляемый стек.')"; exit 1; }
     local DOMAINS_STAGE='' choice answer current_panel current_reality new_panel new_reality
     local -a current=()
     trap '[[ -z "$DOMAINS_STAGE" ]] || rm -rf -- "$DOMAINS_STAGE"' EXIT
-    prepare_domains_tools || { msg_err 'Cannot prepare trusted Change Domains helpers; installation was not changed.'; exit 1; }
+    prepare_domains_tools || { msg_err "$(ui_text 'Cannot prepare trusted Change Domains helpers; installation was not changed.' 'Не удалось подготовить доверенные компоненты смены доменов; установка не изменена.')"; exit 1; }
     domains_tool inspect > "$DOMAINS_STAGE/current.json" || exit $?
     mapfile -t current < <(/usr/bin/python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1]))["domains"]; print(d["panel"]); print(d["reality"])' "$DOMAINS_STAGE/current.json")
     (( ${#current[@]} == 2 )) || exit 1
     current_panel=${current[0]} current_reality=${current[1]}
     while true; do
-        printf '\nCHANGE DOMAINS\n\nCurrent Panel:   %s\nCurrent REALITY: %s\n\n1. Change Panel domain\n2. Change REALITY domain\n3. Change both domains\n0. Back\n\nSelect an option: ' "$current_panel" "$current_reality"
+        ui_text '\nCHANGE DOMAINS\n\nCurrent Panel:   %s\nCurrent REALITY: %s\n\n1. Change Panel domain\n2. Change REALITY domain\n3. Change both domains\n0. Back\n\nSelect an option: ' '\nСМЕНА ДОМЕНОВ\n\nТекущий домен панели:  %s\nТекущий домен REALITY: %s\n\n1. Изменить домен панели\n2. Изменить домен REALITY\n3. Изменить оба домена\n0. Назад\n\nВыберите пункт: ' "$current_panel" "$current_reality"
         IFS= read -r choice || exit 0
         new_panel=$current_panel new_reality=$current_reality
         case "$choice" in
             0) exit 0 ;;
             1|2|3) ;;
-            *) printf 'Invalid selection.\n'; continue ;;
+            *) ui_text 'Invalid selection.\n' 'Неверный выбор.\n'; continue ;;
         esac
         if [[ "$choice" == 1 || "$choice" == 3 ]]; then
-            printf 'New Panel domain: '; IFS= read -r new_panel || exit 0
+            ui_text 'New Panel domain: ' 'Новый домен панели: '; IFS= read -r new_panel || exit 0
             new_panel=${new_panel,,}
         fi
         if [[ "$choice" == 2 || "$choice" == 3 ]]; then
-            printf 'New REALITY domain: '; IFS= read -r new_reality || exit 0
+            ui_text 'New REALITY domain: ' 'Новый домен REALITY: '; IFS= read -r new_reality || exit 0
             new_reality=${new_reality,,}
         fi
-        valid_hostname "$new_panel" && valid_hostname "$new_reality" || { msg_err 'Invalid hostname; installation was not changed.'; exit 1; }
-        printf '\nPanel:   %s -> %s\nREALITY: %s -> %s\n' "$current_panel" "$new_panel" "$current_reality" "$new_reality"
-        printf 'Point new A/AAAA records to this VPS and allow HTTP-01 on port 80.\nAffected client configurations and old subscription URLs may need updating.\nA full Backup v3 will be created before changes. Type YES to continue: '
+        valid_hostname "$new_panel" && valid_hostname "$new_reality" || { msg_err "$(ui_text 'Invalid hostname; installation was not changed.' 'Некорректный домен; установка не изменена.')"; exit 1; }
+        ui_text '\nPanel:   %s -> %s\nREALITY: %s -> %s\n' '\nПанель:  %s -> %s\nREALITY: %s -> %s\n' "$current_panel" "$new_panel" "$current_reality" "$new_reality"
+        ui_text 'Point new A/AAAA records to this VPS and allow HTTP-01 on port 80.\nAffected client configurations and old subscription URLs may need updating.\nA full Backup v3 will be created before changes. Type YES to continue: ' 'Направьте новые записи A/AAAA на этот VPS и обеспечьте HTTP-01 через порт 80.\nКлиентские конфигурации и старые URL подписок могут потребовать обновления.\nДо изменений будет создан полный Backup v3. Для продолжения введите YES: '
         IFS= read -r answer || exit 0
-        [[ "$answer" == YES ]] || { printf 'Cancelled.\n'; exit 0; }
-        domains_tool change "$new_panel" "$new_reality" "$current_panel" "$current_reality"
-        exit $?
+        [[ "$answer" == YES ]] || { ui_text 'Cancelled.\n' 'Отменено.\n'; exit 0; }
+        local status=0
+        domains_tool change "$new_panel" "$new_reality" "$current_panel" "$current_reality" || status=$?
+        if (( status )); then
+            ui_text '' 'Смена доменов завершилась ошибкой. Проверьте исходную диагностику и состояние отката перед новой операцией.\n' >&2
+        else
+            ui_text '' 'Смена доменов завершена. Обновите затронутые клиентские конфигурации и URL подписок.\n'
+        fi
+        exit "$status"
     done
 )
 
@@ -3344,27 +3391,28 @@ manager_menu() {
         reported=0
         printf '\n'
         msg_inf '3X-UI AUTO NGINX'
-        printf '\n1. Installation\n2. Change Domains\n3. Backups\n\n0. Exit\n\nSelect an option: '
+        ui_text '\n1. Installation\n2. Change Domains\n3. Backups\n\n0. Exit\n\nSelect an option: ' '\n1. Установка\n2. Смена доменов\n3. Резервные копии\n\n0. Выход\n\nВыберите пункт: '
         IFS= read -r choice || return "$status"
         case "$choice" in
             0) return "$status" ;;
             1) run_installation; status=$? ;;
             2) change_domains_action; status=$?; reported=1 ;;
             3)
-                printf '\nBACKUPS\n\n1. Create backup\n2. List backups\n3. Restore backup\n0. Back\n\nSelect an option: '
+                ui_text '\nBACKUPS\n\n1. Create backup\n2. List backups\n3. Restore backup\n0. Back\n\nSelect an option: ' '\nРЕЗЕРВНЫЕ КОПИИ\n\n1. Создать резервную копию\n2. Список резервных копий\n3. Восстановить резервную копию\n0. Назад\n\nВыберите пункт: '
                 IFS= read -r choice || return "$status"
                 case "$choice" in
                     0) continue ;;
                     1) backup_action backup; status=$? ;;
                     2) backup_action list; status=$? ;;
                     3) backup_action restore; status=$?; reported=1 ;;
-                    *) printf 'Invalid selection.\n'; continue ;;
+                    *) ui_text 'Invalid selection.\n' 'Неверный выбор.\n'; continue ;;
                 esac ;;
-            *) printf 'Invalid selection.\n'; continue ;;
+            *) ui_text 'Invalid selection.\n' 'Неверный выбор.\n'; continue ;;
         esac
         if (( status )); then
+            if (( EUID != 0 )); then ui_text '' 'Для этой операции нужны права root. Запустите менеджер через sudo или от root.\n' >&2; fi
             if (( ! reported )); then
-                printf 'FAILED (exit %d). Check the reported recovery state before another operation.\n' "$status" >&2
+                ui_text 'FAILED (exit %d). Check the reported recovery state before another operation.\n' 'FAILED (exit %d). Перед новой операцией проверьте указанное состояние восстановления.\n' "$status" >&2
             fi
             return "$status"
         fi
@@ -3378,6 +3426,8 @@ entrypoint() {
         printf 'Use an interactive TTY (SSH: ssh -t), or explicit installation flags: bash x-ui-latest.sh -install y\n' >&2
         return 2
     fi
+    # Executing this file selected above; a sourced entrypoint selects here.
+    if [[ ${BASH_SOURCE[0]} != "$0" ]]; then select_language || return 0; fi
     manager_menu
 }
 

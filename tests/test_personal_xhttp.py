@@ -102,7 +102,8 @@ def function(name, source=SOURCE):
     matches = re.findall(r"^" + re.escape(name) + r"\(\)\s*\{.*?^\}", source, re.M | re.S)
     if len(matches) != 1:
         raise AssertionError(f"Expected one {name} function")
-    return matches[0]
+    body = matches[0]
+    return (function('ui_text', source) + '\n' if name != 'ui_text' and 'ui_text ' in body else '') + body
 
 
 class PersonalXHTTP(unittest.TestCase):

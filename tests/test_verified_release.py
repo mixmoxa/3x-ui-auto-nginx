@@ -18,7 +18,8 @@ def function(source, name):
     match = re.search(r'^'+re.escape(name)+r'\(\)\s*\{.*?^\}', source, re.M | re.S)
     if not match:
         raise ValueError('Missing function '+name)
-    return match.group()
+    body = match.group()
+    return (function(source, 'ui_text') + '\n' if name != 'ui_text' and 'ui_text ' in body else '') + body
 
 
 class VerifiedRelease(unittest.TestCase):

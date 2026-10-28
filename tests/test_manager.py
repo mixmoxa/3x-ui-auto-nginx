@@ -1,4 +1,6 @@
 """Actual entrypoint/TTY acceptance and private Backup management contracts."""
+import itertools
+import json
 import os
 from pathlib import Path
 import pty
@@ -48,7 +50,7 @@ class Manager(unittest.TestCase):
         self.assertEqual(result.stdout,'')
 
     def test_real_entrypoint_tty_exit_back_invalid_and_no_tty(self):
-        for answers in (b'0\n',b'9\n3\n0\n0\n'):
+        for answers in (b'1\n0\n',b'1\n9\n3\n0\n0\n'):
             code,text=tty_run(ROOT/'x-ui-latest.sh',answers)
             self.assertEqual(code,0,text)
             self.assertIn('1. Installation',text)
@@ -58,6 +60,140 @@ class Manager(unittest.TestCase):
         result=subprocess.run(['bash',str(ROOT/'x-ui-latest.sh')],input='1\n',text=True,capture_output=True)
         self.assertNotEqual(result.returncode,0)
         self.assertIn('TTY',result.stdout+result.stderr)
+
+    def test_language_exit_invalid_and_eof_need_no_external_commands(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);binary=root/'bin';binary.mkdir()
+            binary.joinpath('bash').symlink_to('/bin/bash')
+            script=root/'entry.sh'
+            script.write_text('source "'+str(ROOT/'x-ui-latest.sh')+'"\n'+'''
+recover_domain_operation() { printf called > "$MARKER"; return 99; }
+acquire_stack_lock() { printf called > "$MARKER"; return 99; }
+run_installation() { printf called > "$MARKER"; return 99; }
+entrypoint
+''')
+            for answers,invalid in ((b'3\n',False),(b'wrong\n3\n',True),(b'\x04',False)):
+                with self.subTest(answers=answers):
+                    code,text=tty_run(script,answers,env={'PATH':str(binary),'MARKER':str(root/'mutated')})
+                    self.assertEqual(code,0,text)
+                    self.assertIn('Select language / Выберите язык',text)
+                    if invalid:self.assertIn('Invalid selection / Неверный выбор',text)
+                    self.assertNotIn('1. Installation',text);self.assertNotIn('1. Установка',text)
+                    self.assertFalse((root/'mutated').exists())
+            code,text=tty_run(ROOT/'x-ui-latest.sh',b'3\n',env={'PATH':str(binary),'XUI_AUTO_REF':'invalid/ref'})
+            self.assertEqual(code,0,text);self.assertNotIn('Invalid XUI_AUTO_REF',text)
+
+    def test_bilingual_main_backup_navigation_and_single_language_choice(self):
+        for language,menu,backups in (('1','1. Installation','BACKUPS'),('2','1. Установка','РЕЗЕРВНЫЕ КОПИИ')):
+            code,text=tty_run(ROOT/'x-ui-latest.sh',(language+'\n9\n3\n0\n0\n').encode())
+            self.assertEqual(code,0,text);self.assertIn(menu,text);self.assertIn(backups,text)
+            self.assertEqual(text.count('Select language / Выберите язык'),1)
+            for item in (('2. Change Domains','1. Create backup','2. List backups','3. Restore backup','0. Back','0. Exit') if language=='1' else
+                         ('2. Смена доменов','1. Создать резервную копию','2. Список резервных копий','3. Восстановить резервную копию','0. Назад','0. Выход')):
+                self.assertIn(item,text)
+        code,text=tty_run(ROOT/'x-ui-latest.sh',b'2\n1\n')
+        self.assertEqual(code,1,text)
+        self.assertIn('Для этой операции нужны права root',text)
+        self.assertIn('FAILED (exit 1)',text)
+
+    def test_cli_arguments_stay_english_and_bypass_language_selection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            script=Path(temporary)/'entry.sh'
+            script.write_text('source "'+str(ROOT/'x-ui-latest.sh')+'"\n'+'''
+run_installation() { printf 'CLI:%s|' "$UI_LANG"; printf '<%s>' "$@"; return 37; }
+entrypoint "$@"
+''')
+            for args in (('-install','y'),('-version','v3.11.0'),('-uninstall','y'),('-unknown','value')):
+                result=subprocess.run(['bash',str(script),*args],input='2\n',capture_output=True,text=True,
+                                      env={**os.environ,'UI_LANG':'ru'})
+                self.assertEqual(result.returncode,37,result.stderr)
+                self.assertEqual(result.stdout,'CLI:en|'+''.join('<'+arg+'>' for arg in args))
+                self.assertNotIn('Select language',result.stdout)
+
+    def test_russian_install_questions_defaults_and_eof(self):
+        library='source "'+str(ROOT/'x-ui-latest.sh')+'"\nUI_LANG=ru\n'
+        with tempfile.TemporaryDirectory() as temporary:
+            script=Path(temporary)/'questions.sh'
+            script.write_text(library+'''
+validate_domains && select_security && select_vision && select_amneziawg && select_adguard && select_client || exit $?
+printf 'FLAGS:%s:%s:%s:%s:%s:%s:%s:%s\n' "$INSTALL_SECURITY" "$INSTALL_VISION" "$INSTALL_AWG" "$INSTALL_AGH" "$CREATE_CLIENT" "$domain" "$reality_domain" "$vision_domain"
+''')
+            code,text=tty_run(script,b'Panel.Example\nReality.Example\n\ny\nVision.Example\ny\ny\n\n')
+            self.assertEqual(code,0,text)
+            for prompt in ('домен панели 3X-UI','домен VLESS REALITY','Усилить безопасность VPS? [Y/n]',
+                           'дополнительное подключение VLESS TCP/TLS','домен VLESS TLS Vision',
+                           'дополнительное подключение AmneziaWG? [y/N]','Установить и настроить AdGuard Home? [y/N]',
+                           'Создать клиента в 3X-UI'):
+                self.assertIn(prompt,text)
+            self.assertIn('FLAGS:y:y:y:y:y:panel.example:reality.example:vision.example',text)
+            for name,variable,default in (('select_security','INSTALL_SECURITY','y'),('select_vision','INSTALL_VISION','n'),
+                    ('select_amneziawg','INSTALL_AWG','n'),('select_adguard','INSTALL_AGH','n'),('select_client','CREATE_CLIENT','y')):
+                for answers,expected in ((b'\n',default),(b'bad\nn\n','n'),(b'\x04','n')):
+                    with self.subTest(question=name,answers=answers):
+                        script.write_text(library+name+'; printf "RESULT:%s\\n" "$'+variable+'"\n')
+                        code,text=tty_run(script,answers)
+                        self.assertEqual(code,0,text);self.assertIn('RESULT:'+expected,text)
+                        if answers.startswith(b'bad'):self.assertIn('Введите y или n.',text)
+
+    def test_russian_destructive_confirmation_still_requires_exact_yes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);script=root/'confirmation.sh';marker=root/'mutated'
+            script.write_text('source "'+str(ROOT/'x-ui-latest.sh')+'"\nUI_LANG=ru\n'+'''
+detect_existing_installation() { EXISTING_INSTALL_CATEGORIES=('3X-UI'); }
+confirm_destructive_reinstall || exit $?
+printf permitted > "$MARKER"
+''')
+            for answer in (b'yes\n','ДА\n'.encode(),b'n\n',b'\x04',b'YES\n'):
+                with self.subTest(answer=answer):
+                    marker.unlink(missing_ok=True)
+                    code,text=tty_run(script,answer,env={'MARKER':str(marker)})
+                    self.assertEqual(code,0 if answer==b'YES\n' else 1,text)
+                    self.assertEqual(marker.exists(),answer==b'YES\n')
+                    for warning in ('полная переустановка, а не обновление','Обновление ОС нельзя откатить','введите YES'):
+                        self.assertIn(warning,text)
+
+    def test_russian_summary_keeps_credentials_urls_protocols_and_states(self):
+        payload={'url':'https://panel.example/subscription/fixture%25id','protocols':['REALITY','XHTTP','Hysteria2','Vision']}
+        script='source "'+str(ROOT/'x-ui-latest.sh')+'"\n'+'''
+UI_LANG=ru
+timedatectl() { printf UTC; }; ufw() { printf 'Status: active'; }
+domain=panel.example; reality_domain=reality.example; panel_path=fixture; config_username=fixture-user
+config_password=$FIXTURE_PASSWORD; vision_domain=vision.example; VISION_RESULT=configured
+AWG_RESULT=configured; CLIENT_RESULT=configured; AGH_RESULT=installed; AGH_PATH=adg-fixture; AGH_PASSWORD=agh-fixture
+BASE_OS_RESULT=configured; APT_RESULT=configured; DOT_RESULT=configured; F2BAN_RESULT=configured
+show_results
+[[ -z "$CLIENT_OUTPUT" && -z "$AGH_PASSWORD" && "$config_password" == "$FIXTURE_PASSWORD" ]]
+'''
+        password='fixture%25\\n$(literal)'
+        result=subprocess.run(['bash','-c',script],capture_output=True,text=True,
+                              env={**os.environ,'CLIENT_OUTPUT':json.dumps(payload),'FIXTURE_PASSWORD':password})
+        self.assertEqual(result.returncode,0,result.stderr)
+        for phrase in ('Результат установки','Часовой пояс','Работает','Готов','Логин: fixture-user',
+                       'Подписка:','Сохраните эти учётные данные','configured','перезагрузка 04:38'):
+            self.assertIn(phrase,result.stdout)
+        for value in (password,payload['url'],'https://panel.example/fixture/',
+                      'https://panel.example/fixture/diag','https://panel.example/adg-fixture/',
+                      'https://panel.example/dns-query',' / '.join(payload['protocols'])):
+            self.assertTrue(value in result.stdout,'A displayed fixture payload changed')
+        self.assertEqual(result.stdout.count(password),1)
+
+    def test_language_precedes_required_recovery_and_preserves_failure_code(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            script=Path(temporary)/'entry.sh'
+            script.write_text('source "'+str(ROOT/'x-ui-latest.sh')+'"\n'+'''
+recover_domain_operation() { printf 'RECOVERY_REQUIRED\n'; return "${RECOVERY_CODE:-0}"; }
+run_installation() { return 42; }
+entrypoint
+''')
+            code,text=tty_run(script,b'2\n1\n')
+            self.assertEqual(code,42,text);self.assertIn('FAILED (exit 42)',text)
+            self.assertIn('проверьте указанное состояние восстановления',text)
+            self.assertLess(text.index('Выберите язык'),text.index('RECOVERY_REQUIRED'))
+            self.assertLess(text.index('RECOVERY_REQUIRED'),text.index('1. Установка'))
+            code,text=tty_run(script,b'2\n1\n',env={'RECOVERY_CODE':'75'})
+            self.assertEqual(code,75,text);self.assertNotIn('1. Установка',text)
+            code,text=tty_run(script,b'3\n',env={'RECOVERY_CODE':'75'})
+            self.assertEqual(code,0,text);self.assertNotIn('RECOVERY_REQUIRED',text)
 
     def test_menu_failure_status_and_mutable_source_mismatch(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -74,15 +210,16 @@ class Manager(unittest.TestCase):
                 self.assertEqual(result.returncode,0 if match else 1,result.stderr)
 
     def test_change_domains_menu_confirmation_and_domain_pairs(self):
-        for choice,panel,reality,answer in (('1','next.example','cover.example','YES'),
+        cases=(('1','next.example','cover.example','YES'),
                                           ('2','deploy.example','next-cover.example','YES'),
                                           ('3','next.example','next-cover.example','YES'),
-                                          ('1','next.example','cover.example','yes')):
-            with self.subTest(choice=choice,answer=answer),tempfile.TemporaryDirectory() as temporary:
+                                          ('1','next.example','cover.example','yes'))
+        for language,(choice,panel,reality,answer) in itertools.product(('en','ru'),cases):
+            with self.subTest(language=language,choice=choice,answer=answer),tempfile.TemporaryDirectory() as temporary:
                 root=Path(temporary);(root/'db').touch();stage=root/'stage';stage.mkdir()
                 source=(ROOT/'x-ui-latest.sh').read_text()
                 body=re.search(r'^change_domains_action\(\) \(.*?^\)',source,re.M|re.S).group().replace('/etc/x-ui/x-ui.db',str(root/'db'))
-                library='source "'+str(ROOT/'x-ui-latest.sh')+'"\n'+body+'\n'
+                library='source "'+str(ROOT/'x-ui-latest.sh')+'"\nUI_LANG='+language+'\n'+body+'\n'
                 library+='''acquire_stack_lock() { :; }; recover_domain_operation() { :; }; check_os() { :; }
 prepare_domains_tools() { DOMAINS_STAGE="$STAGE"; }
 domains_tool() {
@@ -94,16 +231,66 @@ change_domains_action
                 script=root/'menu.sh';script.write_text(library)
                 answers=choice+'\n'+(panel+'\n' if choice in ('1','3') else '')+(reality+'\n' if choice in ('2','3') else '')+answer+'\n'
                 code,text=tty_run(script,answers.encode(),env={'STAGE':str(stage)})
-                self.assertEqual(code,0,text);self.assertIn('Current Panel:   deploy.example',text)
-                self.assertIn('Current REALITY: cover.example',text);self.assertIn('client configurations',text)
+                self.assertEqual(code,0,text)
+                self.assertIn('Current Panel:   deploy.example' if language=='en' else 'Текущий домен панели:  deploy.example',text)
+                self.assertIn('Current REALITY: cover.example' if language=='en' else 'Текущий домен REALITY: cover.example',text)
+                self.assertIn('client configurations' if language=='en' else 'Клиентские конфигурации',text)
+                self.assertIn('YES',text)
                 if answer=='YES':self.assertIn('SWITCH|'+panel+'|'+reality+'|deploy.example|cover.example',text)
-                else:self.assertNotIn('SWITCH|',text);self.assertIn('Cancelled.',text)
+                else:self.assertNotIn('SWITCH|',text);self.assertIn('Cancelled.' if language=='en' else 'Отменено.',text)
 
 
 class ManagerBackup(unittest.TestCase):
     def setUp(self):
         from test_personal_backup import PersonalBackup
         self.f=PersonalBackup('runTest');self.f.setUp();self.addCleanup(self.f.doCleanups)
+
+    def test_russian_backup_restore_confirmation_status_and_partial_messages(self):
+        from test_personal_backup import relocated
+        root=self.f.root;helper=self.f.path('/usr/local/bin/x-ui-backup')
+        helper.parent.mkdir(parents=True,exist_ok=True)
+        helper.write_text('''#!/bin/bash
+case "$1" in
+    inspect) printf '{"format_version":3}\\n' ;;
+    backup) printf '{"status":"success","archive":"/var/backups/x-ui/fixture.tar.gz"}\\n' ;;
+    restore) printf restored > "$FIXTURE_ROOT/restored"; exit "${RESTORE_EXIT:-0}" ;;
+esac
+''');helper.chmod(0o755)
+        library=relocated((ROOT/'x-ui-latest.sh').read_text(),root)
+        library=library.replace(str(root)+'/proc/','/proc/').replace('/run/3x-ui-auto-nginx',str(root)+'/run/3x-ui-auto-nginx')
+        script=root/'ru-menu.sh'
+        script.write_text(library[:library.rindex('if [[ ${BASH_SOURCE[0]}')]+'''
+prepare_backup_helper() { :; }
+prepare_restore_security() { :; }
+if [[ ${PARTIAL_SECURITY:-0} == 1 ]]; then
+    post_restore_security() { printf 'Security: PARTIAL\\nOverall: PARTIAL\\n'; return 1; }
+fi
+entrypoint
+''')
+        code,text=tty_run(script,b'2\n3\n1\n0\n',env=self.f.env)
+        self.assertEqual(code,0,text);self.assertIn('Создан архив: ',text);self.assertIn('SUCCESS',text)
+        original=self.f.path('/etc/x-ui/x-ui.db').read_bytes()
+        for answers,flags,expected,restored in (
+                ('y\ny\nyes\n',{},0,False),('n\nn\nДА\n',{},0,False),
+                ('n\nn\n\x04',{},0,False),('n\nn\nYES\n',{},0,True),
+                ('n\nn\nYES\n',{'RESTORE_EXIT':'42'},42,True),
+                ('y\ny\nYES\n',{'PARTIAL_SECURITY':'1'},1,True)):
+            with self.subTest(answers=answers,flags=flags):
+                (root/'restored').unlink(missing_ok=True)
+                code,text=tty_run(script,('2\n3\n3\n/archive.tar.gz\n'+answers+'0\n').encode(),env={**self.f.env,**flags})
+                self.assertEqual(code,expected,text);self.assertEqual((root/'restored').exists(),restored)
+                for prompt in ('Номер архива или абсолютный путь','Автоматическая перезагрузка разрешена в 04:38',
+                               'Fail2ban для SSH? [y/N]','Включить UFW с защитой доступа по SSH','введите YES'):
+                    self.assertIn(prompt,text)
+                self.assertIn('{"format_version":3}',text)
+                self.assertEqual(self.f.path('/etc/x-ui/x-ui.db').read_bytes(),original)
+                if not restored and '\x04' not in answers:self.assertIn('Отменено.',text)
+                if flags.get('RESTORE_EXIT'):
+                    self.assertIn('Restore: FAILED (exit 42)',text);self.assertNotIn('Restore: SUCCESS',text)
+                elif restored:
+                    self.assertIn('Restore: SUCCESS',text)
+                    self.assertIn('Overall: PARTIAL' if expected else 'Overall: SUCCESS',text)
+                    if expected:self.assertIn('данные сохранены, но настройка Security не завершена',text)
 
     def test_post_restore_security_trust_cleanup_status_lock_and_partial_result(self):
         from test_personal_backup import relocated
@@ -219,7 +406,7 @@ manager_menu
                                ('unverified',{'FAIL_HEALTH_SERVICE':'mtr-backend'})):
             with self.subTest(scenario=scenario):
                 (self.f.root/'commands').write_text('');(self.f.root/'fault-used').unlink(missing_ok=True)
-                code,text=tty_run(script,b'3\n3\n'+str(archive).encode()+b'\nn\nn\nYES\n1\n',timeout=90,env={**self.f.env,**flags})
+                code,text=tty_run(script,b'1\n3\n3\n'+str(archive).encode()+b'\nn\nn\nYES\n1\n',timeout=90,env={**self.f.env,**flags})
                 self.assertNotEqual(code,0,text)
                 self.assertIn('Restore: FAILED (exit ',text);self.assertNotIn('SUCCESS',text)
                 self.assertEqual(text.count('1. Installation'),1)

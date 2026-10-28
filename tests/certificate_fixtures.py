@@ -15,7 +15,8 @@ LEGACY = ('@monthly certbot renew --non-interactive --pre-hook "systemctl stop n
 def function(name, source=INSTALLER):
     found = re.findall(r'^' + re.escape(name) + r'\(\)\s*\{.*?^\}', source, re.M | re.S)
     assert len(found) == 1, name
-    return found[0]
+    body = found[0]
+    return (function('ui_text', source) + '\n' if name != 'ui_text' and 'ui_text ' in body else '') + body
 
 
 def relocate(source, root):
