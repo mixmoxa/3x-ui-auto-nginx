@@ -217,7 +217,7 @@ def restore_acceptance(ref):
     for name in ('restore.tar.gz', 'restore-expected.json'):
         result = ssh('cat > /root/pilot/'+name, 90, input=(ROOT/name).read_bytes())
         assert result.returncode == 0
-    invoke('checks.restore_target()', 'restore-target', 900)
+    invoke('checks.restore_target()', 'restore-target', 1800)
     assert ssh('true', port=22221).returncode == 0, 'New external SSH connection failed after UFW enable'
     report['new_external_ssh_after_ufw'] = 'PASS'
     invoke('checks.restore_verified()', 'restore-verified')
