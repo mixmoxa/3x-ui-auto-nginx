@@ -1157,16 +1157,16 @@ _panel_initial_config() {
 verified_panel_release() {
     cat <<'VERIFIED_RELEASE_JSON'
 {
-  "version": "v3.10.2",
-  "xray": "26.10.10",
+  "version": "v3.11.0",
+  "xray": "26.10.21",
   "archives": {
-    "386": "86279800adbc8cde68ff801ec6e486b974334d17c9b25347fee5aac2ec696464",
-    "amd64": "bfda7921984e7a72555c38d4e861c7a8b67b3686b658608937de99682f1452d0",
-    "arm64": "a867c65ce52ad49f6504dd4c9c395337dc92ba57ae478da4f1b7ddb624014ed5",
-    "armv5": "7c338d59e957410992a03d22669c31d86c0b176998ae176413d60013af358aa4",
-    "armv6": "fa842ac4845e51cf5c9cb8800cd0cd1b0ab091daa06c537866c7bb7eb3335206",
-    "armv7": "26a3b94597b55d7465be55e5ce72f96967444998096cb5dacdb53f36a96482f7",
-    "s390x": "6dc2c3af2c62e31025c78e53efeaba786d9e50966cd93527a285773ebbcc4e83"
+    "386": "0d18c6acb1cd2527502876a7b28a52bb18c39d4b66c9081b5fc3f2f07ff16ba4",
+    "amd64": "0ddfa4702f595442e2962acd81addc768fdacaa4ff2672c971a0463dae744916",
+    "arm64": "f50b4c30fd919d018f2f4c3d8db53a4ca027503d581328727770afb116a79d90",
+    "armv5": "8dea7ab604dab23c2f5869ab7d6f771eac04154900aefaeb7035a79a8944ba04",
+    "armv6": "76bfa7451ddb26c183b1adbab504f7cd5e7a5e8921f155fbbf2293d20fe4a0b6",
+    "armv7": "ff0d68d633814a062ad123fbcceec9bbd921a2d816afd286831ecf144938c546",
+    "s390x": "9d3e3b70d65b4c96a1d8a4837330470552c37ab83e90fd9da4613557f8e583f5"
   },
   "integration_architectures": [
     "amd64"
@@ -2218,9 +2218,9 @@ prepare_awg_reinstall() {
 preflight_amneziawg() {
     AWG_REINSTALL=n
     [[ "${INSTALL_AWG:-n}" == y ]] || return 0
-    [[ "${PANEL_TAG:-}" == v3.9.0 || "${PANEL_TAG:-}" == v3.10.0 ||
+    [[ "${PANEL_TAG:-}" == v3.9.0 || "${PANEL_TAG:-}" == v3.10.0 || "${PANEL_TAG:-}" == v3.10.2 ||
        ( -n "${PANEL_TAG:-}" && "$PANEL_TAG" == "$(verified_panel_release | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')" ) ]] || {
-        msg_err 'AmneziaWG 3.1 requires the verified baseline or historical 3X-UI v3.9.0/v3.10.0.'; return 1;
+        msg_err 'AmneziaWG 3.1 requires the verified baseline or historical 3X-UI v3.9.0/v3.10.0/v3.10.2.'; return 1;
     }
     local port_result=0
     awg_port_available || port_result=$?
@@ -2706,9 +2706,9 @@ preflight_integrated_features() {
         }
     fi
     if [[ "${INSTALL_VISION:-n}" == y || "${CREATE_CLIENT:-n}" == y ]]; then
-        [[ "$PANEL_TAG" == v3.9.0 || "$PANEL_TAG" == v3.10.0 ||
+        [[ "$PANEL_TAG" == v3.9.0 || "$PANEL_TAG" == v3.10.0 || "$PANEL_TAG" == v3.10.2 ||
            ( -n "$PANEL_TAG" && "$PANEL_TAG" == "$(verified_panel_release | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')" ) ]] || {
-            msg_err 'Vision and initial client require the verified baseline or historical 3X-UI v3.9.0/v3.10.0; select N with other versions.'; return 1;
+            msg_err 'Vision and initial client require the verified baseline or historical 3X-UI v3.9.0/v3.10.0/v3.10.2; select N with other versions.'; return 1;
         }
         # Reuse the existing authenticated local HTTPS/CSRF implementation.
         AWG_HELPER="$PANEL_STAGE/managed-amneziawg.py"

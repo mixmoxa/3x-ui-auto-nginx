@@ -113,7 +113,7 @@ cp() { command cp "$@"; }
                 else:
                     self.assertEqual(unit,original)
         # Only explicitly tested versions pass optional component preflights.
-        for tag,allowed in (('v3.9.0',True),('v3.10.0',True),('v3.11.0',False)):
+        for tag,allowed in (('v3.9.0',True),('v3.10.0',True),('v3.10.2',True),('v9.9.9',False)):
             for name in ('preflight_amneziawg','preflight_integrated_features'):
                 stubs='msg_err() { :; }; awg_port_available() { :; }; curl() { :; }; python3() { :; }; preflight_vision_artifacts() { :; };\n'
                 result=subprocess.run(['bash','-eu','-c',stubs+function(source,name)+'\n'+name],env={**os.environ,'PANEL_TAG':tag,'INSTALL_AWG':'y','CREATE_CLIENT':'y','INSTALL_SECURITY':'n','INSTALL_VISION':'n','PANEL_STAGE':'/fixture','GITHUB_RAW':'https://example.invalid'},capture_output=True,text=True)
@@ -122,7 +122,7 @@ cp() { command cp "$@"; }
     def test_optional_features_follow_verified_baseline_not_future_versions(self):
         source=(ROOT/'x-ui-latest.sh').read_text()
         for verified in ('v3.10.2','v3.11.0'):
-            for tag in ('v3.9.0','v3.10.0',verified,'v9.9.9'):
+            for tag in ('v3.9.0','v3.10.0','v3.10.2',verified,'v3.10.1','v3.11.1','v9.9.9'):
                 for name in ('preflight_amneziawg','preflight_integrated_features'):
                     with self.subTest(verified=verified,tag=tag,feature=name), tempfile.TemporaryDirectory() as directory:
                         root=Path(directory)
@@ -135,7 +135,7 @@ curl() { echo DOWNLOAD >> "$CALLS"; printf 'pass\n' > "${@: -1}"; }
                                  'INSTALL_AWG':'y','CREATE_CLIENT':'y','INSTALL_SECURITY':'n','INSTALL_VISION':'n',
                                  'PANEL_STAGE':str(root),'CALLS':str(root/'calls'),'GITHUB_RAW':'https://example.invalid'},
                             capture_output=True,text=True)
-                        allowed=tag in ('v3.9.0','v3.10.0',verified)
+                        allowed=tag in ('v3.9.0','v3.10.0','v3.10.2',verified)
                         self.assertEqual(result.returncode==0,allowed,result.stderr)
                         self.assertEqual((root/'calls').exists(),allowed)
 
