@@ -11,7 +11,7 @@ import threading
 import time
 import traceback
 
-from diagnostics import VISION_STAGES
+from diagnostics import VISION_STAGES, domain_failure
 
 ROOT = Path('/pilot')
 REPO = Path('/repo')
@@ -39,6 +39,7 @@ def ssh(command, timeout=30, tty=False, input=None, port=22220):
 def failure_location(output):
     # Source locations identify the failed assertion without exposing the
     # exception text, API response, command arguments or raw installer log.
+    output = re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]', b'', output)
     frames = re.findall(rb'File "/root/pilot/(checks|install|client|session)\.py", line ([0-9]+)', output)
     if frames:
         name, line = frames[-1]
@@ -104,7 +105,12 @@ def invoke(expression, result_name, timeout=180, tty=False):
             if 'transport_error' in probe: assert type(probe['transport_error']) is bool
         report[phase+'_dns_probes'] = probes
     if result.returncode:
-        failure_location(result.stderr)
+        failure_location(result.stdout+result.stderr)
+        if phase == 'change-domains':
+            private = ssh('cat /root/pilot/domains-[123].private.log', 15)
+            if private.returncode == 0:
+                failure = domain_failure(private.stdout.decode(errors='replace'), (REPO/'assets/domains/managed.py').read_text())
+                if failure is not None: report[phase+'_failure'] = failure
         raise AssertionError('Guest phase failed; private output is not published')
     data = ssh('cat /root/pilot/'+result_name+'.json', 15)
     if data.returncode:
@@ -280,6 +286,8 @@ if __name__ == '__main__':
             invoke('checks.installed(cold=True)', 'cold')
             phase = 'cold-transport-consumers'
             invoke('checks.transports()', 'cold-transports', 300)
+            phase = 'change-domains'
+            invoke('checks.change_domains()', 'change-domains', 1200, tty=True)
             poweroff()
             phase = 'mandatory-dependency-negative'
             fresh_disk()

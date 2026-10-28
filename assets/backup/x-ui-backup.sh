@@ -2157,6 +2157,11 @@ main() {
     require_root
     case ${1:-} in backup|restore|update-hooks|lock-check) acquire_stack_lock || return $? ;; esac
     [[ ${1:-} != lock-check ]] || return 0
+    case ${1:-} in backup|restore|update-hooks)
+        [[ ! -e /var/lib/3x-ui-auto-nginx/change-domains/journal.json && ! -L /var/lib/3x-ui-auto-nginx/change-domains/journal.json &&
+           ! -L /var/lib/3x-ui-auto-nginx/change-domains && ! -L /var/lib/3x-ui-auto-nginx ]] ||
+            die 'Unfinished Change Domains operation: start the manager through SSH for verified recovery before Backup/Restore.' ;;
+    esac
     if [[ ${1:-} == backup && ${2:-} == --json && $# == 2 ]]; then
         BACKUP_JSON=1
         exec 3>&1 1>&2

@@ -57,13 +57,13 @@ def render(target, source=SOURCE, **variables):
     )
 
 
-def seed(group_id=False, **variables):
+def seed(group_id=False, source=SOURCE, **variables):
     """Execute generated inbound/Host INSERTs against both supported Host schemas."""
-    setup = re.search(r"    local gid_col=.*?^    fi", function("configure_xui_db"), re.M | re.S).group()
+    setup = re.search(r"    local gid_col=.*?^    fi", function("configure_xui_db", source), re.M | re.S).group()
     script = (
         'sqlite3() { echo "$HOST_TEST_SCHEMA"; }\n' + function("gen_group_id") +
         '\nemit() {\n' + setup + '\nshor=(a b c d e f g h)\ncat <<EOF\n' +
-        template("sqlite3 $XUIDB") + 'EOF\n}\nemit\n'
+        template("sqlite3 $XUIDB", source) + 'EOF\n}\nemit\n'
     )
     sql = subprocess.check_output(["bash", "-u", "-c", script], text=True, env={
         **os.environ, **FIXTURE, **variables, "XUIDB": "/fixture/x-ui.db",
@@ -98,8 +98,8 @@ SHARED = "cat > /etc/nginx/snippets/includes.conf"
 MAIN = 'cat > "/etc/nginx/sites-available/${domain}"'
 
 
-def function(name):
-    matches = re.findall(r"^" + re.escape(name) + r"\(\)\s*\{.*?^\}", SOURCE, re.M | re.S)
+def function(name, source=SOURCE):
+    matches = re.findall(r"^" + re.escape(name) + r"\(\)\s*\{.*?^\}", source, re.M | re.S)
     if len(matches) != 1:
         raise AssertionError(f"Expected one {name} function")
     return matches[0]

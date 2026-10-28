@@ -3168,6 +3168,7 @@ PYSECURITY
 
 backup_action() (
     acquire_stack_lock || exit $?
+    recover_domain_operation || exit $?
     local action=$1 choice archive answer apt=n ufw=n RESTORE_SECURITY_DIR=''
     trap '[[ -z "$RESTORE_SECURITY_DIR" ]] || rm -rf -- "$RESTORE_SECURITY_DIR"' EXIT
     if [[ "$action" == list ]]; then backup_list; exit $?; fi
@@ -3217,6 +3218,7 @@ backup_action() (
 
 run_installation() (
     acquire_stack_lock || exit $?
+    recover_domain_operation || exit $?
     check_os
     check_cpu
     parse_installation_args "$@" || exit $?
@@ -3236,17 +3238,118 @@ run_installation() (
     main
 )
 
+prepare_domains_tools() {
+    [[ -n ${PROJECT_SOURCE_SHA:-} && $PROJECT_SOURCE_SHA == "${PROJECT_REF:-}" ]] || pin_project_source || return 1
+    DOMAINS_STAGE=$(mktemp -d /run/xui-domains.XXXXXXXX) || return 1
+    chmod 0700 "$DOMAINS_STAGE" || return 1
+    curl -q -fsSL --connect-timeout 10 --max-time 30 "$GITHUB_RAW/assets/domains/managed.py" -o "$DOMAINS_STAGE/managed.py" &&
+    curl -q -fsSL --connect-timeout 10 --max-time 30 "$GITHUB_RAW/assets/backup/x-ui-backup.sh" -o "$DOMAINS_STAGE/x-ui-backup.sh" &&
+    curl -q -fsSL --connect-timeout 10 --max-time 30 "$GITHUB_RAW/assets/adguard/managed.sh" -o "$DOMAINS_STAGE/adguard.sh" || return 1
+    /usr/bin/python3 -I -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$DOMAINS_STAGE/managed.py" &&
+        bash -n "$DOMAINS_STAGE/x-ui-backup.sh" && bash -n "$DOMAINS_STAGE/adguard.sh" || return 1
+    chmod 0755 "$DOMAINS_STAGE/x-ui-backup.sh" || return 1
+    backup_helper_compatible "$DOMAINS_STAGE/x-ui-backup.sh" || return 1
+    # A temporary current Backup is used for legacy installs; their installed
+    # utility is not replaced before the mandatory full archive is complete.
+    {
+        printf '#!/usr/bin/env bash\nset -Eeuo pipefail\nexport PATH=/usr/sbin:/usr/bin:/sbin:/bin\nXUIDB=/etc/x-ui/x-ui.db\n'
+        printf 'LEGACY_CERTBOT_CRON=%q\n' "$LEGACY_CERTBOT_CRON"
+        cat "$DOMAINS_STAGE/adguard.sh"
+        local name
+        for name in check_certificate_identity check_webroot_lineage check_no_legacy_certbot_cron check_acme_http \
+                    check_certificate_renewal render_certificate_hook check_xray_runtime check_installation check_awg_reinstall_owner msg_err; do
+            declare -f "$name" || return 1
+        done
+        cat <<'DOMAIN_CHECKS'
+case "$1" in
+    lineage) check_certificate_identity "$2" && check_webroot_lineage "$2" ;;
+    render-hook) render_certificate_hook "$2" "$3" ;;
+    hook)
+        matched=n
+        for variant in current legacy hardened; do
+            if cmp -s /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx <(render_certificate_hook "$2" "$3" "$variant"); then matched=y; break; fi
+        done
+        [[ "$matched" == y ]] ;;
+    health) domain=$2 reality_domain=$3; check_installation ;;
+    adguard) agh_health ;;
+    amneziawg) check_awg_reinstall_owner ;;
+    *) exit 2 ;;
+esac
+DOMAIN_CHECKS
+    } > "$DOMAINS_STAGE/checks.sh" || return 1
+    chmod 0600 "$DOMAINS_STAGE/managed.py" "$DOMAINS_STAGE/checks.sh" "$DOMAINS_STAGE/adguard.sh" || return 1
+    bash -n "$DOMAINS_STAGE/checks.sh"
+}
+
+domains_tool() {
+    /usr/bin/python3 -I "$DOMAINS_STAGE/managed.py" --checks "$DOMAINS_STAGE/checks.sh" \
+        --backup "$DOMAINS_STAGE/x-ui-backup.sh" --source "$PROJECT_SOURCE_SHA" "$@"
+}
+
+recover_domain_operation() (
+    if [[ ! -e /var/lib/3x-ui-auto-nginx/change-domains/journal.json &&
+          ! -L /var/lib/3x-ui-auto-nginx/change-domains/journal.json &&
+          ! -L /var/lib/3x-ui-auto-nginx/change-domains && ! -L /var/lib/3x-ui-auto-nginx ]]; then return 0; fi
+    acquire_stack_lock || exit $?
+    local DOMAINS_STAGE=''
+    trap '[[ -z "$DOMAINS_STAGE" ]] || rm -rf -- "$DOMAINS_STAGE"' EXIT
+    prepare_domains_tools || { msg_err 'ROLLBACK_UNVERIFIED: trusted domain recovery helper unavailable. Recovery data retained in /var/lib/3x-ui-auto-nginx/change-domains; no new operation started.'; exit 1; }
+    domains_tool recover
+)
+
+change_domains_action() (
+    acquire_stack_lock || exit $?
+    recover_domain_operation || exit $?
+    check_os
+    [[ -f /etc/x-ui/x-ui.db ]] || { msg_err 'No supported local installation found. Change Domains requires a working managed stack.'; exit 1; }
+    local DOMAINS_STAGE='' choice answer current_panel current_reality new_panel new_reality
+    local -a current=()
+    trap '[[ -z "$DOMAINS_STAGE" ]] || rm -rf -- "$DOMAINS_STAGE"' EXIT
+    prepare_domains_tools || { msg_err 'Cannot prepare trusted Change Domains helpers; installation was not changed.'; exit 1; }
+    domains_tool inspect > "$DOMAINS_STAGE/current.json" || exit $?
+    mapfile -t current < <(/usr/bin/python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1]))["domains"]; print(d["panel"]); print(d["reality"])' "$DOMAINS_STAGE/current.json")
+    (( ${#current[@]} == 2 )) || exit 1
+    current_panel=${current[0]} current_reality=${current[1]}
+    while true; do
+        printf '\nCHANGE DOMAINS\n\nCurrent Panel:   %s\nCurrent REALITY: %s\n\n1. Change Panel domain\n2. Change REALITY domain\n3. Change both domains\n0. Back\n\nSelect an option: ' "$current_panel" "$current_reality"
+        IFS= read -r choice || exit 0
+        new_panel=$current_panel new_reality=$current_reality
+        case "$choice" in
+            0) exit 0 ;;
+            1|2|3) ;;
+            *) printf 'Invalid selection.\n'; continue ;;
+        esac
+        if [[ "$choice" == 1 || "$choice" == 3 ]]; then
+            printf 'New Panel domain: '; IFS= read -r new_panel || exit 0
+            new_panel=${new_panel,,}
+        fi
+        if [[ "$choice" == 2 || "$choice" == 3 ]]; then
+            printf 'New REALITY domain: '; IFS= read -r new_reality || exit 0
+            new_reality=${new_reality,,}
+        fi
+        valid_hostname "$new_panel" && valid_hostname "$new_reality" || { msg_err 'Invalid hostname; installation was not changed.'; exit 1; }
+        printf '\nPanel:   %s -> %s\nREALITY: %s -> %s\n' "$current_panel" "$new_panel" "$current_reality" "$new_reality"
+        printf 'Point new A/AAAA records to this VPS and allow HTTP-01 on port 80.\nAffected client configurations and old subscription URLs may need updating.\nA full Backup v3 will be created before changes. Type YES to continue: '
+        IFS= read -r answer || exit 0
+        [[ "$answer" == YES ]] || { printf 'Cancelled.\n'; exit 0; }
+        domains_tool change "$new_panel" "$new_reality" "$current_panel" "$current_reality"
+        exit $?
+    done
+)
+
 manager_menu() {
     local choice status=0 reported=0
+    recover_domain_operation || return $?
     while true; do
         reported=0
         printf '\n'
         msg_inf '3X-UI AUTO NGINX'
-        printf '\n1. Installation\n3. Backups\n\n0. Exit\n\nSelect an option: '
+        printf '\n1. Installation\n2. Change Domains\n3. Backups\n\n0. Exit\n\nSelect an option: '
         IFS= read -r choice || return "$status"
         case "$choice" in
             0) return "$status" ;;
             1) run_installation; status=$? ;;
+            2) change_domains_action; status=$?; reported=1 ;;
             3)
                 printf '\nBACKUPS\n\n1. Create backup\n2. List backups\n3. Restore backup\n0. Back\n\nSelect an option: '
                 IFS= read -r choice || return "$status"

@@ -41,7 +41,7 @@
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-يبدأ الإصدار المستقر الحالي v2.1.7 التثبيت مباشرةً. بعد نشر v2.2.0، سيفتح الأمر أعلاه القائمة: **1 — Installation**، **3 — Backups**، **0 — Exit**. خصص TTY باستخدام `ssh -t` للقائمة؛ وبدون TTY استخدم خيارات التثبيت الصريحة. [القائمة وأوامر النسخ الاحتياطي](docs/MANAGER.md).
+يبدأ الإصدار المستقر الحالي v2.1.7 التثبيت مباشرةً. بعد نشر v2.2.0، سيفتح الأمر أعلاه القائمة: **1 — Installation**، **2 — Change Domains**، **3 — Backups**، **0 — Exit**. خصص TTY باستخدام `ssh -t` للقائمة؛ وبدون TTY استخدم خيارات التثبيت الصريحة. [القائمة وأوامر النسخ الاحتياطي](docs/MANAGER.md).
 
 <details>
 <summary><strong>تنزيل احتياطي — إذا تعذّر الوصول إلى GitHub Releases</strong></summary>
@@ -62,6 +62,8 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 > **3X-UI AUTO NGINX** مخصّص للتثبيت الأولي على خادم VPS نظيف أو لإعادة التثبيت بالكامل.
 >
 > إعادة تشغيل السكربت على خادم أُعِدّ مسبقًا **لا تُحدّث التثبيت الحالي** — بل تعيد تثبيت المكوّنات وتحذف قاعدة بيانات 3X-UI السابقة وإعدادات nginx.
+
+في قائمة v2.2.0، ينطبق هذا التحذير على **Installation**. أما **Change Domains** و**Backups** فهما عمليتان منفصلتان لا تعيدان تثبيت اللوحة.
 
 <details>
 <summary><strong>كيف أحدّث المكوّنات؟</strong></summary>
@@ -256,6 +258,16 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 تُقدَّم الاشتراكات العادية وJSON و**Mihomo / Clash** عبر nginx وHTTPS. يعيد `provider=1` الاشتراك الأصلي لمزوّدي البروكسي بدلًا من إعداد Clash كامل.
 
+
+<a id="change-domains"></a>
+
+## 🌐 تغيير النطاقات (v2.2.0)
+
+شغّل المدير بصلاحية root عبر جلسة SSH مع TTY، واختر **2 — Change Domains** ثم Panel أو REALITY أو كليهما. راجع القيم القديمة والجديدة واكتب **YES**. يجب أن تشير سجلات A/AAAA الجديدة إلى هذا VPS؛ ويتطلب Let's Encrypt منفذ TCP/80 متاحًا والتحقق HTTP-01 عبر webroot. يجب أن تختلف النطاقات عن بعضها وعن نطاق Vision؛ لا يُدعم تبادل دوري Panel وREALITY.
+
+تُنشأ نسخة Backup v3 كاملة قبل التغيير. تُحفظ سجلات العملاء وUUID وكلمات المرور وSubscription ID وسجل المرور والمفاتيح وإعدادات المستخدم. يحتفظ Vision بنطاقه وإعداداته. تتغير عناوين وشهادات الأدوار المختارة؛ حدّث روابط الاشتراك وإعدادات العملاء المتأثرة بعد ذلك. لا تُحذف الشهادات القديمة تلقائيًا. لا يُضمن استمرار الوصول إلى النطاق القديم بعد إيقاف DNS الخاص به.
+
+عند الخطأ، احتفظ بالنسخ في `/var/backups/x-ui` ومواد الاستعادة في `/var/lib/3x-ui-auto-nginx/change-domains`. شغّل المدير مجددًا عبر SSH لإجراء استعادة يمكن التحقق منها؛ وعند `ROLLBACK_UNVERIFIED` توقف واحتفظ بالمواد. يُدعم التخطيط القياسي مع SQLite محلية وmanifest متسق، أو تثبيت v2.1.7 بلا manifest يمكن التعرف عليه دون التباس. تُرفض الإعدادات المجهولة أو المتناقضة. [التفاصيل والحدود](docs/MANAGER.md#change-domains).
 
 ## 💾 النسخ الاحتياطي والاستعادة
 

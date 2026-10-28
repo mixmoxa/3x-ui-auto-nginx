@@ -41,7 +41,7 @@ Configure the DNS records for **two domains** to point to your VPS IP address: o
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-The current stable release v2.1.7 starts installation directly. After v2.2.0 is published, the command above will open the menu: **1 — Installation**, **3 — Backups**, **0 — Exit**. Allocate a TTY with `ssh -t` for the menu; without a TTY, use explicit installation flags. [Menu and Backup CLI](docs/MANAGER.md).
+The current stable release v2.1.7 starts installation directly. After v2.2.0 is published, the command above will open the menu: **1 — Installation**, **2 — Change Domains**, **3 — Backups**, **0 — Exit**. Allocate a TTY with `ssh -t` for the menu; without a TTY, use explicit installation flags. [Menu and Backup CLI](docs/MANAGER.md).
 
 <details>
 <summary><strong>Fallback download — if GitHub Releases is unavailable</strong></summary>
@@ -62,6 +62,8 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 > **3X-UI AUTO NGINX** is intended for initial installation on a clean VPS or a complete reinstall.
 >
 > Rerunning the script on an already configured server **does not update the existing installation** — it reinstalls the stack, removing the previous 3X-UI database and nginx configuration.
+
+In the v2.2.0 menu, this warning applies to **Installation**. **Change Domains** and **Backups** are separate operations that do not reinstall the panel.
 
 <details>
 <summary><strong>How do I update?</strong></summary>
@@ -256,6 +258,16 @@ Compatibility depends on your client app and its version.
 
 Standard subscriptions, JSON, and **Mihomo / Clash** are served via nginx and HTTPS. `provider=1` returns the original subscription for proxy providers rather than a complete Clash configuration.
 
+
+<a id="change-domains"></a>
+
+## 🌐 Change domains (v2.2.0)
+
+Run the manager as root in an SSH TTY, choose **2 — Change Domains**, then Panel, REALITY or both. Review the old/new values and type **YES**. New A/AAAA records must point to this VPS; Let's Encrypt needs reachable TCP/80 and HTTP-01 webroot validation. Domains must remain distinct from each other and Vision; exchanging Panel/REALITY roles is unsupported.
+
+A full Backup v3 is created before changes. Clients, UUIDs, passwords, Subscription IDs, traffic history, keys and user settings are preserved. Vision keeps its domain and configuration. Selected roles receive new addresses/certificates; update affected subscription URLs and client configurations afterward. Old certificates are retained. Availability of an old domain is not guaranteed after its DNS is removed.
+
+On failure, retain Backup in `/var/backups/x-ui` and recovery data in `/var/lib/3x-ui-auto-nginx/change-domains`. Run the manager again through SSH for verified recovery; stop and preserve the evidence on `ROLLBACK_UNVERIFIED`. Supported layouts use local SQLite with a consistent manifest, or an unambiguously recognized v2.1.7 installation without one. Unknown or contradictory configurations are refused. [Details and limits](docs/MANAGER.md#change-domains).
 
 ## 💾 Backup / Restore
 

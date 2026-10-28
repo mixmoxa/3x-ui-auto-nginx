@@ -248,7 +248,7 @@ def installed(cold=False):
     assert Path('/usr/local/bin/x-ui-backup').is_file();checks['backup_tool_present']=True
     return checks
 
-def transports(vision=True):
+def transports(vision=True, panel_domain='panel.example.test', positive_only=False):
     root=ROOT; results={}
     binary=next(Path("/usr/local/x-ui/bin").glob("xray-linux-amd64"))
     rule=["iptables","-t","nat","-A","OUTPUT","-d","8.8.8.9","-p","tcp","--dport","18081","-j","DNAT","--to-destination","10.0.2.2:18081"]
@@ -259,7 +259,7 @@ def transports(vision=True):
         with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:settings=dict(db.execute('SELECT key,value FROM settings'))
         with tempfile.TemporaryDirectory(prefix='installed-consumer-') as directory:
             directory=Path(directory)
-            panel=load('session').Panel('https://panel.example.test'+settings['webBasePath'],username,password,directory,['--resolve','panel.example.test:443:127.0.0.1'])
+            panel=load('session').Panel('https://'+panel_domain+settings['webBasePath'],username,password,directory,['--resolve',panel_domain+':443:127.0.0.1'])
             client=load('client');identity=json.loads(Path('/etc/x-ui/initial-client.json').read_text())['identity']
             public=panel.request('panel/api/setting/defaultSettings',{})['obj']
             configs=json.loads(client.fetch(panel,public['subJsonURI']+identity['subId']))
@@ -271,7 +271,7 @@ def transports(vision=True):
                 assert name not in selected;selected[name]=config
             assert set(selected)==({'REALITY','XHTTP','Hysteria2','Vision'} if vision else {'REALITY','XHTTP','Hysteria2'})
             for name,original in selected.items():
-                for variant in (('positive','credentials') if name=='REALITY' else ('positive','credentials','untrusted-ca','wrong-sni')):
+                for variant in (('positive',) if positive_only else ('positive','credentials') if name=='REALITY' else ('positive','credentials','untrusted-ca','wrong-sni')):
                     negative=variant!='positive'
                     config=json.loads(json.dumps(original));out=next(o for o in config['outbounds'] if o['protocol'] in ('vless','hysteria'));stream=out['streamSettings']
                     if name!='REALITY':
@@ -280,7 +280,7 @@ def transports(vision=True):
                         tls['allowInsecure']=False
                         destination=out['settings']
                         destination=destination['vnext'][0] if 'vnext' in destination else destination['servers'][0] if 'servers' in destination else destination
-                        expected_sni='vision.example.test' if name=='Vision' else 'panel.example.test'
+                        expected_sni='vision.example.test' if name=='Vision' else panel_domain
                         assert (tls.get('serverName') or destination['address'])==expected_sni
                         tls['serverName']=expected_sni
                         ca=Path('/usr/local/share/ca-certificates/pilot-pebble.crt')
@@ -485,3 +485,100 @@ def manager_backup():
     # The next consumer phase verifies that the resumed official Xray still transfers data.
     return {'actual_menu_backup_and_list':True,'service_states_preserved':True,'managed_state':True,
             'AGH_upstreams_and_nonempty_rewrite_preserved':True}
+
+
+def change_domains():
+    """Same installed VM: actual menu, Backup, Pebble, SQL and real consumers."""
+    import hashlib, pty, select
+    env={**os.environ,**json.loads((ROOT/'environment.json').read_text()),'TERM':'dumb','NO_COLOR':'1'}
+    protected=('/etc/nginx/sites-available/vision.conf','/etc/nginx/sites-available/vision-acme.conf',
+               '/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision',
+               '/etc/letsencrypt/live/vision.example.test/fullchain.pem','/etc/letsencrypt/live/vision.example.test/privkey.pem',
+               '/etc/ssh/sshd_config','/etc/ufw/user.rules','/etc/ufw/user6.rules','/etc/x-ui/initial-client.json',
+               '/usr/local/x-ui/x-ui','/usr/bin/x-ui')
+    def hashes():return {name:hashlib.sha256(Path(name).read_bytes()).hexdigest() for name in protected}
+    def database():
+        with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:
+            db.row_factory=sqlite3.Row
+            return {table:[dict(row) for row in db.execute('SELECT * FROM '+table+' ORDER BY rowid')]
+                    for table in ('users','clients','client_inbounds','inbounds','hosts','settings')}
+    original_hashes=hashes();agh=adguard_state();before=database();result={}
+    panel,reality='panel.example.test','reality.example.test'
+    for choice,new_panel,new_reality in (('1','panel-next.example.test',reality),
+                                         ('2','panel-next.example.test','reality-next.example.test'),
+                                         ('3','panel-final.example.test','reality-final.example.test')):
+        marker=json.loads(Path('/etc/x-ui/auto-nginx-managed.json').read_text());roles=marker['inbound_roles']
+        old_certificates={name:hashlib.sha256((Path('/etc/letsencrypt/live')/name/'fullchain.pem').read_bytes()).hexdigest() for name in (panel,reality)}
+        original=set(Path('/var/backups/x-ui').glob('*.tar.gz'))
+        master,slave=pty.openpty();output=bytearray()
+        process=subprocess.Popen(['bash',str(ROOT/'x-ui-latest.sh')],stdin=slave,stdout=slave,stderr=slave,env=env)
+        os.close(slave)
+        answers='2\n'+choice+'\n'+(new_panel+'\n' if choice in ('1','3') else '')+(new_reality+'\n' if choice in ('2','3') else '')+'YES\n0\n'
+        # Full Backup v3 alone is slow in TCG; include ACME and verified health.
+        os.write(master,answers.encode());deadline=time.monotonic()+360
+        try:
+            while time.monotonic()<deadline:
+                if select.select([master],[],[],.2)[0]:
+                    try:part=os.read(master,65536)
+                    except OSError:break
+                    if not part:break
+                    output.extend(part)
+                if process.poll() is not None:break
+            process.wait(timeout=2)
+            assert process.returncode==0,'Change Domains failed; private output retained in guest'
+        finally:
+            if process.poll() is None:process.kill();process.wait()
+            os.close(master);(ROOT/('domains-'+choice+'.private.log')).write_bytes(output)
+        assert b'ROLLBACK_UNVERIFIED' not in output and b'SUCCESS: Panel=' in output
+        created=set(Path('/var/backups/x-ui').glob('*.tar.gz'))-original
+        assert len(created)==1 and json.loads(run('bash','/usr/local/bin/x-ui-backup','inspect',str(next(iter(created)))))['format_version']==3
+        for name,value in old_certificates.items():assert hashlib.sha256((Path('/etc/letsencrypt/live')/name/'fullchain.pem').read_bytes()).hexdigest()==value
+        after=database()
+        for table in before:assert len(before[table])==len(after[table]),'SQLite row identities changed'
+        for table in ('users','clients','client_inbounds'):assert before[table]==after[table],'Client/authentication identity changed'
+        old_settings={r['key']:r['value'] for r in before['settings']};new_settings={r['key']:r['value'] for r in after['settings']}
+        allowed={'webCertFile','webKeyFile','subCertFile','subKeyFile','subURI','subJsonURI','webDomain','subDomain'} if new_panel!=panel else set()
+        for key,value in old_settings.items():
+            if key not in allowed:assert new_settings[key]==value,'Unrelated panel setting changed'
+        for previous,current in zip(before['hosts'],after['hosts']):
+            for key in previous:
+                if key=='address' and previous['inbound_id'] in [roles[n] for n in ('reality','ws','grpc','xhttp','hysteria2')]:
+                    assert current[key]==new_panel
+                else:assert previous[key]==current[key],'Host ID, metadata or v3.11 field changed'
+        for previous,current in zip(before['inbounds'],after['inbounds']):
+            for key in previous:
+                if key in ('up','down'):
+                    assert current[key]>=previous[key],'Traffic counters decreased'
+                elif key=='stream_settings':
+                    old_stream=json.loads(previous[key] or '{}');new_stream=json.loads(current[key] or '{}')
+                    if previous['id']==roles['reality']:
+                        assert new_stream['realitySettings']['serverNames']==[new_reality]
+                        old_stream['realitySettings'].pop('serverNames');new_stream['realitySettings'].pop('serverNames')
+                    elif previous['id']==roles['ws']:
+                        assert new_stream['wsSettings']['host']==new_panel
+                        old_stream['wsSettings'].pop('host');new_stream['wsSettings'].pop('host')
+                    elif previous['id']==roles['grpc']:
+                        assert new_stream['grpcSettings']['authority']==new_panel
+                        old_stream['grpcSettings'].pop('authority');new_stream['grpcSettings'].pop('authority')
+                    elif previous['id']==roles['hysteria2']:
+                        assert new_stream['tlsSettings']['serverName']==new_panel
+                        for item in new_stream['tlsSettings']['certificates']:
+                            assert item['certificateFile']=='/root/cert/'+new_panel+'/fullchain.pem'
+                            assert item['keyFile']=='/root/cert/'+new_panel+'/privkey.pem'
+                        for stream in (old_stream,new_stream):
+                            stream['tlsSettings'].pop('serverName')
+                            for item in stream['tlsSettings']['certificates']:
+                                item.pop('certificateFile');item.pop('keyFile')
+                    assert old_stream==new_stream,'Unrelated transport or private key settings changed'
+                elif key=='share_addr' and previous['id']==roles['amneziawg']:
+                    assert current[key]==new_panel
+                else:assert previous[key]==current[key],'Inbound identity/configuration changed'
+        marker=json.loads(Path('/etc/x-ui/auto-nginx-managed.json').read_text())
+        assert marker['domains']==dict(panel=new_panel,reality=new_reality,vision='vision.example.test')
+        assert marker['inbound_roles']==roles and not Path('/var/lib/3x-ui-auto-nginx/change-domains/journal.json').exists()
+        assert hashes()==original_hashes and adguard_state()==agh,'Vision, binaries, SSH/firewall or AGH state changed'
+        assert json.loads(Path('/opt/AdGuardHome/managed.json').read_text())['domain']==new_panel
+        transports(panel_domain=new_panel,positive_only=True)
+        panel,reality=new_panel,new_reality;before=database();result['domains_'+choice]=True
+    return {**result,'full_Backup_before_each_switch':True,'client_Host_Vision_AGH_preservation':True,
+            'real_Pebble_and_native_services':True,'post_switch_real_consumers':True}

@@ -51,7 +51,7 @@ CI checks every tracked shell script with `bash -n` and ShellCheck **error-only*
 
 Every confirmed bug must follow: **reproducing RED regression test → fix → same test PASS → full suite PASS**.
 
-Fast regression (`nonroot`/`root`) uses fixtures, fault injection and negative paths. Real integration uses nginx, pinned/checksummed Xray from the verified 3x-ui baseline, the real private-state x-ui subscription backend and Mihomo. The integration suite downloads verified official binaries automatically; there are no silent missing-binary skips or repository secrets. For offline runs, `INTEGRATION_ARTIFACTS` may point to downloaded `x-ui.tar.gz`, `x-ui.sha256` and `mihomo.gz`, plus each `x-ui-linux-armv5/armv6/armv7.tar.gz` archive and its `.sha256` sidecar for the verified-baseline ARM checks; the same hash verification remains mandatory. All listeners and state stay local/temporary, and child processes have bounded cleanup. Most GitHub jobs have 25-minute deadlines; the full fresh-install Ubuntu 26.04 job has a 45-minute deadline.
+Fast regression (`nonroot`/`root`) uses fixtures, fault injection and negative paths. Real integration uses nginx, pinned/checksummed Xray from the verified 3x-ui baseline, the real private-state x-ui subscription backend and Mihomo. The integration suite downloads verified official binaries automatically; there are no silent missing-binary skips or repository secrets. For offline runs, `INTEGRATION_ARTIFACTS` may point to downloaded `x-ui.tar.gz`, `x-ui.sha256` and `mihomo.gz`, plus each `x-ui-linux-armv5/armv6/armv7.tar.gz` archive and its `.sha256` sidecar for the verified-baseline ARM checks; the same hash verification remains mandatory. All listeners and state stay local/temporary, and child processes have bounded cleanup. Most GitHub jobs have 25-minute deadlines; the full fresh-install Ubuntu 26.04 job has a 60-minute deadline, including three Change Domains operations with full Backup v3.
 
 Real services (`services`) runs on native `ubuntu-24.04` and `ubuntu-26.04` hosted runners. It verifies pinned official AdGuard Home v0.107.79, loopback DNS, nginx TLS DoH/admin, and Certbot HTTP-01 issuance/renewal against pinned Pebble v2.10.1 with validation enabled and local DNS. No public DNS, Let's Encrypt or secrets are used. Both native jobs also run the pinned official panel’s embedded AmneziaWG TCP/UDP, client export, restart and cryptographic-negative test; no kernel module or external VPN server is installed. `SERVICES_ARTIFACTS` can supply `agh.tar.gz` and `pebble.tar.gz` offline; both pinned hashes are still checked before execution.
 
@@ -91,7 +91,7 @@ Only external DNS/DoT/filter/HTTP-01 services are controlled fixtures (real Pebb
 validation); official package/release downloads remain real. This does not test
 public Let's Encrypt, a provider's kernel/network or full disaster recovery.
 Raw installer logs, disks and private keys are never uploaded. The dedicated job
-has a 45-minute limit for this measured sequential workload. Both ordinary native
+has a 60-minute limit including P/R/Both changes and their three full Backups. Both ordinary native
 services jobs have the standard 25-minute limit; their existing names, Debian 13
 coverage and all systemd jobs remain unchanged.
 

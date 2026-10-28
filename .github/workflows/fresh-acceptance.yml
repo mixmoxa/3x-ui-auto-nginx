@@ -16,7 +16,8 @@ jobs:
   fresh:
     name: Full fresh installer (ubuntu-26.04)
     runs-on: ubuntu-26.04
-    timeout-minutes: 45
+    # P/R/Both each add a real full Backup v3 and certificate switch in QEMU.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:

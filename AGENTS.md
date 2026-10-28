@@ -24,7 +24,8 @@ The permanent primary URL is `https://github.com/xPROMSx/3x-ui-auto-nginx/releas
 
 ## Production components and lifecycle
 
-- `x-ui-latest.sh`: destructive fresh install / full rebuild, not an in-place updater. **Never execute it on the development machine.** Existing deployment reinstall and uninstall require exact uppercase `YES`. Preserve foreign state and ownership checks.
+- `x-ui-latest.sh`: interactive manager; Installation is a destructive fresh install / full rebuild, not an in-place updater. **Never execute Installation on the development machine.** Existing deployment reinstall and uninstall require exact uppercase `YES`. Preserve foreign state and ownership checks.
+- `assets/domains/managed.py`: bounded local SQLite/nginx-stream Change Domains, full Backup v3 before changes, exact role/Host ownership and durable private `prepared`/`switching`/`committed` recovery. Preserve client state and Vision; never use fresh-install templates or archived code for recovery.
 - `assets/adguard/managed.sh`: managed AdGuard Home config, nginx snippet and health/cleanup contract; pinned v0.107.79, schema 34.
 - `assets/amneziawg/managed.py`: official panel API/session and optional embedded AmneziaWG 3.1, UDP/8443; preserve administrator firewall rules on failure.
 - `assets/vision/managed.py`: optional VLESS TLS/XTLS Vision with a third, distinct domain, native panel API, TLS fallback, owned nginx/hook state and rollback.
@@ -32,6 +33,8 @@ The permanent primary URL is `https://github.com/xPROMSx/3x-ui-auto-nginx/releas
 - `assets/security/managed.py`: optional Fail2ban, unattended-upgrades/timers, strict system DoT and scoped rollback. Host-specific Security state is not portable Backup v3 data.
 - `assets/backup/x-ui-backup.sh`: private Backup/Restore v3, staged migrations/preflights, target snapshot, replacement and verified rollback.
 - `assets/clash/clash.yaml`, `assets/diagnostics/`, `assets/fake-sites/`: public consumer template, authenticated diagnostics and static camouflage sites.
+
+Change Domains is separate from Installation. The shared fd-9 lock and unfinished-journal interlock cover every modifying manager action and standalone Backup/Restore. Recovery data stays outside Restore trees at `/var/lib/3x-ui-auto-nginx/change-domains`; verified committed state is never rolled back for cleanup failure. Old certificates/lineages are retained. Known manifest-free v2.1.7 layouts can be adopted only after limited read-only agreement checks; unknown layouts/storage/SNI overrides fail before switching.
 
 Read actual lifecycle code before changing it. Release/option/domain preflights and download verification precede managed destructive cleanup. Base OS preparation includes a mandatory initial full upgrade; it may restart services and leave installed packages behind. Strict DNS preparation has a private rollback checkpoint. Optional 1 GiB swap is best-effort and skips unsuitable conditions. Do not infer that preflight is completely free of package/system preparation.
 

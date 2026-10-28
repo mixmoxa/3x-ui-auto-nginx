@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import subprocess
 import tempfile
@@ -47,13 +48,13 @@ class Manager(unittest.TestCase):
         self.assertEqual(result.stdout,'')
 
     def test_real_entrypoint_tty_exit_back_invalid_and_no_tty(self):
-        for answers in (b'0\n',b'2\n3\n0\n0\n'):
+        for answers in (b'0\n',b'9\n3\n0\n0\n'):
             code,text=tty_run(ROOT/'x-ui-latest.sh',answers)
             self.assertEqual(code,0,text)
             self.assertIn('1. Installation',text)
             self.assertIn('3. Backups',text)
             self.assertNotIn('\x1b',text)
-            self.assertNotIn('Change Domains',text)
+            self.assertIn('2. Change Domains',text)
         result=subprocess.run(['bash',str(ROOT/'x-ui-latest.sh')],input='1\n',text=True,capture_output=True)
         self.assertNotEqual(result.returncode,0)
         self.assertIn('TTY',result.stdout+result.stderr)
@@ -71,6 +72,32 @@ class Manager(unittest.TestCase):
                 code=code.replace('command cp "$2"','command cp "$DOWNLOAD"')
                 result=subprocess.run(['bash','-c',code,'fixture',str(ROOT/'x-ui-latest.sh')],capture_output=True,text=True,env={**os.environ,'DOWNLOAD':str(downloaded)})
                 self.assertEqual(result.returncode,0 if match else 1,result.stderr)
+
+    def test_change_domains_menu_confirmation_and_domain_pairs(self):
+        for choice,panel,reality,answer in (('1','next.example','cover.example','YES'),
+                                          ('2','deploy.example','next-cover.example','YES'),
+                                          ('3','next.example','next-cover.example','YES'),
+                                          ('1','next.example','cover.example','yes')):
+            with self.subTest(choice=choice,answer=answer),tempfile.TemporaryDirectory() as temporary:
+                root=Path(temporary);(root/'db').touch();stage=root/'stage';stage.mkdir()
+                source=(ROOT/'x-ui-latest.sh').read_text()
+                body=re.search(r'^change_domains_action\(\) \(.*?^\)',source,re.M|re.S).group().replace('/etc/x-ui/x-ui.db',str(root/'db'))
+                library='source "'+str(ROOT/'x-ui-latest.sh')+'"\n'+body+'\n'
+                library+='''acquire_stack_lock() { :; }; recover_domain_operation() { :; }; check_os() { :; }
+prepare_domains_tools() { DOMAINS_STAGE="$STAGE"; }
+domains_tool() {
+    if [[ "$1" == inspect ]]; then printf '%s\\n' '{"domains":{"panel":"deploy.example","reality":"cover.example"}}';
+    else printf 'SWITCH|%s|%s|%s|%s\\n' "$2" "$3" "$4" "$5"; fi
+}
+change_domains_action
+'''
+                script=root/'menu.sh';script.write_text(library)
+                answers=choice+'\n'+(panel+'\n' if choice in ('1','3') else '')+(reality+'\n' if choice in ('2','3') else '')+answer+'\n'
+                code,text=tty_run(script,answers.encode(),env={'STAGE':str(stage)})
+                self.assertEqual(code,0,text);self.assertIn('Current Panel:   deploy.example',text)
+                self.assertIn('Current REALITY: cover.example',text);self.assertIn('client configurations',text)
+                if answer=='YES':self.assertIn('SWITCH|'+panel+'|'+reality+'|deploy.example|cover.example',text)
+                else:self.assertNotIn('SWITCH|',text);self.assertIn('Cancelled.',text)
 
 
 class ManagerBackup(unittest.TestCase):
@@ -266,9 +293,12 @@ manager_menu
             library=(ROOT/'x-ui-latest.sh').read_text()
             library=library[:library.rindex('if [[ ${BASH_SOURCE[0]}')]
             library=library.replace('/run/3x-ui-auto-nginx',str(self.f.root)+'/run/3x-ui-auto-nginx')
+            if operation=='domains':library=library.replace('/etc/x-ui/x-ui.db',str(self.f.path('/etc/x-ui/x-ui.db')))
             copy=self.f.root/'installer.sh';copy.write_text(library)
+            if operation=='domains':
+                return 'source "'+str(copy)+'"; check_os() { :; }; prepare_domains_tools() { '+action+'; return 1; }; change_domains_action'
             return 'source \"'+str(copy)+'\"; check_os() { :; }; check_cpu() { :; }; initialize_installation() { :; }; ip() { echo \"src 127.0.0.1\"; }; confirm_destructive_reinstall() { :; }; main() { '+action+'; }; uninstall_xui() { '+action+'; }; run_installation '+('-uninstall y' if operation=='uninstall' else '-install y')
-        for first,second in itertools.product(('backup','restore','install','uninstall'),repeat=2):
+        for first,second in itertools.product(('backup','restore','install','uninstall','domains'),repeat=2):
             with self.subTest(first=first,second=second):
                 ready=self.f.root/'ready';ready.unlink(missing_ok=True)
                 holder=subprocess.Popen(['bash','-c',dispatch(first,True),'fixture',str(ready)],

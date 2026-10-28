@@ -41,7 +41,7 @@
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-Mevcut kararlı v2.1.7 sürümü kurulumu doğrudan başlatır. v2.2.0 yayımlandıktan sonra yukarıdaki komut menüyü açacaktır: **1 — Installation**, **3 — Backups**, **0 — Exit**. Menü için `ssh -t` ile TTY ayırın; TTY yoksa açık kurulum seçeneklerini kullanın. [Menü ve yedekleme komutları](docs/MANAGER.md).
+Mevcut kararlı v2.1.7 sürümü kurulumu doğrudan başlatır. v2.2.0 yayımlandıktan sonra yukarıdaki komut menüyü açacaktır: **1 — Installation**, **2 — Change Domains**, **3 — Backups**, **0 — Exit**. Menü için `ssh -t` ile TTY ayırın; TTY yoksa açık kurulum seçeneklerini kullanın. [Menü ve yedekleme komutları](docs/MANAGER.md).
 
 <details>
 <summary><strong>Alternatif indirme — GitHub Releases kullanılamıyorsa</strong></summary>
@@ -62,6 +62,8 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 > **3X-UI AUTO NGINX**, temiz bir VPS üzerine ilk kurulum veya tamamen yeniden kurulum için tasarlanmıştır.
 >
 > Daha önce yapılandırılmış bir sunucuda betiği yeniden çalıştırmak **mevcut kurulumu güncellemez**; bunun yerine bileşenleri yeniden kurar ve eski 3X-UI veritabanını ve nginx yapılandırmasını siler.
+
+v2.2.0 menüsünde bu uyarı **Installation** seçeneği içindir. **Change Domains** ve **Backups**, paneli yeniden kurmayan ayrı işlemlerdir.
 
 <details>
 <summary><strong>Nasıl güncellenir?</strong></summary>
@@ -256,6 +258,16 @@ Uyumluluk kullandığınız istemci uygulamasına ve sürümüne bağlıdır.
 
 Standart abonelikler, JSON ve **Mihomo / Clash** nginx üzerinden HTTPS ile sunulur. `provider=1`, tam Clash yapılandırması yerine proxy provider'lar için özgün aboneliği döndürür.
 
+
+<a id="change-domains"></a>
+
+## 🌐 Alan adlarını değiştirme (v2.2.0)
+
+Yöneticiyi root olarak SSH TTY oturumunda açın; **2 — Change Domains** ve ardından Panel, REALITY veya ikisini seçin. Eski/yeni değerleri kontrol edip **YES** yazın. Yeni A/AAAA kayıtları bu VPS'yi göstermelidir; Let's Encrypt için erişilebilir TCP/80 ve HTTP-01 webroot doğrulaması gerekir. Alan adları birbirinden ve Vision alan adından farklı olmalıdır; Panel/REALITY rollerinin takası desteklenmez.
+
+Değişiklikten önce tam Backup v3 oluşturulur. İstemciler, UUID'ler, parolalar, Subscription ID'ler, trafik geçmişi, anahtarlar ve kullanıcı ayarları korunur. Vision alan adı ve yapılandırması aynı kalır. Seçilen rollerin adresleri ve sertifikaları değişir; etkilenen abonelik URL'lerini ve istemci yapılandırmalarını güncelleyin. Eski sertifikalar saklanır. Eski alan adının DNS'i kaldırıldıktan sonra erişilebilirliği garanti edilmez.
+
+Hata durumunda `/var/backups/x-ui` içindeki yedeği ve `/var/lib/3x-ui-auto-nginx/change-domains` içindeki kurtarma verilerini saklayın. Doğrulanmış kurtarma için yöneticiyi SSH üzerinden yeniden açın; `ROLLBACK_UNVERIFIED` durumunda durun ve verileri koruyun. Tutarlı manifest ile standart yerel SQLite düzeni veya manifest olmadan kesin olarak tanınan v2.1.7 kurulumu desteklenir. Bilinmeyen ya da çelişkili yapılandırmalar reddedilir. [Ayrıntılar ve sınırlar](docs/MANAGER.md#change-domains).
 
 ## 💾 Yedekleme ve geri yükleme
 

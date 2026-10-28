@@ -41,7 +41,7 @@ Configura los registros DNS de **dos dominios** para que apunten a la IP de tu V
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-La versión estable actual v2.1.7 inicia la instalación directamente. Tras publicarse v2.2.0, el comando anterior abrirá el menú: **1 — Installation**, **3 — Backups**, **0 — Exit**. Asigna un TTY con `ssh -t` para el menú; sin TTY, utiliza argumentos explícitos de instalación. [Menú y comandos de Backup](docs/MANAGER.md).
+La versión estable actual v2.1.7 inicia la instalación directamente. Tras publicarse v2.2.0, el comando anterior abrirá el menú: **1 — Installation**, **2 — Change Domains**, **3 — Backups**, **0 — Exit**. Asigna un TTY con `ssh -t` para el menú; sin TTY, utiliza argumentos explícitos de instalación. [Menú y comandos de Backup](docs/MANAGER.md).
 
 <details>
 <summary><strong>Descarga alternativa — si GitHub Releases no está disponible</strong></summary>
@@ -62,6 +62,8 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 > **3X-UI AUTO NGINX** está diseñado para una instalación inicial en un VPS limpio o para una reinstalación completa.
 >
 > Volver a ejecutar el script en un servidor ya configurado **no actualiza la instalación existente**: reinstala los componentes y elimina la base de datos anterior de 3X-UI y la configuración de nginx.
+
+En el menú de v2.2.0, esta advertencia se aplica a **Installation**. **Change Domains** y **Backups** son operaciones independientes que no reinstalan el panel.
 
 <details>
 <summary><strong>¿Cómo se actualiza?</strong></summary>
@@ -256,6 +258,16 @@ La compatibilidad depende de la aplicación cliente y de su versión.
 
 Las suscripciones estándar, JSON y **Mihomo / Clash** se sirven mediante nginx y HTTPS. `provider=1` devuelve la suscripción original para los proveedores de proxy en lugar de una configuración completa de Clash.
 
+
+<a id="change-domains"></a>
+
+## 🌐 Cambiar dominios (v2.2.0)
+
+Ejecuta el gestor como root en una sesión SSH con TTY, selecciona **2 — Change Domains** y después Panel, REALITY o ambos. Revisa los valores antiguos/nuevos y escribe **YES**. Los nuevos registros A/AAAA deben apuntar a este VPS; Let's Encrypt necesita TCP/80 accesible y validación HTTP-01 mediante webroot. Los dominios deben ser distintos entre sí y del de Vision; no se admite intercambiar las funciones Panel/REALITY.
+
+Antes de los cambios se crea un Backup v3 completo. Se conservan clientes, UUID, contraseñas, Subscription ID, historial de tráfico, claves y ajustes del usuario. Vision mantiene su dominio y configuración. Cambian las direcciones y certificados de las funciones seleccionadas; actualiza después las URL de suscripción y las configuraciones de cliente afectadas. Se conservan los certificados antiguos. No se garantiza la disponibilidad del dominio antiguo tras eliminar su DNS.
+
+Si falla, conserva el Backup en `/var/backups/x-ui` y los datos de recuperación en `/var/lib/3x-ui-auto-nginx/change-domains`. Vuelve a ejecutar el gestor por SSH para una recuperación verificada; ante `ROLLBACK_UNVERIFIED`, detente y conserva los materiales. Se admite el diseño estándar con SQLite local y manifest coherente, o una instalación v2.1.7 sin manifest reconocida sin ambigüedad. Se rechazan configuraciones desconocidas o contradictorias. [Detalles y límites](docs/MANAGER.md#change-domains).
 
 ## 💾 Copias de seguridad y restauración
 

@@ -1,9 +1,13 @@
-# Installer menu and Backup management
+<a id="installer-menu-and-backup-management"></a>
+
+# Installer menu, domain changes and Backup management
 
 Download the installer to a file using the README command, then run it from an
 interactive terminal. Remote sessions need a TTY (`ssh -t`). The menu is English:
-**1 Installation**, **3 Backups**, **0 Exit**. Opening it, Back and Exit need no
-root access and perform no downloads, IP lookups or system preparation.
+**1 Installation**, **2 Change Domains**, **3 Backups**, **0 Exit**. With no
+unfinished domain operation, opening it, Back and Exit need no root access and
+perform no downloads, IP lookups or system preparation. An unfinished domain
+journal instead requires root and verified recovery before another menu action.
 
 Installation is the existing destructive fresh install/rebuild, with the same
 `YES` confirmation for an existing deployment. Existing explicit installation and
@@ -16,8 +20,7 @@ that operation. Listing shows UTC file dates and byte sizes, without opening eac
 archive. A listed filename is not evidence of integrity or trusted provenance.
 Restore accepts a list number or absolute path, shows archive metadata and asks
 for `YES` before replacing managed data. Restore keeps the existing Backup v3
-OS/version/architecture and recovery contracts. Domain changes are not part of
-this menu.
+OS/version/architecture and recovery contracts.
 
 Restore offers two independent options, both **No** by default:
 
@@ -87,9 +90,74 @@ source is pinned before downloading code, with no fallback to a different tree.
 Mutable main/tag downloads must match the running script (allowing only the
 published asset's source-default substitution), otherwise preparation stops.
 
+## Change Domains
+
+Run the current manager from a file through an SSH TTY as root, select **2**, and
+choose Panel, REALITY or both. The submenu shows current domains. Review the old
+and new names and type the exact uppercase **YES**. Existing installation flags
+continue to select Installation directly; Change Domains does not reinstall or
+update 3x-ui.
+
+Point all new A/AAAA records to this VPS and keep TCP/80 reachable for Let's
+Encrypt HTTP-01. Domains must remain distinct from each other and Vision.
+Neither new domain may take the other role's current name. Unknown DNS identity,
+foreign/ambiguous lineages, certificate or SNI overrides, custom SQLite storage,
+unknown service/layout or contradictory manifest cause refusal before switching.
+Known local SQLite layouts are 3x-ui **v3.10.2/v3.11.0** on the supported OSes.
+
+A consistent `/etc/x-ui/auto-nginx-managed.json` is checked against the real
+inbounds, Hosts, nginx, certificates and optional components. A missing manifest
+is supported for an unambiguously recognized v2.1.7 project layout: standard
+paths, separate loopback Panel/REALITY TLS, exact project hook and stream map,
+matching five transport roles/Hosts and optional routes. Names/tags alone are
+not ownership evidence. No reinstall is needed to obtain a manifest; a successful
+legacy switch records `installed_by=legacy-v2.1.7-layout`. Other layouts/versions
+are deliberately refused rather than guessed.
+
+The official archives retain UID/GID `1001:1001` on the panel directory/binary.
+That exact 0755 metadata is recognized only while UID 1001 has no account and no
+active process on the host. Ownership is preserved. An assigned/active identity
+or another non-root owner is refused before Backup or changes.
+
+Before the first stack change, the selected tree's existing Backup v3 creates a
+full verified archive in `/var/backups/x-ui`. An old installed Backup utility is
+not replaced: a private current copy performs this archive under the inherited
+lock. New certificates are obtained with the existing webroot/account while old
+HTTP-01 routes stay available. The complete candidate nginx include tree is
+tested before the short x-ui stop and compare-and-set SQLite updates.
+
+Panel changes update its public endpoints, TLS paths, managed Hosts (including
+the REALITY connection address), WS/gRPC/Hysteria2 metadata, AWG share address,
+Clash template, Diagnostics and optional AGH metadata. REALITY-only changes update
+its SNI/TLS vhost and `serverNames`; Panel/Hosts/subscription/AGH endpoints stay
+unchanged. Both changes share one Backup and recovery snapshot. IDs, client
+secrets/bindings, traffic, REALITY keys/shortIds/target, user settings and Vision
+are preserved. Existing paths are retained. Clients and old subscription URLs
+may need updating; an old domain is not guaranteed to work after its DNS is
+removed. Old certificates/lineages are never deleted by this operation.
+
+The root-only 0700 directory
+`/var/lib/3x-ui-auto-nginx/change-domains` holds a private 0600 data journal with
+atomic, fsynced `prepared`, `switching`, `committed` phases and snapshots of only
+affected resources. Preparation/switch failures restore and verify the original
+configuration. `ROLLBACK_UNVERIFIED` means recovery could not be proved: retain
+this directory and the reported full Backup; do not delete the journal or run
+Installation to bypass it. Start the manager again through SSH. It checks and
+recovers an unfinished operation before new changes; conflicting independent
+edits stop recovery. Backup `inspect`/`list` remain available, while modifying
+Backup/Restore commands stop until manager recovery completes. No boot service
+or daemon is installed. A healthy `committed` state is retained on optional
+cleanup failure and is never rolled back for that reason. Prepared new lineages
+may remain after a failed operation; inspect dependencies before owner cleanup.
+
+Private fixture fault/SIGKILL tests do not certify every power-loss/provider
+scenario. Existing Full Fresh additionally exercises P/R/Both on one installed
+systemd guest with real Backup, Pebble, nginx, 3x-ui/Xray and consumers. Public
+DNS/Let's Encrypt and a live VPS acceptance remain separate owner actions.
+
 ## Operation locking
 
-Installation, rebuild, uninstall and the updated standalone Backup/Restore and
+Installation, rebuild, uninstall, Change Domains and the updated standalone Backup/Restore and
 `update-hooks` share a nonblocking `flock`. Contention returns **75** before stack
 changes. `/run/3x-ui-auto-nginx` is root-owned 0700; its regular 0600
 `operation.lock` is never deleted to release a lock and lies outside Restore trees.

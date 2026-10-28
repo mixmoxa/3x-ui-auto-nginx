@@ -41,7 +41,7 @@
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-当前稳定版 v2.1.7 会直接开始安装。v2.2.0 发布后，上述命令将打开菜单：**1 — Installation**、**3 — Backups**、**0 — Exit**。菜单需要使用 `ssh -t` 分配 TTY；没有 TTY 时应使用明确的安装参数。[菜单与备份命令](docs/MANAGER.md)。
+当前稳定版 v2.1.7 会直接开始安装。v2.2.0 发布后，上述命令将打开菜单：**1 — Installation**、**2 — Change Domains**、**3 — Backups**、**0 — Exit**。菜单需要使用 `ssh -t` 分配 TTY；没有 TTY 时应使用明确的安装参数。[菜单与备份命令](docs/MANAGER.md)。
 
 <details>
 <summary><strong>备用下载 — GitHub Releases 不可用时</strong></summary>
@@ -62,6 +62,8 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 > **3X-UI AUTO NGINX** 适用于在全新 VPS 上首次安装，或进行完整重装。
 >
 > 在已经配置好的服务器上再次运行脚本，**不会更新现有安装**，而是重新安装整套服务，并删除原有的 3X-UI 数据库和 nginx 配置。
+
+在 v2.2.0 菜单中，此警告适用于 **Installation**。**Change Domains** 和 **Backups** 是独立操作，不会重装面板。
 
 <details>
 <summary><strong>如何更新？</strong></summary>
@@ -256,6 +258,16 @@ XTLS Vision 和 Amnezia WG 只有在安装时选择才会添加。**使用这些
 
 普通订阅、JSON 和 **Mihomo / Clash** 均通过 nginx 的 HTTPS 提供。`provider=1` 返回供代理提供者使用的原始订阅，而不是完整的 Clash 配置。
 
+
+<a id="change-domains"></a>
+
+## 🌐 更换域名（v2.2.0）
+
+通过 SSH TTY 以 root 运行管理器，选择 **2 — Change Domains**，再选择 Panel、REALITY 或两者。核对新旧域名并输入 **YES**。新的 A/AAAA 记录必须指向此 VPS；Let's Encrypt 需要可访问的 TCP/80 和 HTTP-01 webroot 验证。两个域名必须互不相同，且不能与 Vision 域名冲突；不支持交换 Panel/REALITY 角色。
+
+修改前会创建完整 Backup v3。客户端、UUID、密码、Subscription ID、流量历史、密钥和用户设置都会保留，Vision 的域名和配置保持不变。所选角色的地址和证书会更新；之后请更新受影响的订阅 URL 和客户端配置。旧证书不会自动删除。关闭旧域名的 DNS 后，不保证其仍可访问。
+
+出错时请保留 `/var/backups/x-ui` 中的备份及 `/var/lib/3x-ui-auto-nginx/change-domains` 中的恢复资料，再通过 SSH 运行管理器进行可验证恢复。出现 `ROLLBACK_UNVERIFIED` 时应停止操作并保留资料。支持具有一致 manifest 的标准本地 SQLite 布局，以及能够明确识别的无 manifest 的 v2.1.7 安装；未知或相互矛盾的配置会被拒绝。[详细说明及限制](docs/MANAGER.md#change-domains)。
 
 ## 💾 备份与恢复
 
