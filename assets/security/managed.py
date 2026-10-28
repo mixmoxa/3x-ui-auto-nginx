@@ -3,6 +3,7 @@
 Host DNS and security state are deliberately excluded from portable Backup v3.
 """
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -342,6 +343,142 @@ def rollback_dns_checkpoint(state, root=Path('/')):
         if txn is not None: txn.temp.cleanup()
 
 
+def ufw_simple_rules(text, ipv6, ports):
+    """Accept only the distro boilerplate and project/SSH unrestricted allows."""
+    chain = 'ufw6' if ipv6 else 'ufw'
+    allowed = {('tcp', 80), ('tcp', 443), ('udp', 443), ('udp', 8443)}
+    allowed.update(('tcp', port) for port in ports)
+    stock = {
+        f'-A {chain}-user-limit -m limit --limit 3/minute -j LOG --log-prefix "[UFW LIMIT BLOCK] "',
+        f'-A {chain}-user-limit -j REJECT', f'-A {chain}-user-limit-accept -j ACCEPT',
+        f'-I {chain}-logging-deny -m conntrack --ctstate INVALID -j RETURN -m limit --limit 3/min --limit-burst 10',
+    }
+    for suffix, prefix in (('after-logging-input', 'BLOCK'), ('after-logging-forward', 'BLOCK'),
+                           ('logging-deny', 'BLOCK'), ('logging-allow', 'ALLOW')):
+        stock.add(f'-A {chain}-{suffix} -j LOG --log-prefix "[UFW {prefix}] " -m limit --limit 3/min --limit-burst 10')
+    chains = {'user-input', 'user-output', 'user-forward', 'user-limit', 'user-limit-accept',
+              'logging-deny', 'logging-allow'}
+    chains.update(f'{when}-logging-{direction}' for when in ('before', 'user', 'after')
+                  for direction in ('input', 'output', 'forward'))
+    for line in text.splitlines():
+        if not line or line.startswith('#') or line in ('*filter', 'COMMIT') or line in stock:
+            continue
+        if line in {f':{chain}-{name} - [0:0]' for name in chains}:
+            continue
+        match = re.fullmatch(r'-A '+chain+r'-user-input -p (tcp|udp) --dport ([0-9]+) -j ACCEPT', line)
+        if not match or (match[1], int(match[2])) not in allowed:
+            raise ValueError('Unsupported UFW user rules; automatic enable refused')
+
+
+def ufw_preflight(root, ports):
+    # No arbitrary firewall interpretation: only packaged defaults and simple allows.
+    for name in ('before.rules', 'before6.rules', 'after.rules', 'after6.rules', 'before.init', 'after.init'):
+        path = root/'etc/ufw'/name
+        if path.is_symlink() or path.read_bytes() != (root/'usr/share/ufw'/name).read_bytes():
+            raise ValueError('Custom UFW before/after configuration; automatic enable refused')
+    conffiles = command('dpkg-query', '-W', '-f=${Conffiles}', 'ufw')
+    for filename in ('/etc/default/ufw', '/etc/ufw/sysctl.conf'):
+        match = re.search(r'^[ \t]*'+re.escape(filename)+r' ([0-9a-f]{32})$', conffiles, re.M)
+        path = root/filename.lstrip('/')
+        if not match or path.is_symlink() or hashlib.md5(path.read_bytes()).hexdigest() != match[1]:
+            raise ValueError('Nonstandard UFW defaults; automatic enable refused')
+    config = (root/'etc/ufw/ufw.conf').read_text()
+    if re.findall(r'^ENABLED=(.*)$', config, re.M) != ['no'] or re.findall(r'^LOGLEVEL=(.*)$', config, re.M) != ['low']:
+        raise ValueError('Nonstandard UFW activation/logging configuration')
+    for name, ipv6 in (('user.rules', False), ('user6.rules', True)):
+        path = root/'etc/ufw'/name
+        if path.is_symlink(): raise ValueError('Symlink UFW rules unsupported')
+        ufw_simple_rules(path.read_text(), ipv6, ports)
+    for service in ('firewalld.service', 'nftables.service', 'netfilter-persistent.service'):
+        if command('systemctl', 'is-active', service, check=False) not in ('inactive', 'failed', 'unknown', ''):
+            raise ValueError('Another firewall manager is active; automatic enable refused')
+    for tool in ('iptables', 'ip6tables'):
+        if '(nf_tables)' not in command(tool, '--version'):
+            raise ValueError('Only the standard nft-backed Ubuntu iptables is supported')
+    for name in ('ip_tables_names', 'ip6_tables_names'):
+        path = root/'proc/net'/name
+        if path.exists() and path.read_text().strip():
+            raise ValueError('Legacy kernel firewall tables exist; automatic enable refused')
+    for entry in json.loads(command('nft', '-j', 'list', 'ruleset'))['nftables']:
+        if set(entry) == {'metainfo'}: continue
+        if set(entry) == {'table'}:
+            table = entry['table']
+            if table['family'] in ('ip', 'ip6') and table['name'] == 'filter': continue
+        if set(entry) == {'chain'}:
+            chain = entry['chain']
+            if (chain['family'] in ('ip', 'ip6') and chain['table'] == 'filter'
+                    and chain['name'] in ('INPUT', 'OUTPUT', 'FORWARD') and chain.get('policy') == 'accept'
+                    and chain.get('type') == 'filter' and chain.get('prio') == 0): continue
+        raise ValueError('Existing kernel firewall rules are unsupported; automatic enable refused')
+
+
+def ufw_ssh_ports(root):
+    command('/usr/sbin/sshd', '-t')
+    effective = command('/usr/sbin/sshd', '-T')
+    socket_state = command('systemctl', 'is-active', 'ssh.socket', check=False)
+    service_state = command('systemctl', 'is-active', 'ssh.service', check=False)
+    if socket_state not in ('active', 'inactive', 'failed') or service_state not in ('active', 'inactive', 'failed'):
+        raise ValueError('Ambiguous standard SSH service/socket state')
+    listen = command('systemctl', 'show', 'ssh.socket', '-p', 'Listen', '--value') if socket_state == 'active' else ''
+    if socket_state == 'active' and (not listen or re.sub(r'\S+ \(Stream\)', '', listen).strip()):
+        raise ValueError('Unsupported SSH socket listeners')
+    ports = set(ssh_ports(effective, listen))
+    pid = int(command('systemctl', 'show', 'ssh.service', '-p', 'MainPID', '--value'))
+    owners = {1} if socket_state == 'active' else set()
+    if service_state == 'active' and pid > 1:
+        if (root/f'proc/{pid}/exe').resolve() != (root/'usr/sbin/sshd').resolve():
+            raise ValueError('SSH service is not the standard sshd process')
+        owners.add(pid)
+    if not owners: raise ValueError('No active standard SSH owner')
+    found = set()
+    for line in command('ss', '-H', '-ltnp').splitlines():
+        fields = line.split()
+        address, port = fields[3].rsplit(':', 1)
+        pids = {int(p) for p in re.findall(r'pid=(\d+)', line)}
+        if int(port) in ports or pids & owners:
+            if (address not in ('0.0.0.0', '*', '[::]', '::') or int(port) not in ports
+                    or not pids or not pids <= owners):
+                raise ValueError('SSH configuration/listener ownership mismatch')
+            found.add(int(port))
+    if found != ports: raise ValueError('SSH configured ports do not match real listeners')
+    connection = os.environ.get('SSH_CONNECTION', '').split()
+    if connection and (len(connection) != 4 or int(connection[3]) not in ports):
+        raise ValueError('Current SSH connection port differs from confirmed listeners')
+    return sorted(ports)
+
+
+def enable_ufw(root=Path('/')):
+    attempted = False
+    try:
+        status = command('ufw', 'status')
+        if status.startswith('Status: active'):
+            return {'status': 'preserved', 'warnings': []}
+        if status != 'Status: inactive': raise ValueError('Unknown UFW state')
+        info = (root/'etc/os-release').read_text()
+        if not re.search(r'^ID=ubuntu$', info, re.M) or not re.search(r'^VERSION_ID="?(24\.04|26\.04)"?$', info, re.M):
+            raise ValueError('Automatic UFW enable supports Ubuntu 24.04/26.04 only')
+        ports = ufw_ssh_ports(root)
+        if shutil.which('nft') is None:
+            command('apt-get', '-o', 'DPkg::Lock::Timeout=300', '--no-remove', 'install', '-y',
+                    '--no-install-recommends', 'nftables')
+        ufw_preflight(root, ports)
+        for port in ports: command('ufw', 'allow', str(port)+'/tcp')
+        attempted = True
+        command('ufw', '--force', 'enable')
+        if not command('ufw', 'status').startswith('Status: active'):
+            raise ValueError('UFW active state not confirmed')
+        for tool, chain in (('iptables', 'ufw'), ('ip6tables', 'ufw6')):
+            command(tool, '-C', 'INPUT', '-j', chain+'-before-input')
+            command(tool, '-C', chain+'-before-input', '-j', chain+'-user-input')
+            if '-P INPUT DROP' not in command(tool, '-S', 'INPUT').splitlines():
+                raise ValueError('UFW incoming policy not confirmed')
+            for port in ports:
+                command(tool, '-C', chain+'-user-input', '-p', 'tcp', '--dport', str(port), '-j', 'ACCEPT')
+        return {'status': 'configured', 'warnings': []}
+    except Exception as error:
+        return {'status': 'failed_unverified' if attempted else 'failed', 'warnings': [str(error)]}
+
+
 def configure(root=Path('/')):
     # DNS was prepared before cleanup. Neither component may change its files/service.
     result = {'status': 'partial', 'warnings': []}
@@ -430,12 +567,14 @@ if __name__ == '__main__':
             result = prepare_dns(state=Path(sys.argv[2]) if len(sys.argv)==3 else None)
         elif len(sys.argv)==3 and sys.argv[1] == '--rollback-dns':
             result = rollback_dns_checkpoint(Path(sys.argv[2]))
+        elif sys.argv[1:] == ['--enable-ufw']:
+            result = enable_ufw()
         elif sys.argv[1:]:
-            raise ValueError('Usage: managed-security.py [--preflight|--prepare-dns [checkpoint]|--rollback-dns checkpoint]')
+            raise ValueError('Usage: managed-security.py [--preflight|--prepare-dns [checkpoint]|--rollback-dns checkpoint|--enable-ufw]')
         else:
             result = configure()
     except Exception as error:
         result = {'status': 'failed_rolled_back', 'dot': 'not_configured', 'warnings': [str(error)]}
     print(json.dumps(result))
     restored = len(sys.argv)==3 and sys.argv[1]=='--rollback-dns' and result['status']=='failed_rolled_back'
-    sys.exit(0 if result['status'] in ('configured', 'compatible') or restored else 1)
+    sys.exit(0 if result['status'] in ('configured', 'compatible', 'preserved') or restored else 1)

@@ -1189,6 +1189,29 @@ HOOK
     }
 }
 
+check_panel_listener() {
+    local port pid listeners attempt
+    port=$(sqlite3 "$DB" "SELECT value FROM settings WHERE key='webPort';") || return 1
+    [[ "$port" =~ ^[0-9]{1,5}$ ]] && (( 10#$port > 0 && 10#$port <= 65535 )) || return 1
+    for attempt in {1..10}; do
+        pid=$(systemctl show -p MainPID --value x-ui) || return 1
+        if [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 && $(readlink -f "/proc/$pid/exe") == /usr/local/x-ui/x-ui ]]; then
+            listeners=$(ss -H -ltnp "sport = :$port") || return 1
+            if python3 - "$port" "$pid" "$listeners" <<'PYPANEL'
+import re, sys
+port, pid, listeners = sys.argv[1:]
+lines = listeners.splitlines()
+valid = len(lines) == 1 and lines[0].split()[3] == '127.0.0.1:' + port
+valid = valid and set(re.findall(r'pid=(\d+)', lines[0])) == {pid}
+sys.exit(0 if valid else 1)
+PYPANEL
+            then return 0; fi
+        fi
+        sleep 0.5
+    done
+    return 1
+}
+
 check_health() {
     local service state failed=0
     stage 'Final checks'
@@ -1212,6 +1235,10 @@ check_health() {
                 *) printf '[FAIL] Unexpected %s state: %s\n' "$service" "$state" >&2; failed=1 ;; esac
         fi
     done
+    if [[ "${RESTORED_ACTIVE[x-ui]}" == active ]] && ! check_panel_listener; then
+        printf '[FAIL] Restored localhost panel listener is missing or has an unexpected owner\n' >&2
+        failed=1
+    fi
     if [[ "$ADGUARD_HOME" == true ]]; then
         ok 'AdGuard Home existing credentials preserved'
     fi
@@ -1481,8 +1508,8 @@ server {{
 with sqlite3.connect(staged(dbpath)) as db:
     # User TLS settings need not match the seed, but referenced files must survive Restore.
     # Never let a restored active inbound silently borrow a target-only certificate/key.
-    for stream_json, in db.execute('SELECT stream_settings FROM inbounds WHERE enable=1'):
-        stream = json.loads(stream_json)
+    for protocol, stream_json in db.execute('SELECT protocol,stream_settings FROM inbounds WHERE enable=1'):
+        stream = {} if protocol == 'amneziawg' and stream_json == '' else json.loads(stream_json)
         if stream.get('security') == 'tls':
             for pair in stream.get('tlsSettings',{}).get('certificates',[]):
                 for name in ('certificateFile','keyFile'):

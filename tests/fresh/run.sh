@@ -4,6 +4,12 @@ set -Eeuo pipefail
 umask 077
 repository=$(git rev-parse --show-toplevel)
 ref=$(git rev-parse HEAD)
+restore_mode=${XUI_RESTORE_ACCEPTANCE:-0}
+distro=ubuntu:26.04
+if [[ "$restore_mode" == 1 ]]; then
+    distro=${XUI_TEST_DISTRO:-ubuntu:26.04}
+    case "$distro" in ubuntu:24.04|ubuntu:26.04) ;; *) exit 2 ;; esac
+fi
 [[ "$ref" =~ ^[0-9a-f]{40}$ ]]
 git diff --quiet HEAD -- x-ui-latest.sh assets
 work=$(mktemp -d)
@@ -23,12 +29,14 @@ secret=()
 if [[ -f /etc/ssl/certs/ca-certificates.crt ]]; then
     secret=(--secret id=proxy_ca,src=/etc/ssl/certs/ca-certificates.crt)
 fi
-timeout 8m docker build "${secret[@]}" -t xui-fresh-root -f "$repository/tests/fresh/Dockerfile" "$repository"
+timeout 8m docker build "${secret[@]}" --build-arg "DISTRO=$distro" -t xui-fresh-root -f "$repository/tests/fresh/Dockerfile" "$repository"
 timeout 8m docker build "${secret[@]}" -t xui-fresh-tools -f "$repository/tests/systemd/tools.Dockerfile" "$repository"
 date +%s > "$work/images.ready"
 root_container=$(docker create xui-fresh-root)
 docker export "$root_container" -o "$work/rootfs.tar"
-git show bf5ce345949c530b97bcf324b7d334332cd33dc9:assets/security/managed.py > "$work/old-security.py"
+if [[ "$restore_mode" != 1 ]]; then
+    git show bf5ce345949c530b97bcf324b7d334332cd33dc9:assets/security/managed.py > "$work/old-security.py"
+fi
 # Preserve the cloud proxy if present; only hostname/IP mappings, no credentials in argv.
 mapfile -t proxy_hosts < <(python3 - <<'PY'
 import os, socket
@@ -44,6 +52,7 @@ for mapping in "${proxy_hosts[@]}"; do network+=(--add-host "$mapping"); done
 docker run --name "$container" --rm --memory=6g --cpus=2 "${network[@]}" \
     -e HTTP_PROXY -e HTTPS_PROXY -e ALL_PROXY -e http_proxy -e https_proxy -e all_proxy \
     -e "XUI_AUTO_REF=$ref" \
+    -e "XUI_RESTORE_ACCEPTANCE=$restore_mode" \
     -e CURL_CA_BUNDLE=/run/proxy-ca.pem \
     --mount "type=bind,src=$work,dst=/pilot" \
     --mount "type=bind,src=$repository,dst=/repo,readonly" \

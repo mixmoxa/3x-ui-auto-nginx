@@ -18,7 +18,7 @@ cp /repo/tests/fresh/install.py /repo/tests/fresh/checks.py /repo/tests/fresh/di
 cp /repo/assets/amneziawg/managed.py root/root/pilot/session.py
 cp /repo/assets/client/managed.py root/root/pilot/client.py
 cp /repo/assets/security/managed.py root/root/pilot/current-security.py
-cp old-security.py root/root/pilot/old-security.py
+if [[ -f old-security.py ]]; then cp old-security.py root/root/pilot/old-security.py; fi
 PYTHONPATH=/repo/tests python3 -c 'import json; from release_contract import baseline; b=baseline(); print(json.dumps({"version":b["version"],"xray":b["xray"]}))' > root/root/pilot/baseline.json
 cp /run/proxy-ca.pem root/usr/local/share/ca-certificates/pilot-proxy.crt
 openssl req -x509 -newkey rsa:2048 -nodes -days 3 -keyout fixture.key -out fixture.crt -subj /CN=pilot-fixture -addext 'subjectAltName=DNS:localhost,IP:10.0.2.2,DNS:one.one.one.one,DNS:dns.google,DNS:dns.cloudflare.com,DNS:dns.quad9.net,DNS:adguardteam.github.io' >/pilot/cert-prep.log 2>&1
@@ -69,6 +69,10 @@ ExecStart=/bin/bash /root/pilot/external-network.sh
 WantedBy=multi-user.target
 EOF
 ln -sf ../pilot-external-network.service root/etc/systemd/system/multi-user.target.wants/pilot-external-network.service
+if [[ ${XUI_RESTORE_ACCEPTANCE:-0} == 1 ]]; then
+    # The minimal source/target uses no DoT/AGH; it needs no DNS redirection rules.
+    printf '#!/bin/bash\nexit 0\n' > root/root/pilot/external-network.sh
+fi
 cat > root/etc/letsencrypt/cli.ini <<'EOF'
 server = https://10.0.2.2:14000/dir
 EOF

@@ -78,6 +78,73 @@ class ManagerBackup(unittest.TestCase):
         from test_personal_backup import PersonalBackup
         self.f=PersonalBackup('runTest');self.f.setUp();self.addCleanup(self.f.doCleanups)
 
+    def test_post_restore_security_trust_cleanup_status_lock_and_partial_result(self):
+        from test_personal_backup import relocated
+        root = self.f.root
+        library = relocated((ROOT/'x-ui-latest.sh').read_text(), root)
+        library = library.replace(str(root)+'/proc/', '/proc/').replace('/run/xui-restore-security', str(root)+'/run/xui-restore-security')
+        library = library.replace('/run/3x-ui-auto-nginx', str(root)+'/run/3x-ui-auto-nginx')
+        script = root/'manager.sh'; script.write_text(library)
+        helper = self.f.path('/usr/local/bin/x-ui-backup'); helper.parent.mkdir(parents=True, exist_ok=True)
+        helper.write_text('''#!/bin/bash
+case $1 in
+ inspect) exit 0 ;;
+ restore)
+   printf restored > "$FIXTURE_ROOT/restored"
+   mkdir -p "$FIXTURE_ROOT/usr/local/lib/3x-ui-pro"
+   printf 'raise RuntimeError("ARCHIVE HELPER EXECUTED")' > "$FIXTURE_ROOT/usr/local/lib/3x-ui-pro/managed-security.py"
+   echo 'Restore completed successfully.'
+   trap 'exit "${RESTORE_EXIT:-0}"' EXIT ;;
+esac
+'''); helper.chmod(0o755)
+        trusted = root/'trusted.py'
+        trusted.write_text('''import json, os, pathlib, subprocess, sys
+root = pathlib.Path(os.environ['FIXTURE_ROOT'])
+assert sys.flags.isolated and pathlib.Path(__file__).parent.stat().st_mode & 0o777 == 0o700
+assert (root/'restored').read_text() == 'restored'
+assert subprocess.run(['flock','-n',str(root/'run/3x-ui-auto-nginx/operation.lock'),'true']).returncode != 0
+with (root/'security-ran').open('a') as out: out.write('ufw' if sys.argv[1:] else 'apt')
+if sys.argv[1:]: result = dict(status='preserved')
+else: result = dict(status='partial' if os.environ.get('SECURITY_FAIL') else 'configured',
+                   apt='failed_rolled_back' if os.environ.get('SECURITY_FAIL') else 'configured', fail2ban='configured')
+print(json.dumps(result))
+sys.exit(1 if result['status']=='partial' else 0)
+''')
+        code = '''source "$1"
+prepare_backup_helper() { :; }
+pin_project_source() { PROJECT_SOURCE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; PROJECT_REF=$PROJECT_SOURCE_SHA; GITHUB_RAW=https://source.invalid/$PROJECT_SOURCE_SHA; }
+curl() { [[ ${PREP_FAIL:-0} != 1 && "$*" == *aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/assets/security/managed.py* ]] || return 1; cp "$TRUSTED_HELPER" "${@: -1}"; touch "$FIXTURE_ROOT/prepared"; }
+manager_menu
+'''
+        for scenario, answers, flags, expected, ran in (
+            ('none', 'n\nn\nYES\n', {}, 0, ''),
+            ('success', 'y\ny\nYES\n', {}, 0, 'aptufw'),
+            ('partial', 'y\ny\nYES\n', {'SECURITY_FAIL':'1'}, 1, 'aptufw'),
+            ('cleanup', 'y\ny\nYES\n', {'RESTORE_EXIT':'42'}, 42, ''),
+            ('prep-continue', 'y\ny\nYES\ny\n', {'PREP_FAIL':'1'}, 0, ''),
+            ('prep-cancel', 'y\ny\nYES\nn\n', {'PREP_FAIL':'1'}, 0, ''),
+        ):
+            with self.subTest(scenario=scenario):
+                for name in ('security-ran', 'prepared', 'restored'): (root/name).unlink(missing_ok=True)
+                result = subprocess.run(['bash','-c',code,'fixture',str(script)],
+                    input='3\n3\n/archive.tar.gz\n'+answers+'0\n', text=True, capture_output=True,
+                    env={**self.f.env, 'TRUSTED_HELPER':str(trusted), 'PYTHONPATH':str(root), **flags})
+                self.assertEqual(result.returncode, expected, result.stdout+result.stderr)
+                self.assertEqual((root/'security-ran').read_text() if (root/'security-ran').exists() else '', ran)
+                self.assertFalse(list((root/'run').glob('xui-restore-security.*')))
+                if scenario == 'partial':
+                    self.assertIn('Restore: SUCCESS', result.stdout)
+                    self.assertIn('Overall: PARTIAL', result.stdout)
+                    self.assertNotIn('Overall: SUCCESS', result.stdout)
+                    self.assertNotIn('Restore: FAILED', result.stdout)
+                    self.assertEqual((root/'restored').read_text(), 'restored')
+                elif scenario == 'cleanup':
+                    self.assertNotIn('Restore: SUCCESS', result.stdout)
+                elif scenario == 'none':
+                    self.assertFalse((root/'prepared').exists())
+                    self.assertIn('UFW: NOT_REQUESTED', result.stdout)
+                elif scenario == 'prep-cancel': self.assertFalse((root/'restored').exists())
+
     def test_inherited_backup_json_keeps_default_cli(self):
         result=self.f.run_tool('backup',BACKUP_JSON='1')
         self.assertEqual(result.returncode,0,result.stderr)
@@ -125,9 +192,9 @@ class ManagerBackup(unittest.TestCase):
                                ('unverified',{'FAIL_HEALTH_SERVICE':'mtr-backend'})):
             with self.subTest(scenario=scenario):
                 (self.f.root/'commands').write_text('');(self.f.root/'fault-used').unlink(missing_ok=True)
-                code,text=tty_run(script,b'3\n3\n'+str(archive).encode()+b'\nYES\n1\n',timeout=90,env={**self.f.env,**flags})
+                code,text=tty_run(script,b'3\n3\n'+str(archive).encode()+b'\nn\nn\nYES\n1\n',timeout=90,env={**self.f.env,**flags})
                 self.assertNotEqual(code,0,text)
-                self.assertIn('FAILED (exit ',text);self.assertNotIn('SUCCESS',text)
+                self.assertIn('Restore: FAILED (exit ',text);self.assertNotIn('SUCCESS',text)
                 self.assertEqual(text.count('1. Installation'),1)
                 self.assertEqual(text.count('BACKUPS'),1)
                 self.assertEqual(self.f.path('/etc/x-ui/target-marker').read_text(),'previous target')

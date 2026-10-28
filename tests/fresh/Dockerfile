@@ -1,4 +1,5 @@
-FROM ubuntu:26.04
+ARG DISTRO=ubuntu:26.04
+FROM ${DISTRO}
 ENV DEBIAN_FRONTEND=noninteractive
 RUN --mount=type=secret,id=proxy_ca,target=/run/proxy-ca.pem \
     if test -f /run/proxy-ca.pem; then printf 'Acquire::https::CaInfo "/run/proxy-ca.pem";\n' > /etc/apt/apt.conf.d/99pilot-ca; fi; \
