@@ -1,6 +1,7 @@
 """Private Change Domains fixtures; real SQLite, certificates and nginx syntax."""
 import base64
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -445,34 +446,140 @@ class Domains(unittest.TestCase):
             if pid:
                 os.kill(pid,signal.SIGKILL);os.waitpid(pid,0)
 
-    def test_updated_state_round_trips_through_existing_backup_v3(self):
+    def backup_fixture(self, f):
         from test_personal_backup import PersonalBackup, relocated
-        f=self.fixture();f.change('new.example','new-cover.example')
         backup=PersonalBackup('runTest');backup.setUp();self.addCleanup(backup.doCleanups)
-        for name in ('/etc/x-ui','/etc/nginx','/etc/letsencrypt','/root/cert','/var/www/subpage'):
-            shutil.rmtree(backup.path(name));shutil.copytree(f.p(name),backup.path(name),symlinks=True)
-        for name in ('/etc/nginx','/etc/letsencrypt','/root/cert','/var/www/subpage'):
-            for path in backup.path(name).rglob('*'):
-                if path.is_symlink():
-                    target=os.readlink(path)
-                    if target.startswith('/'):
-                        path.unlink();path.symlink_to(relocated(target,backup.root))
-                elif path.is_file() and path.suffix!='.pem':
-                    path.write_text(relocated(path.read_text(),backup.root))
-        with sqlite3.connect(backup.path(f.module.DB)) as db:
-            for key,value in db.execute('SELECT key,value FROM settings').fetchall():
-                db.execute('UPDATE settings SET value=? WHERE key=?',(relocated(value,backup.root),key))
-            for iid,stream in db.execute('SELECT id,stream_settings FROM inbounds').fetchall():
-                db.execute('UPDATE inbounds SET stream_settings=? WHERE id=?',(relocated(stream,backup.root),iid))
+        def sync():
+            for name in ('/etc/x-ui','/etc/nginx','/etc/letsencrypt','/root/cert','/var/www/subpage'):
+                shutil.rmtree(backup.path(name));shutil.copytree(f.p(name),backup.path(name),symlinks=True)
+            for name in ('/etc/nginx','/etc/letsencrypt','/root/cert','/var/www/subpage'):
+                for path in backup.path(name).rglob('*'):
+                    if path.is_symlink():
+                        target=os.readlink(path)
+                        if target.startswith('/'):
+                            path.unlink();path.symlink_to(relocated(target,backup.root))
+                    elif path.is_file() and path.suffix!='.pem':
+                        path.write_text(relocated(path.read_text(),backup.root))
+            with sqlite3.connect(backup.path(f.module.DB)) as db:
+                for key,value in db.execute('SELECT key,value FROM settings').fetchall():
+                    db.execute('UPDATE settings SET value=? WHERE key=?',(relocated(value,backup.root),key))
+                for iid,stream in db.execute('SELECT id,stream_settings FROM inbounds').fetchall():
+                    db.execute('UPDATE inbounds SET stream_settings=? WHERE id=?',(relocated(stream,backup.root),iid))
+            # Relocating fixture paths changes renewal bytes, but not their ownership.
+            marker=backup.path(f.module.MANIFEST);data=json.loads(marker.read_text())
+            for name in data.get('retained_domains',{}):
+                data['retained_domains'][name]=hashlib.sha256(backup.path('/etc/letsencrypt/renewal/'+name+'.conf').read_bytes()).hexdigest()
+            marker.write_text(json.dumps(data))
         def state():
             with sqlite3.connect(backup.path(f.module.DB)) as db:
                 return {name:db.execute('SELECT * FROM "'+name+'" ORDER BY rowid').fetchall()
                         for name, in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        sync()
+        return backup,sync,state
+
+    def test_updated_state_round_trips_through_existing_backup_v3(self):
+        f=self.fixture();f.change('new.example','new-cover.example')
+        backup,_,state=self.backup_fixture(f)
         before=state();archive=backup.backup()
         with sqlite3.connect(backup.path(f.module.DB)) as db:db.execute("UPDATE clients SET password='fixture-damage'")
         result=backup.run_tool('restore',archive)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         self.assertTrue(state()==before,'Backup v3 did not preserve the post-switch SQLite state')
+
+    def test_original_backup_restores_after_both_and_repeated_restore(self):
+        f=self.fixture();backup,sync,state=self.backup_fixture(f)
+        before=state();archive=backup.backup();saved=archive.read_bytes()
+        certificates={str(path.relative_to(backup.root)):path.read_bytes()
+                      for name in (f.panel,f.reality) for path in backup.path('/etc/letsencrypt/archive/'+name).glob('*.pem')}
+        f.change('new.example','new-cover.example');sync()
+        self.assertNotEqual(state(),before)
+        # A legitimate renewal may replace PEM/key bytes without changing the
+        # recorded renewal configuration. Restore must still restore its archive.
+        for name in (f.panel,f.reality):
+            directory=backup.path('/etc/letsencrypt/archive/'+name)
+            subprocess.run(['openssl','req','-x509','-newkey','ec','-pkeyopt','ec_paramgen_curve:prime256v1',
+                '-nodes','-days','1','-subj','/CN='+name,'-addext','subjectAltName=DNS:'+name,
+                '-out',str(directory/'fullchain1.pem'),'-keyout',str(directory/'privkey1.pem')],
+                check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        for _ in range(2):
+            result=backup.run_tool('restore',archive)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertTrue(state()==before,'Restore changed original SQLite/client/inbound/key state')
+            self.assertTrue(all((backup.root/name).read_bytes()==value for name,value in certificates.items()),'Original certificates changed')
+            self.assertEqual(json.loads(backup.path(f.module.MANIFEST).read_text())['domains']['panel'],f.panel)
+            self.assertTrue(archive.read_bytes()==saved,'Restore modified the source archive')
+
+    def test_retained_lineage_preflight_refuses_tampered_or_unowned_state(self):
+        f=self.fixture();backup,sync,state=self.backup_fixture(f);archive=backup.backup()
+        f.change('new.example','new-cover.example');sync();before=state()
+        stage=backup.root/'ownership-stage'
+        extracted=backup.run_tool('extract',archive,stage)
+        self.assertEqual(extracted.returncode,0,extracted.stderr)
+        marker=backup.path(f.module.MANIFEST);config=backup.path('/etc/letsencrypt/renewal/'+f.panel+'.conf')
+        original=marker.read_bytes();renewal=config.read_bytes()
+        live=backup.path('/etc/letsencrypt/live/'+f.panel+'/fullchain.pem');link=os.readlink(live)
+        key=backup.path('/etc/letsencrypt/archive/'+f.panel+'/privkey1.pem');private=key.read_bytes()
+        cert=backup.path('/etc/letsencrypt/archive/'+f.panel+'/fullchain1.pem');public=cert.read_bytes()
+        def preflight():
+            return subprocess.run(['bash','-c','source "$1"; STAGING=$2; preflight_target_certbot_ownership',
+                'fixture',str(backup.script),str(stage)],env=backup.env,capture_output=True,text=True)
+        self.assertEqual(preflight().returncode,0,'Valid retained ownership was refused')
+        staged_marker=stage/'files'/str(marker).lstrip('/');staged_original=staged_marker.read_bytes()
+        for fault in ('missing-record','archive-evidence-only','wrong-hash','renewal-edit','invalid-renewal','per-lineage-hook',
+                      'wrong-current-domains','unknown-format','invalid-source','duplicate-key','public-manifest',
+                      'unowned-manifest','manifest-symlink','manifest-hardlink','unsafe-parent',
+                      'wrong-san','wrong-key','escaped-live-link'):
+            with self.subTest(fault=fault):
+                data=json.loads(original)
+                if fault in ('missing-record','archive-evidence-only'):
+                    if fault=='archive-evidence-only':staged_marker.write_bytes(original)
+                    data['retained_domains'].pop(f.panel)
+                elif fault=='wrong-hash':data['retained_domains'][f.panel]='0'*64
+                elif fault=='wrong-current-domains':data['domains']['panel']='foreign.example'
+                elif fault=='unknown-format':data['format']=99
+                elif fault=='invalid-source':data['domain_change_source']=int('1'*40)
+                elif fault in ('renewal-edit','invalid-renewal','per-lineage-hook'):
+                    config.write_bytes(renewal+(b'\n# independent edit\n' if fault=='renewal-edit' else
+                        b'\n[broken\n' if fault=='invalid-renewal' else b'\ndeploy_hook = /bin/true\n'))
+                    if fault!='renewal-edit':data['retained_domains'][f.panel]=hashlib.sha256(config.read_bytes()).hexdigest()
+                marker.write_text(json.dumps(data))
+                if fault=='duplicate-key':marker.write_text('{"format":1,'+marker.read_text()[1:])
+                elif fault=='public-manifest':marker.chmod(0o644)
+                elif fault=='unowned-manifest':os.chown(marker,1001,1001)
+                elif fault=='manifest-symlink':marker.rename(marker.with_suffix('.saved'));marker.symlink_to(marker.with_suffix('.saved'))
+                elif fault=='manifest-hardlink':os.link(marker,marker.with_suffix('.linked'))
+                elif fault=='unsafe-parent':marker.parent.chmod(0o777)
+                elif fault=='wrong-san':
+                    for target,name in ((cert,'fullchain1.pem'),(key,'privkey1.pem')):
+                        target.write_bytes(backup.path('/etc/letsencrypt/archive/new.example/'+name).read_bytes())
+                elif fault=='wrong-key':key.write_bytes(backup.path('/etc/letsencrypt/archive/'+f.reality+'/privkey1.pem').read_bytes())
+                elif fault=='escaped-live-link':live.unlink();live.symlink_to(backup.path('/etc/letsencrypt/archive/'+f.reality+'/fullchain1.pem'))
+                try:
+                    result=preflight()
+                    self.assertNotEqual(result.returncode,0,'Unverified retained ownership accepted: '+fault)
+                    self.assertTrue(state()==before,'Ownership preflight mutated SQLite')
+                finally:
+                    marker.parent.chmod(0o755)
+                    if marker.is_symlink():marker.unlink();marker.with_suffix('.saved').rename(marker)
+                    marker.with_suffix('.linked').unlink(missing_ok=True)
+                    os.chown(marker,0,0);marker.chmod(0o600);marker.write_bytes(original)
+                    config.write_bytes(renewal);cert.write_bytes(public);key.write_bytes(private)
+                    staged_marker.write_bytes(staged_original)
+                    if os.readlink(live)!=link:live.unlink();live.symlink_to(link)
+        self.assertEqual(preflight().returncode,0,'Preflight was not repeatable')
+        for fault in ('missing-record','renewal-edit'):
+            with self.subTest(full_restore_refusal=fault):
+                data=json.loads(original)
+                if fault=='missing-record':data['retained_domains'].pop(f.panel)
+                else:config.write_bytes(renewal+b'\n# independent edit\n')
+                marker.write_text(json.dumps(data));(backup.root/'commands').write_text('')
+                try:
+                    result=backup.run_tool('restore',archive)
+                    self.assertNotEqual(result.returncode,0)
+                    self.assertTrue(state()==before,'Failed ownership check mutated SQLite')
+                    self.assertFalse(any(c[:2]==['systemctl','stop'] for c in backup.commands()))
+                finally:
+                    marker.write_bytes(original);config.write_bytes(renewal)
 
     def test_unverified_recovery_retains_journal_and_refuses_independent_file_changes(self):
         f=self.fixture();f.fault='verifying new stack'

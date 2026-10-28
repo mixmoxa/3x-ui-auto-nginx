@@ -494,6 +494,8 @@ def change_domains():
     protected=('/etc/nginx/sites-available/vision.conf','/etc/nginx/sites-available/vision-acme.conf',
                '/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision',
                '/etc/letsencrypt/live/vision.example.test/fullchain.pem','/etc/letsencrypt/live/vision.example.test/privkey.pem',
+               '/etc/letsencrypt/live/panel.example.test/fullchain.pem','/etc/letsencrypt/live/panel.example.test/privkey.pem',
+               '/etc/letsencrypt/live/reality.example.test/fullchain.pem','/etc/letsencrypt/live/reality.example.test/privkey.pem',
                '/etc/ssh/sshd_config','/etc/ufw/user.rules','/etc/ufw/user6.rules','/etc/x-ui/initial-client.json',
                '/usr/local/x-ui/x-ui','/usr/bin/x-ui')
     def hashes():return {name:hashlib.sha256(Path(name).read_bytes()).hexdigest() for name in protected}
@@ -503,6 +505,7 @@ def change_domains():
             return {table:[dict(row) for row in db.execute('SELECT * FROM '+table+' ORDER BY rowid')]
                     for table in ('users','clients','client_inbounds','inbounds','hosts','settings')}
     original_hashes=hashes();agh=adguard_state();before=database();result={}
+    (ROOT/'before-domains-files.json').write_text(json.dumps(dict(files=original_hashes,adguard=agh)))
     panel,reality='panel.example.test','reality.example.test'
     for choice,new_panel,new_reality in (('1','panel-next.example.test',reality),
                                          ('2','panel-next.example.test','reality-next.example.test'),
@@ -533,6 +536,7 @@ def change_domains():
         assert b'ROLLBACK_UNVERIFIED' not in output and b'SUCCESS: Panel=' in output
         created=set(Path('/var/backups/x-ui').glob('*.tar.gz'))-original
         assert len(created)==1 and json.loads(run('bash','/usr/local/bin/x-ui-backup','inspect',str(next(iter(created)))))['format_version']==3
+        if choice=='1':(ROOT/'before-domains-archive').write_text(str(next(iter(created))))
         for name,value in old_certificates.items():assert hashlib.sha256((Path('/etc/letsencrypt/live')/name/'fullchain.pem').read_bytes()).hexdigest()==value
         after=database()
         for table in before:assert len(before[table])==len(after[table]),'SQLite row identities changed'
@@ -583,3 +587,60 @@ def change_domains():
         panel,reality=new_panel,new_reality;before=database();result['domains_'+choice]=True
     return {**result,'full_Backup_before_each_switch':True,'client_Host_Vision_AGH_preservation':True,
             'real_Pebble_and_native_services':True,'post_switch_real_consumers':True}
+
+
+def restore_before_domains():
+    """Restore the real pre-switch archive on the same installed, switched VM."""
+    import hashlib,tarfile
+    archive=Path((ROOT/'before-domains-archive').read_text())
+    digest=hashlib.sha256(archive.read_bytes()).hexdigest()
+    source=ROOT/'before-domains-sqlite';source.mkdir(mode=0o700)
+    with tarfile.open(archive) as saved:
+        for suffix in ('','-wal','-shm'):
+            try:member=saved.extractfile('files/etc/x-ui/x-ui.db'+suffix)
+            except KeyError:
+                assert suffix,'Archive SQLite is missing'
+                continue
+            assert member is not None
+            target=source/('x-ui.db'+suffix);target.write_bytes(member.read());target.chmod(0o600)
+        manifest=saved.extractfile('files/etc/x-ui/auto-nginx-managed.json').read()
+    def database(path):
+        with sqlite3.connect('file:'+str(path)+'?mode=ro',uri=True) as db:
+            db.row_factory=sqlite3.Row
+            names={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            return {table:[dict(row) for row in db.execute('SELECT * FROM '+table+' ORDER BY rowid')]
+                    for table in ('users','clients','client_inbounds','inbounds','hosts','settings','client_traffics') if table in names}
+    expected=database(source/'x-ui.db')
+    def mtr_packages():
+        assert run('dpkg-query','-W','-f=${Status}','mtr-tiny')=='install ok installed'
+        heavy=subprocess.run(['dpkg-query','-W','-f=${Status}','mtr'],capture_output=True,text=True)
+        assert heavy.stdout!='install ok installed','Heavy mtr replaced mtr-tiny'
+        assert all(shutil.which(name) for name in ('mtr','mtr-packet'))
+    mtr_packages()
+    env={**os.environ,**json.loads((ROOT/'environment.json').read_text())}
+    log=ROOT/'restore-before-domains.private.log'
+    with log.open('wb',buffering=0) as output:
+        result=subprocess.run(['bash','-c','source "$1"; backup_action restore','fixture',str(ROOT/'x-ui-latest.sh')],
+                              input=(str(archive)+'\nn\nn\nYES\n').encode(),stdout=output,stderr=subprocess.STDOUT,
+                              env=env,timeout=480)
+        os.fsync(output.fileno())
+    assert result.returncode==0,'Pre-Change Domains Restore failed; private log retained'
+    assert 'Restore: SUCCESS' in log.read_text() and 'Overall: SUCCESS' in log.read_text()
+    actual=database('/etc/x-ui/x-ui.db')
+    assert actual.keys()==expected.keys()
+    for table,rows in expected.items():
+        assert len(actual[table])==len(rows),'Restored row count changed: '+table
+        for previous,current in zip(rows,actual[table]):
+            for key,value in previous.items():
+                if table in ('inbounds','client_traffics') and key in ('up','down'):
+                    assert current[key]>=value,'Archived traffic counters decreased'
+                else:assert current[key]==value,'Restored SQLite field changed: '+table+'.'+key
+    assert Path('/etc/x-ui/auto-nginx-managed.json').read_bytes()==manifest
+    evidence=json.loads((ROOT/'before-domains-files.json').read_text())
+    assert all(hashlib.sha256(Path(name).read_bytes()).hexdigest()==value for name,value in evidence['files'].items())
+    assert adguard_state()==evidence['adguard']
+    assert json.loads(Path('/opt/AdGuardHome/managed.json').read_text())['domain']=='panel.example.test'
+    assert hashlib.sha256(archive.read_bytes()).hexdigest()==digest
+    mtr_packages();installed();transports(positive_only=True);amneziawg()
+    return dict(original_Backup_restored_after_Both=True,original_SQLite_clients_keys_Vision_AGH=True,
+                native_services_and_consumers=True,mtr_tiny_preserved=True,source_archive_unchanged=True)

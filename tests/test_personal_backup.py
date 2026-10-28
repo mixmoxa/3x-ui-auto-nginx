@@ -1053,14 +1053,20 @@ class PersonalBackup(unittest.TestCase):
         archive = self.backup()
         self.write('/etc/x-ui/marker', 'preserve')
         (self.root / 'commands').write_text('')
-        result = self.run_tool('restore', archive, MISSING_PACKAGES='sqlite3 mtr', FAIL_APT='1')
+        result = self.run_tool('restore', archive, MISSING_PACKAGES='sqlite3 mtr-tiny', FAIL_APT='1')
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(self.path('/etc/x-ui/marker').exists())
         self.assertFalse(any(c[:2] == ['systemctl', 'stop'] for c in self.commands()))
-        result = self.run_tool('restore', archive, MISSING_PACKAGES='sqlite3 mtr')
+        result = self.run_tool('restore', archive, MISSING_PACKAGES='sqlite3 mtr-tiny')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         installs = [c for c in self.commands() if c[:2] == ['apt-get', 'install']]
-        self.assertEqual(installs, [['apt-get', 'install', '-y', '--no-install-recommends', 'sqlite3', 'mtr']])
+        self.assertEqual(installs, [['apt-get', 'install', '-y', '--no-install-recommends', 'sqlite3', 'mtr-tiny']])
+
+    def test_restore_keeps_installed_mtr_tiny_without_installing_mtr(self):
+        archive=self.backup();(self.root/'commands').write_text('')
+        result=self.run_tool('restore',archive,MISSING_PACKAGES='mtr')
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertFalse(any(c[:2]==['apt-get','install'] for c in self.commands()),'Restore installed packages although mtr-tiny was present')
 
     def test_clean_host_restore_repairs_missing_panel_links(self):
         archive = self.changed_archive(self.backup(), omit=self.member('/root/cert'))

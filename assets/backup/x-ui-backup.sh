@@ -11,7 +11,7 @@ SYSCTL_FILE=/etc/sysctl.d/99-3x-ui-pro.conf
 XHTTP_SOCKET=/dev/shm/uds2023.sock
 LEGACY_CERTBOT_CRON='@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" > /dev/null 2>&1'
 PACKAGES=(nginx-full certbot sqlite3 curl wget jq ufw
-          netcat-openbsd mtr python3 python3-configobj python3-cryptography libcap2-bin ca-certificates openssl procps iproute2 tar gzip tzdata)
+          netcat-openbsd mtr-tiny python3 python3-configobj python3-cryptography libcap2-bin ca-certificates openssl procps iproute2 tar gzip tzdata)
 RUNTIME_PATHS=(/etc/x-ui /usr/local/x-ui /usr/bin/x-ui)
 TREE_PATHS=(/opt/AdGuardHome /etc/nginx /etc/letsencrypt /root/cert /usr/local/lib/3x-ui-pro
             /var/www/html /var/www/subpage)
@@ -632,6 +632,78 @@ replace_managed_state() {
     fi
 }
 
+check_retained_target_lineage() {
+    local name=$1
+    shift
+    # Only installed, private history can extend ownership from current hooks.
+    # Archive metadata is never authority over an existing target lineage.
+    python3 - "$name" /etc/x-ui/auto-nginx-managed.json /etc/letsencrypt "$@" <<'PYRETAINED' || return 1
+import hashlib, json, re, stat, sys
+from pathlib import Path
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+try:
+    name, manifest, certroot, *current = sys.argv[1:]
+    manifest, certroot = Path(manifest), Path(certroot)
+    def owned(path, directory=False, private=False):
+        info = path.lstat()
+        if (info.st_uid != 0 or info.st_mode & 0o022 or
+                not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)) or
+                (not directory and (info.st_nlink != 1 or info.st_size > 2_000_000)) or
+                (private and (info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o600))):
+            raise ValueError('Unsafe ownership evidence')
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result: raise ValueError('Duplicate manifest key')
+            result[key] = value
+        return result
+    def hostname(value):
+        return (isinstance(value, str) and len(value) <= 253 and '.' in value and all(
+            re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', part) for part in value.split('.')))
+    for path in (manifest.parent.parent, manifest.parent, certroot,
+                 certroot/'live', certroot/'archive', certroot/'renewal',
+                 certroot/'live'/name, certroot/'archive'/name):
+        owned(path, directory=True)
+    owned(manifest, private=True)
+    data = json.loads(manifest.read_text(), object_pairs_hook=unique)
+    reference = data.get('source_ref', '')
+    history = data.get('retained_domains')
+    if (type(data.get('format')) is not int or data['format'] != 1 or data.get('layout') != 'nginx-stream-v1' or
+            not isinstance(reference, str) or not re.fullmatch(r'[a-f0-9]{40}', reference) or
+            data.get('installed_by') not in ('source@'+reference, 'legacy-v2.1.7-layout') or
+            not isinstance(data.get('domain_change_source'), str) or
+            not re.fullmatch(r'[a-f0-9]{40}', data['domain_change_source']) or
+            len(current) not in (2, 3) or len(set(current)) != len(current) or not all(map(hostname, current)) or
+            data.get('domains') != dict(panel=current[0], reality=current[1], vision=current[2] if len(current)==3 else None) or
+            not isinstance(history, dict) or name not in history or
+            not all(hostname(key) and isinstance(value, str) and re.fullmatch(r'[a-f0-9]{64}', value) for key, value in history.items())):
+        raise ValueError('Unconfirmed retained domain history')
+    renewal = certroot/'renewal'/(name+'.conf')
+    owned(renewal)
+    if hashlib.sha256(renewal.read_bytes()).hexdigest() != history[name]:
+        raise ValueError('Retained renewal configuration changed')
+    paths = []
+    for stem in ('fullchain', 'privkey'):
+        live = certroot/'live'/name/(stem+'.pem')
+        if not live.is_symlink() or live.lstat().st_uid != 0:
+            raise ValueError('Unexpected retained certificate link')
+        target = live.resolve(strict=True)
+        if target.parent != certroot/'archive'/name or not re.fullmatch(stem+r'[0-9]+\.pem', target.name):
+            raise ValueError('Retained certificate link escaped its archive')
+        owned(target)
+        paths.append(target)
+    cert = x509.load_pem_x509_certificate(paths[0].read_bytes())
+    key = serialization.load_pem_private_key(paths[1].read_bytes(), password=None)
+    public = lambda value: value.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    if public(cert.public_key()) != public(key.public_key()):
+        raise ValueError('Retained certificate/key mismatch')
+except (OSError, ValueError, TypeError, KeyError, AttributeError):
+    sys.exit('[FAIL] Retained target certificate ownership could not be verified.')
+PYRETAINED
+    check_webroot_lineage "$name"
+}
+
 preflight_target_certbot_ownership() {
     local hook domains name vision
     local -a owned=() incoming
@@ -654,7 +726,9 @@ preflight_target_certbot_ownership() {
     for name in "${incoming[@]}"; do
         if [[ -e "/etc/letsencrypt/live/$name" || -L "/etc/letsencrypt/live/$name" ||
               -e "/etc/letsencrypt/archive/$name" || -e "/etc/letsencrypt/renewal/$name.conf" ]]; then
-            [[ " ${owned[*]} " == *" $name "* ]] || die "Target Certbot lineage has no project ownership: $name"
+            if [[ " ${owned[*]} " != *" $name "* ]]; then
+                check_retained_target_lineage "$name" "${owned[@]}" || die "Target Certbot lineage has no project ownership: $name"
+            fi
         fi
     done
 }

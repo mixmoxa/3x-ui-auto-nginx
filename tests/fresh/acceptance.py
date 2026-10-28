@@ -288,6 +288,8 @@ if __name__ == '__main__':
             invoke('checks.transports()', 'cold-transports', 300)
             phase = 'change-domains'
             invoke('checks.change_domains()', 'change-domains', 1200, tty=True)
+            phase = 'restore-before-domains'
+            invoke('checks.restore_before_domains()', 'restore-before-domains', 600, tty=True)
             poweroff()
             phase = 'mandatory-dependency-negative'
             fresh_disk()
