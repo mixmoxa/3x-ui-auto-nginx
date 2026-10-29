@@ -19,7 +19,7 @@
 
 </div>
 
-**3X-UI AUTO NGINX**, [3x-ui](https://github.com/MHSanaei/3x-ui) ve Xray'i kurar; nginx, HTTPS, bağlantı profilleri, abonelikler, ağ tanılama ve yedekleme/geri yükleme yapılandırmasını hazırlar. AmneziaWG 3.1 ve DoH destekli AdGuard Home isteğe bağlıdır.
+**3X-UI AUTO NGINX**, [3x-ui](https://github.com/MHSanaei/3x-ui) ve Xray'i kurar; nginx, HTTPS, bağlantı profilleri, abonelikler, ağ tanılama ve yedekleme/geri yükleme yapılandırmasını hazırlar. AmneziaWG 3.1 ve DoH destekli AdGuard Home isteğe bağlıdır. Etkileşimli yöneticiyle alan adlarını değiştirebilir ve yedeklemeleri de yönetebilirsiniz.
 
 İki alan adı ve temiz bir VPS yeterlidir. Kurulum aracı bir kamuflaj web sitesini otomatik seçip yayınlar.
 
@@ -30,6 +30,7 @@
 | **Hazır bağlantı profilleri**<br>REALITY, XHTTP, Hysteria2, Amnezia WG, VLESS XTLS Vision, WebSocket TLS ve Trojan gRPC. | **Dışarıya kapalı dahili hizmetler**<br>Panelin ve abonelik hizmetinin dahili portları doğrudan internete açılmaz. |
 | **Kısıtlı nginx yönlendirmesi**<br>İstekler rastgele yerel portlara yönlendirilemez. | **Backup / Restore v3**<br>Mevcut VPS'i önceki durumuna döndürün veya farklı bir sağlayıcıdaki yeni sunucuya geri yükleyin. |
 | **Otomatik sertifikalar**<br>Let's Encrypt sertifikaları elle yapılandırma gerektirmeden alınır ve yenilenir. | **AdGuard Home + DoH**<br>Kurulumda isteğe bağlıdır; üçüncü bir alan adı gerekmez. |
+| **İngilizce ve Rusça yönetici**<br>Basit bir menüden kurulum ve yedekleme yönetimi. | **Alan adı değiştirme**<br>Panel, REALITY veya her iki alan adını sunucuyu yeniden kurmadan değiştirin. |
 
 <a id="installation"></a>
 
@@ -41,7 +42,14 @@
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-Mevcut kararlı v2.1.7 sürümü kurulumu doğrudan başlatır. v2.2.0 yayımlandıktan sonra etkileşimli başlangıçta o çalıştırma için English veya Русский seçilir, ardından menü açılır: **1 — Installation**, **2 — Change Domains**, **3 — Backups**, **0 — Exit**. Menü için `ssh -t` ile TTY ayırın; TTY yoksa açık kurulum seçeneklerini kullanın. CLI, dil seçimi olmadan İngilizce çıktısını korur. [Menü ve yedekleme komutları](docs/MANAGER.md).
+Betiği çalıştırdıktan sonra **1 — English** veya **2 — Русский** seçin. Ardından ana menü açılır:
+
+- **1 — Installation:** yeni sunucu kurma veya tam yeniden kurulum.
+- **2 — Change Domains:** panel alan adını, REALITY alan adını veya ikisini yeniden kurmadan değiştirme.
+- **3 — Backups:** yedek oluşturma, listeleme ve geri yükleme.
+- **0 — Exit:** çıkış.
+
+Menü, etkileşimli bir SSH terminali gerektirir.
 
 <details>
 <summary><strong>Alternatif indirme — GitHub Releases kullanılamıyorsa</strong></summary>
@@ -57,27 +65,26 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 <a id="installation-vs-update"></a>
 
 > [!CAUTION]
-> **Kurulum ≠ güncelleme**
+> **Kurulum, güncelleme değildir!**
 >
-> **3X-UI AUTO NGINX**, temiz bir VPS üzerine ilk kurulum veya tamamen yeniden kurulum için tasarlanmıştır.
+> Betiği **parametresiz** yeniden çalıştırmak yöneticiyi açar; sunucuyu yeniden kurmaz. Ancak **Installation**, temiz bir VPS veya tam yeniden kurulum içindir.
 >
-> Daha önce yapılandırılmış bir sunucuda betiği yeniden çalıştırmak **mevcut kurulumu güncellemez**; bunun yerine bileşenleri yeniden kurar ve eski 3X-UI veritabanını ve nginx yapılandırmasını siler.
-
-v2.2.0 menüsünde bu uyarı **Installation** seçeneği içindir. **Change Domains** ve **Backups**, paneli yeniden kurmayan ayrı işlemlerdir.
+> Mevcut kurulum algılanırsa betik, yönetilen verilerin silineceğini bildirir ve tam olarak **YES** yazmanızı ister. Yeniden kurulum, 3X-UI veritabanını ve nginx yapılandırmasını değiştirir. **Önce yedeğinizi VPS dışında saklayın.**
+>
+> **Change Domains** ve **Backups**, paneli yeniden kurmayan ayrı işlemlerdir.
 
 <details>
 <summary><strong>Nasıl güncellenir?</strong></summary>
 
-- **3X-UI ve Xray:** 3X-UI'nin yerleşik güncelleme araçlarını kullanın.
-- **3X-UI AUTO NGINX:** kurulu sistemin yerinde güncellenmesi desteklenmez. Yeni sürümlerdeki değişiklikler yalnızca sıfırdan kurulum veya tamamen yeniden kurulum sırasında uygulanır.
-- **Backup / Restore:** projeyi güncellemek için değil, verileri yedeklemek ve geri yüklemek içindir.
+- **3X-UI ve Xray:** panelin kendi güncelleme araçlarını kullanın. Yeni sürümlerin bu projenin yapılandırmasıyla uyumluluğu henüz doğrulanmamış olabilir.
+- **3X-UI AUTO NGINX:** mevcut kurulumun yerinde güncellenmesi desteklenmez. Yeni yöneticinin özelliklerini kullanmak için güncel betiği indirip istediğiniz işlemi seçebilirsiniz; yönetici kurulu yapılandırmanın uyumluluğunu kontrol eder.
+- **Backup / Restore:** verileri yedekler ve geri yükler; kurulu sistemi güncellemez.
 
-**Yalnızca güncelleme yapmak için kurulum betiğini yeniden çalıştırmayın!** VPS'nizin güvenliği için nginx'i, Linux çekirdeğini ve diğer sistem bileşenlerini işletim sisteminizin paket yöneticisiyle düzenli olarak güncelleyin.
+**Yalnızca güncelleme amacıyla Installation seçmeyin!** nginx, Linux çekirdeği ve diğer sistem paketlerini işletim sisteminizin araçlarıyla güncelleyin.
 
 </details>
 
-
-Kurulum aracı başlatıldığında aşağıdaki adımları sırayla sunar. Terminalde göreceğiniz sorular, karşılaştırabilmeniz için özgün İngilizce biçimleriyle verilmiştir:
+Ana menüden **Installation** seçildiğinde sunulan kurulum ayarları aşağıda açıklanmıştır.
 
 ---
 
@@ -116,14 +123,14 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 *Deneyimsiz kullanıcılara önerilir · Varsayılan olarak açık (`Y`)*
 
-Kurulum aracı ek sunucu korumasını otomatik olarak yapılandırır: SSH parola kaba kuvvet saldırılarına karşı Fail2ban, şifreli sistem DNS’i (DoT), sistem ve paketler için otomatik güvenlik güncellemeleri ve bellek yetersizliğinde kararlılığı artırmak için 1 GiB swap dosyası.
+Kurulum aracı SSH koruması için Fail2ban'ı, şifreli sistem DNS'ini (DoT) ve otomatik güvenlik güncellemelerini yapılandırır. Koşullar uygunsa, ek güvenlik seçiminizden bağımsız olarak 1 GiB swap dosyası da oluşturur.
 
 **Bu seçeneği etkinleştirmeden önce aşağıdaki ayrıntıları**, özellikle otomatik yeniden başlatma takvimini okuyun.
 
 <details>
 <summary>🔐 Güvenlik ayarlarının ayrıntıları</summary>
 
-`Y` seçildiğinde şu ayarlar uygulanır:
+`Y` seçildiğinde ek güvenlik ayarları uygulanır. Swap yapılandırması bu seçimden bağımsızdır:
 
 - **1 GiB swap.** Etkin swap yoksa, dosya sistemi destekleniyorsa ve en az 4 GiB boş alan varsa kurulum aracı swap dosyasını oluşturup etkinleştirir. Mevcut swap ayarları değiştirilmez. Koşullar sağlanmazsa kurulum durdurulmadan bu adım atlanır.
 - **SSH koruması — Fail2ban.** Gerçek SSH dinleme portlarına göre tekrarlanan başarısız giriş denemelerini sınırlar. Mevcut SSH kimlik doğrulama ayarlarını değiştirmez.
@@ -229,9 +236,6 @@ Abonelik bağlantısı kurulum sonu raporunda gösterilir. Bu seçeneği reddede
 
 ---
 
-> [!CAUTION]
-> **Yalnızca temiz kurulum veya tam yeniden kurulum içindir.** `x-ui-latest.sh` önceki 3x-ui veritabanını ve nginx yapılandırmasını siler; **çalışan bir VPS'i güncellemek için kullanılmamalıdır**. Yeniden kurmadan önce Backup kopyasını VPS dışında saklayın. Var olan kurulum algılandığında yeniden kurulum veya kaldırma için tam olarak büyük harflerle `YES` yazmak gerekir.
-
 Kurulum sonunda **panel adresi, kullanıcı adı ve parola, tanılama adresi ve abonelik bağlantısı** (otomatik istemci oluşturulduysa) gösterilir. AdGuard Home seçildiyse yönetim adresi, parolası ve DoH uç noktası da görüntülenir.
 
 İşletim sistemi güncellemesi yeniden başlatma gerektiriyorsa kurulum aracı bunu bildirir. **İlk yeniden başlatma elle yapılır:** `sudo reboot`.
@@ -261,17 +265,19 @@ Standart abonelikler, JSON ve **Mihomo / Clash** nginx üzerinden HTTPS ile sunu
 
 <a id="change-domains"></a>
 
-## 🌐 Alan adlarını değiştirme (v2.2.0)
+## 🌐 Alan adlarını değiştirme
 
-Yöneticiyi root olarak SSH TTY oturumunda açın; **2 — Change Domains** ve ardından Panel, REALITY veya ikisini seçin. Eski/yeni değerleri kontrol edip **YES** yazın. Yeni A/AAAA kayıtları bu VPS'yi göstermelidir; Let's Encrypt için erişilebilir TCP/80 ve HTTP-01 webroot doğrulaması gerekir. Alan adları birbirinden ve Vision alan adından farklı olmalıdır; Panel/REALITY rollerinin takası desteklenmez.
+Ana menüden **2 — Change Domains** seçin. Panel alan adını, REALITY alan adını veya ikisini yeniden kurulum olmadan değiştirebilirsiniz. Yeni DNS kayıtları VPS'yi göstermeli ve sertifika alımı için TCP/80 erişilebilir olmalıdır. Alan adları birbirinden ve Vision alan adından farklı olmalıdır.
 
-Değişiklikten önce tam Backup v3 oluşturulur. İstemciler, UUID'ler, parolalar, Subscription ID'ler, trafik geçmişi, anahtarlar ve kullanıcı ayarları korunur. Vision alan adı ve yapılandırması aynı kalır. Seçilen rollerin adresleri ve sertifikaları değişir; etkilenen abonelik URL'lerini ve istemci yapılandırmalarını güncelleyin. Eski sertifikalar saklanır. Eski alan adının DNS'i kaldırıldıktan sonra erişilebilirliği garanti edilmez.
+Değişikliklerden önce otomatik olarak tam Backup v3 oluşturulur. İstemciler, anahtarlar, ayarlar ve trafik istatistikleri korunur. Vision alan adı değişmez. İşlemden sonra abonelik URL'lerini ve istemci yapılandırmalarını güncellemeniz gerekebilir.
 
-Hata durumunda `/var/backups/x-ui` içindeki yedeği ve `/var/lib/3x-ui-auto-nginx/change-domains` içindeki kurtarma verilerini saklayın. Doğrulanmış kurtarma için yöneticiyi SSH üzerinden yeniden açın; `ROLLBACK_UNVERIFIED` durumunda durun ve verileri koruyun. Tutarlı manifest ile standart yerel SQLite düzeni veya manifest olmadan kesin olarak tanınan v2.1.7 kurulumu desteklenir. Bilinmeyen ya da çelişkili yapılandırmalar reddedilir. [Ayrıntılar ve sınırlar](docs/MANAGER.md#change-domains).
+Yalnızca tanınan proje kurulumları desteklenir; buna uyumlu v2.1.7 kurulumları da dahildir. Hata olursa **yedekleri veya kurtarma verilerini silmeyin**. `ROLLBACK_UNVERIFIED` görürseniz işlemi durdurun ve tanılama bilgilerini saklayın. [Ayrıntılar, sınırlamalar ve kurtarma](docs/MANAGER.md#change-domains).
 
 ## 💾 Yedekleme ve geri yükleme
 
-**Backup / Restore v3**, VPS'inizi eski durumuna döndürmenizi veya işletim sistemini yeniden kurduktan sonra uyumlu bir sunucuda kurtarmanızı sağlar. Araç kurulumla birlikte yüklenir; komutları root olarak çalıştırın:
+Ana menüde **3 — Backups** bölümünü açarak yedek oluşturabilir, arşivleri listeleyebilir veya Restore çalıştırabilirsiniz. İşletim sistemini yeniden kurduktan sonra ya da başka bir VPS'ye taşınırken yedeği kullanabilirsiniz. Geri yükleme için işletim sistemi, sürümü ve işlemci mimarisi yedekle aynı olmalıdır.
+
+Komut satırından root olarak şunları çalıştırabilirsiniz:
 
 ```bash
 # Yeni yedek oluştur
@@ -294,8 +300,6 @@ Arşivler `/var/backups/x-ui/` dizinine kaydedilir.
 
 Hizmet arayüzleri doğrudan internete açılmaz. Panel, abonelikler ve ek hizmetlere nginx ve HTTPS üzerinden erişilir; dahili portlar yalnızca yerel bağlantıları kabul eder.
 
-İstekleri rastgele localhost portlarına ileten genel amaçlı bir proxy yoktur. Kritik hata oluşursa eksik bir yapılandırma başlatılmak yerine kurulum veya geri yükleme durdurulur.
-
 
 **VPS'inizi nasıl güvenceye alacağınızdan emin değil misiniz?** Kurulum sırasında gelişmiş güvenlik seçeneğini etkinleştirerek SSH kaba kuvvet saldırılarına karşı korumayı, şifreli DNS'i ve güvenlik güncellemelerini otomatik ayarlayabilirsiniz. Önce **Hızlı başlangıç** bölümündeki ayrıntıları ve gece yeniden başlatma takvimini okuyun.
 
@@ -314,7 +318,7 @@ Projeler birbirinden bağımsızdır; **bu kurulum aracı Telegram Web Proxy Man
 ## ⚙️ Teknik ayrıntılar ve uyumluluk
 
 - **Sistemler:** Ubuntu 24.04, Ubuntu 26.04 ve Debian 13.
-- **UFW:** 80/tcp, 443/tcp ve 443/udp portlarına izin verir (AmneziaWG seçilirse isteğe bağlı olarak 8443/udp da eklenir). UFW kapalıysa SSH portu bulunup erişime izin verilmeden etkinleştirilmez; bu mümkün değilse uyarıyla kapalı kalır. **⚠️ Geri yükleme işlemi UFW'yi hiçbir zaman etkinleştirmez.**
+- **UFW:** 80/tcp, 443/tcp ve 443/udp portlarına izin verir (AmneziaWG seçildiğinde ayrıca 8443/udp). Installation sırasında UFW yalnızca SSH erişimi doğrulandıktan sonra etkinleştirilir; bu güvenli değilse uyarıyla kapalı kalır. Restore sonrasında yönetici UFW'yi **yalnızca ayrıca seçildiğinde** ve güvenlik kontrolleri başarılı olduğunda etkinleştirebilir. `x-ui-backup restore` komutu UFW'yi etkinleştirmez.
 - **Sertifikalar:** Let's Encrypt webroot ve `certbot.timer`, nginx'i durdurmadan sertifikaları otomatik yeniler.
 - **3x-ui sürümü:** kurulum aracı, varsayılan olarak 3x-ui Auto Nginx ile uyumluluğu kapsamlı biçimde doğrulanmış en yeni sürümü yükler. Bu, resmi projenin en son yayımladığı sürüm olmayabilir. Kurulum sonrasında 3x-ui'nin kendi güncelleme mekanizmasını kullanabilirsiniz; ancak yeni sürümün mevcut yapılandırmayla uyumluluğu henüz doğrulanmamış olabilir. `-version <tag>` ile başka bir kararlı sürümü açıkça seçebilirsiniz (desteklenen en düşük sürüm v3.8.0); doğrulanmamış uyumluluk için uyarı gösterilir.
 

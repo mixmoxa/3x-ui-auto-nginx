@@ -19,7 +19,7 @@ Two domains, a clean VPS, and a few minutes to install.
 
 </div>
 
-**3X-UI AUTO NGINX** installs [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray with nginx, HTTPS, connection profiles, subscriptions, diagnostics, and Backup / Restore. AmneziaWG 3.1 and AdGuard Home with DoH are optional.
+**3X-UI AUTO NGINX** installs [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray with nginx, HTTPS, connection profiles, subscriptions, diagnostics, and Backup / Restore. AmneziaWG 3.1 and AdGuard Home with DoH are optional. The interactive manager also lets you change domains and manage backups.
 
 Bring two domains and a clean VPS. A cover website is selected and deployed automatically.
 
@@ -30,6 +30,7 @@ Bring two domains and a clean VPS. A cover website is selected and deployed auto
 | **Preconfigured connections**<br>REALITY, XHTTP, Hysteria2, Amnezia WG, VLESS XTLS Vision, WebSocket TLS, and Trojan gRPC. | **Private internal services**<br>The panel and subscription service don't expose their internal ports to the internet. |
 | **Restricted nginx routing**<br>Requests cannot be forwarded to arbitrary local ports. | **Backup / Restore v3**<br>Roll back your VPS or restore to a new server, including one from another hosting provider. |
 | **Automatic certificates**<br>Let's Encrypt issuance and renewal need no manual configuration. | **AdGuard Home + DoH**<br>Opt in during setup; no third domain needed. |
+| **English and Russian manager**<br>Install and manage backups through a simple menu. | **Change domains**<br>Change the panel domain, REALITY domain, or both without reinstalling the server. |
 
 <a id="installation"></a>
 
@@ -41,11 +42,14 @@ Configure the DNS records for **two domains** to point to your VPS IP address: o
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-The current stable release v2.1.7 starts installation directly. After v2.2.0 is published, an interactive launch first offers **1 — English**, **2 — Русский**, or **3 — Exit / Выход**. It then opens the menu: **1 — Installation**, **2 — Change Domains**, **3 — Backups**, **0 — Exit**.
+After launching, choose **1 — English** or **2 — Русский**. Then the main menu opens:
 
-The EN/RU menus distinguish stages and results; Backup entries show readable sizes and UTC dates, and Restore shows readable archive metadata. Successful installation, domain changes and Restore exit to the shell. Creating or listing Backups returns to the Backups submenu. Color is optional (`NO_COLOR`, `TERM=dumb`); ordinary CLI behavior is preserved.
+- **1 — Installation:** set up a new server or perform a full reinstall.
+- **2 — Change Domains:** change the panel domain, REALITY domain, or both without reinstalling.
+- **3 — Backups:** create, list, and restore backups.
+- **0 — Exit.**
 
-The language lasts for the current invocation only. Main questions, confirmations and summaries are translated; technical logs and status markers retain their original text. Dangerous operations still require exact **YES**. Allocate a TTY with `ssh -t` for the menu. Ordinary CLI invocations with explicit installation flags keep English output without language selection; use this mode without a TTY. [Menu and Backup CLI](docs/MANAGER.md).
+The menu requires an interactive SSH terminal.
 
 <details>
 <summary><strong>Fallback download — if GitHub Releases is unavailable</strong></summary>
@@ -61,27 +65,26 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 <a id="installation-vs-update"></a>
 
 > [!CAUTION]
-> **Installation ≠ update**
+> **Installation is not an update!**
 >
-> **3X-UI AUTO NGINX** is intended for initial installation on a clean VPS or a complete reinstall.
+> Running the script again **without arguments** opens the manager; it does not reinstall the server. However, **Installation** is intended for a clean VPS or a full reinstall.
 >
-> Rerunning the script on an already configured server **does not update the existing installation** — it reinstalls the stack, removing the previous 3X-UI database and nginx configuration.
-
-In the v2.2.0 menu, this warning applies to **Installation**. **Change Domains** and **Backups** are separate operations that do not reinstall the panel.
+> If an existing installation is detected, the script warns that managed data will be removed and requires the exact confirmation **YES**. Reinstalling replaces the 3X-UI database and nginx configuration. **Save a backup outside the VPS first.**
+>
+> **Change Domains** and **Backups** are separate operations that do not reinstall the panel.
 
 <details>
 <summary><strong>How do I update?</strong></summary>
 
-- **3X-UI and Xray:** use 3X-UI's built-in update tools.
-- **3X-UI AUTO NGINX:** in-place updates of the installed stack are not supported. Changes in new releases only take effect after a fresh installation or complete reinstall.
-- **Backup / Restore:** is for saving and restoring data, not for updating the project.
+- **3X-UI and Xray:** use the panel's built-in update tools. New versions may not yet be verified with this project's configuration.
+- **3X-UI AUTO NGINX:** updating the installed stack in place is not supported. To use features of the latest manager, download the current script and select the appropriate operation; it checks the installed configuration for compatibility.
+- **Backup / Restore:** saves and restores data; it does not update the stack.
 
-**Do not rerun the installer just to update!** To keep your VPS secure, regularly update nginx, the Linux kernel, and other system components using your operating system's package manager.
+**Do not select Installation just to update!** Update nginx, the Linux kernel and other system packages using your operating system's tools.
 
 </details>
 
-
-Once started, the installer walks you through the following steps. The prompts below are shown exactly as they appear in the terminal:
+The settings below are offered when you select **Installation** from the main menu.
 
 ---
 
@@ -120,14 +123,14 @@ Replace `panel.example.com` and `reality.example.com` with your own domains. Opt
 
 *Recommended for less experienced users · Enabled by default (`Y`)*
 
-The installer automatically configures additional server protection: Fail2ban against SSH password brute-force attacks, encrypted system DNS (DoT), automatic security updates for the system and packages, and a 1 GiB swap file to improve resilience when memory runs low.
+The installer configures Fail2ban for SSH protection, encrypted system DNS (DoT), and automatic security updates. When conditions permit, it also creates a 1 GiB swap file, regardless of whether enhanced security is selected.
 
 **Read the settings below before enabling this option**, particularly the automatic reboot schedule.
 
 <details>
 <summary>🔐 Detailed security settings</summary>
 
-Choosing `Y` enables:
+Choosing `Y` enables the additional security settings. Swap setup runs independently of this choice:
 
 - **1 GiB swap.** If no swap is active, the filesystem is supported and at least 4 GiB is free, the installer creates and enables a swap file. Existing swap settings remain unchanged. If these conditions are not met, this step is skipped without stopping installation.
 - **SSH protection — Fail2ban.** Limits repeated unsuccessful logins using the actual SSH ports. Existing SSH authentication settings are not changed.
@@ -233,9 +236,6 @@ The link appears in the final installation report. If you decline, you can creat
 
 ---
 
-> [!CAUTION]
-> **Clean install or full reinstall only.** `x-ui-latest.sh` removes the previous 3x-ui database and nginx configuration — **it is not an update command for an existing VPS**. Keep a Backup off-server before reinstalling. Reinstalling or uninstalling a detected deployment requires typing exactly `YES` in uppercase.
-
 The installation report displays the **panel URL, username and password, diagnostics address, and subscription link** (if you chose to create a client). For AdGuard Home, it also includes the admin address, password, and DoH endpoint.
 
 If an OS update requires a reboot, the installer will notify you. **The initial reboot is manual**: run `sudo reboot`.
@@ -265,17 +265,19 @@ Standard subscriptions, JSON, and **Mihomo / Clash** are served via nginx and HT
 
 <a id="change-domains"></a>
 
-## 🌐 Change domains (v2.2.0)
+## 🌐 Change domains
 
-Run the manager as root in an SSH TTY, choose **2 — Change Domains**, then Panel, REALITY or both. Review the old/new values and type **YES**. New A/AAAA records must point to this VPS; Let's Encrypt needs reachable TCP/80 and HTTP-01 webroot validation. Domains must remain distinct from each other and Vision; exchanging Panel/REALITY roles is unsupported.
+In the main menu, select **2 — Change Domains**. You can change the panel domain, REALITY domain, or both without reinstalling. New DNS records must point to your VPS, and TCP/80 must be reachable for certificate issuance. The domains must differ from each other and from the Vision domain.
 
-A full Backup v3 is created before changes. Clients, UUIDs, passwords, Subscription IDs, traffic history, keys and user settings are preserved. Vision keeps its domain and configuration. Selected roles receive new addresses/certificates; update affected subscription URLs and client configurations afterward. Old certificates are retained. Availability of an old domain is not guaranteed after its DNS is removed.
+A full Backup v3 is created automatically before any changes. Clients, keys, settings and traffic statistics are preserved. The Vision domain remains unchanged. After a successful change, you may need to update subscription URLs and client configurations.
 
-On failure, retain Backup in `/var/backups/x-ui` and recovery data in `/var/lib/3x-ui-auto-nginx/change-domains`. Run the manager again through SSH for verified recovery; stop and preserve the evidence on `ROLLBACK_UNVERIFIED`. Supported layouts use local SQLite with a consistent manifest, or an unambiguously recognized v2.1.7 installation without one. Unknown or contradictory configurations are refused. [Details and limits](docs/MANAGER.md#change-domains).
+Only recognized project installations are supported, including compatible v2.1.7 installations. If an error occurs, **do not delete backups or recovery data**. If you see `ROLLBACK_UNVERIFIED`, stop and preserve the diagnostics. [Details, limitations and recovery](docs/MANAGER.md#change-domains).
 
 ## 💾 Backup / Restore
 
-Backup / Restore **v3** lets you roll back your VPS or recover a compatible server after an OS reinstall. The utility is installed with the server; run as root:
+Open **3 — Backups** in the main menu to create a backup, list archives or run Restore. You can use a backup after reinstalling the OS or to move to another VPS. To restore it, the operating system, its version and the CPU architecture must match the backup.
+
+For command-line use, run the following as root:
 
 ```bash
 # Create a new backup
@@ -306,8 +308,6 @@ The destination must be new; original paths are preserved under `files/` and lin
 
 Service interfaces are not exposed directly to the internet. The panel, subscriptions, and additional services are accessible through nginx and HTTPS, while internal ports remain local.
 
-There is no generic proxy to arbitrary localhost ports. Critical errors stop installation or restore rather than starting an incomplete configuration.
-
 
 **Not sure how to secure your VPS?** Enable enhanced security during installation to configure protection against SSH brute-force attempts, encrypted DNS, and automatic security updates. Read the detailed settings and the scheduled nighttime reboot policy in **Quick start** first.
 
@@ -326,7 +326,7 @@ The projects are independent; **this installer does not install Telegram Web Pro
 ## ⚙️ Technical details and compatibility
 
 - **Systems:** Ubuntu 24.04, Ubuntu 26.04, and Debian 13.
-- **UFW:** allows 80/tcp, 443/tcp, and 443/udp (8443/udp optionally, when AmneziaWG is selected). Inactive UFW is enabled only after the SSH port is detected and allowed; otherwise it remains inactive with a warning. **⚠️ Restore never enables UFW.**
+- **UFW:** allows 80/tcp, 443/tcp and 443/udp (plus 8443/udp when AmneziaWG is selected). During Installation, inactive UFW is enabled only after SSH access has been checked; otherwise it remains off with a warning. The manager can enable UFW after Restore **only if explicitly selected** and the safety checks pass. Standalone `x-ui-backup restore` does not enable UFW.
 - **Certificates:** Let's Encrypt webroot and `certbot.timer` renew certificates automatically without stopping nginx.
 - **3x-ui version:** by default, the installer uses the latest version thoroughly tested for compatibility with 3X-UI AUTO NGINX, which may not be the latest upstream release. After installation, you can update 3x-ui using its built-in update mechanism, but the new version may not yet be verified against this configuration. You can also explicitly select another stable release with `-version <tag>` (minimum supported version: v3.8.0); the installer will warn that compatibility has not been verified.
 
