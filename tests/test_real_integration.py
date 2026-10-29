@@ -757,6 +757,11 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
             self.assertEqual(body,b'vision-cover')
             created = next(r for r in api.request('panel/api/inbounds/list')['obj'] if r['id']==iid)
             self.assertEqual(created['remark'],'🇫🇮 XTLS')
+            stream = created['streamSettings']
+            self.assertEqual(stream['network'], 'tcp')
+            self.assertEqual(stream['security'], 'tls')
+            self.assertIs(stream.get('tcpSettings', {}).get('acceptProxyProtocol'), True,
+                          'Official API must persist tcpSettings.acceptProxyProtocol=true')
             with sqlite3.connect(self.root/'db/x-ui.db') as db:
                 self.assertEqual(db.execute('SELECT remark FROM hosts WHERE inbound_id=?',(iid,)).fetchone()[0],'vision')
             self.assertTrue(self.vision_artifacts[2].is_symlink())

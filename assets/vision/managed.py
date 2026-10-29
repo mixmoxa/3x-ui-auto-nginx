@@ -80,7 +80,7 @@ def inbound(domain, port, fallback, cert, key, flag="🌐"):
                          'fallbacks': [{'name': domain, 'alpn': 'http/1.1', 'dest': f'127.0.0.1:{fallback}', 'xver': 1}]},
             # Official panel v3.9.0 gates flow on "tcp". Xray maps tcp/raw to RAW.
             'streamSettings': {'network': 'tcp', 'security': 'tls',
-                               'rawSettings': {'acceptProxyProtocol': True, 'header': {'type': 'none'}},
+                               'tcpSettings': {'acceptProxyProtocol': True, 'header': {'type': 'none'}},
                                'tlsSettings': {'serverName': domain, 'minVersion': '1.2', 'alpn': ['http/1.1'],
                                                'certificates': [{'certificateFile': cert, 'keyFile': key,
                                                                  'oneTimeLoading': False, 'usage': 'encipherment'}]}},

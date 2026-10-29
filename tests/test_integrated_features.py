@@ -849,7 +849,8 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
         self.assertNotIn('proxy_pass', fallback); self.assertNotIn('include', fallback)
         row = vision.inbound('vision.example', 12000, 12001, '/cert.pem', '/key.pem')
         self.assertEqual(row['streamSettings']['network'], 'tcp')
-        self.assertTrue(row['streamSettings']['rawSettings']['acceptProxyProtocol'])
+        self.assertIs(row['streamSettings'].get('tcpSettings', {}).get('acceptProxyProtocol'), True,
+                      'network=tcp requires tcpSettings.acceptProxyProtocol=true')
         self.assertEqual(row['settings']['fallbacks'][0]['dest'], '127.0.0.1:12001')
 
     def test_wrong_certificate_rejected(self):
