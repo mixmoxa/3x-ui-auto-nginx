@@ -10,7 +10,7 @@ import subprocess
 import time
 import urllib.request
 
-from diagnostics import vision_failure
+from diagnostics import vision_failure, api_restart_probe
 
 ROOT = Path('/root/pilot')
 UNITS = ('ssh', 'nginx', 'x-ui', 'mtr-backend', 'AdGuardHome', 'fail2ban',
@@ -58,6 +58,7 @@ def install(scenario, ref):
                'XUI_AUTO_REF': ref, 'CURL_CA_BUNDLE': '/etc/ssl/certs/ca-certificates.crt',
                'REQUESTS_CA_BUNDLE': '/etc/ssl/certs/ca-certificates.crt'}
         os.environ.update(env)
+        env['PATH'] = str(api_restart_probe(ROOT))+os.pathsep+env['PATH']
         started = time.monotonic()
         context = ssl.create_default_context(cafile=str(ROOT/'fixture.crt'))
         with urllib.request.urlopen('https://10.0.2.2:15000/roots/0', context=context, timeout=10) as response:

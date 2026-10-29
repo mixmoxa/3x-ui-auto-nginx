@@ -43,6 +43,8 @@ curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x
 
 The current stable release v2.1.7 starts installation directly. After v2.2.0 is published, an interactive launch first offers **1 — English**, **2 — Русский**, or **3 — Exit / Выход**. It then opens the menu: **1 — Installation**, **2 — Change Domains**, **3 — Backups**, **0 — Exit**.
 
+The EN/RU menus distinguish stages and results; Backup entries show readable sizes and UTC dates, and Restore shows readable archive metadata. Successful installation, domain changes and Restore exit to the shell. Creating or listing Backups returns to the Backups submenu. Color is optional (`NO_COLOR`, `TERM=dumb`); ordinary CLI behavior is preserved.
+
 The language lasts for the current invocation only. Main questions, confirmations and summaries are translated; technical logs and status markers retain their original text. Dangerous operations still require exact **YES**. Allocate a TTY with `ssh -t` for the menu. Ordinary CLI invocations with explicit installation flags keep English output without language selection; use this mode without a TTY. [Menu and Backup CLI](docs/MANAGER.md).
 
 <details>

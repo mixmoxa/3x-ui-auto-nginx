@@ -157,7 +157,8 @@ CD_COUNT=0
         result = subprocess.run(["bash", "-eu", "-c", startup], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
-        self.assertIn("3X-UI AUTO NGINX", function("manager_menu"))
+        self.assertIn("ui_header", function("manager_menu"))
+        self.assertIn("3X-UI AUTO NGINX", function("ui_header"))
         self.assertNotIn("X-UI-PRO", result.stdout.upper())
         self.assertNotIn("X-UI Secure Panel", SOURCE)
         helpers = '\n'.join(re.findall(r'^msg_\w+\(\).*$', SOURCE, re.M))
@@ -304,12 +305,13 @@ echo 'x-ui 3.9.0'
                                    {"ok": "flags : aes\n", "warn": "flags : fpu\n", "info": ""}[cpu_level])
                 script = (helpers + '\n' + mocks + '\nuname() { echo x86_64; }\n' + function("check_cpu") +
                           '\ncheck_cpu "$CPUINFO"\n' + relocated + '\n' + function("main") + '\nmain\n')
-                result = subprocess.run(["bash", "-euo", "pipefail", "-c", script], capture_output=True, text=True, env={
+                environment = {
                     **os.environ, **FIXTURE, "SUMMARY_LOG": str(log), "UFW_STATE": state,
                     "FAIL_GATE": "1" if failed_gate else "0", "FAIL_VERSION": "1" if failed_version else "0",
                     "CPUINFO": str(cpuinfo), "INSTALL_AGH": "n",
                     "config_username": "fixture-user", "config_password": "fixture-password",
-                })
+                }
+                result = subprocess.run(["bash", "-euo", "pipefail", "-c", script], capture_output=True, text=True, env=environment)
                 self.assertEqual(result.returncode, 1 if failed_gate else 0, result.stderr)
                 text = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
                 calls = log.read_text().splitlines()
@@ -326,6 +328,17 @@ echo 'x-ui 3.9.0'
                              "Enabled by default: REALITY · XHTTP · Hysteria2", "Optional profiles: WS · Trojan gRPC"):
                     self.assertIn(item, text)
                 self.assertEqual("(3X-UI 3.9.0)" in text, not failed_version)
+                if (state,missing_assets,failed_version,failed_gate,missing_certificate,cpu_level)==('active',False,False,False,None,'ok'):
+                    ui_helpers='\n'.join(function(n) for n in ('ui_rule','ui_title','ui_section','ui_values'))
+                    for language in ('en','ru'):
+                        rendered=subprocess.run(['bash','-euo','pipefail','-c',ui_helpers+'\n'+script],capture_output=True,text=True,
+                            env={**environment,'UI_INTERACTIVE':'1','UI_LANG':language})
+                        self.assertEqual(rendered.returncode,0,rendered.stderr)
+                        phases=[int(n) for n in re.findall(r'^  \[(\d+)\] ',rendered.stdout,re.M)]
+                        self.assertEqual(phases,list(range(1,9)))
+                        self.assertIn('INSTALLATION COMPLETED' if language=='en' else 'УСТАНОВКА ЗАВЕРШЕНА',rendered.stdout)
+                        self.assertIn('SYSTEM PREPARATION' if language=='en' else 'ПОДГОТОВКА СИСТЕМЫ',rendered.stdout)
+                        self.assertEqual(rendered.stdout.count('fixture-password'),1)
                 cpu_line = next(line for line in result.stdout.splitlines() if "CPU support" in line)
                 self.assertNotIn("\x1b", cpu_line)
                 self.assertIn({"ok": "[✓]", "warn": "[!]", "info": "[i]"}[cpu_level], cpu_line)

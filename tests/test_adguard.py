@@ -454,6 +454,7 @@ class AdGuardInstaller(unittest.TestCase):
             path.write_text('fixture')
             path.chmod(0o755)
         body = stubs + r'''
+msg_err() { echo "$*"; }
 select_adguard() { :; }
 x-ui() { :; }
 ufw() { echo 'Status: active'; }

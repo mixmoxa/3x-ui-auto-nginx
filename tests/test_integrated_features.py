@@ -96,7 +96,7 @@ python3() { if [[ "$*" == *--render-acme* ]]; then echo '# ACME fixture'; else p
                 self.assertNotIn('SECOND_GEOLOCATION',result.stderr)
 
     def test_result_subscription_credentials_order_and_optional_states(self):
-        stubs='msg_inf() { printf "I:%b\\n" "$*"; }; msg_ok() { echo "$*"; }; msg_warn() { echo "$*"; }; timedatectl() { echo Europe/Helsinki; }; ufw() { echo "Status: active"; };\n'
+        stubs='msg_inf() { printf "I:%b\\n" "$*"; }; msg_ok() { echo "$*"; }; msg_warn() { echo "$*"; }; msg_err() { echo "$*"; }; timedatectl() { echo Europe/Helsinki; }; ufw() { echo "Status: active"; };\n'
         output={'url':'https://panel.example/subscription/fixture-id','protocols':['REALITY','XHTTP','Hysteria2','🇫🇮 XTLS']}
         for client_state, enabled in (('configured',True),('not_requested',False),('failed_unverified',False)):
             result=subprocess.run(['bash','-eu','-c',stubs+function('show_results')+
@@ -107,7 +107,7 @@ python3() { if [[ "$*" == *--render-acme* ]]; then echo '# ACME fixture'; else p
             text=result.stdout
             self.assertIn('VLESS TLS Vision       Ready (vision.example:443)',text)
             if enabled:
-                positions=[text.index(value) for value in ('Panel:','Diagnostics (panel login required):','Username:','Password:','Subscription:','AmneziaWG:','Backup:','AdGuard Home:')]
+                positions=[text.index(value) for value in ('Panel:','Username:','Password:','Diagnostics (panel login required):','Subscription:','AmneziaWG:','AdGuard Home:','Backup:')]
                 self.assertEqual(positions,sorted(positions))
                 self.assertIn('I: https://panel.example/subscription/fixture-id',text)
                 self.assertEqual(text.count(output['url']),1)

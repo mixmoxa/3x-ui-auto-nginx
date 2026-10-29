@@ -181,6 +181,64 @@ class CIScope(unittest.TestCase):
         self.assertNotIn(secret, json.dumps([result, unknown]))
         self.assertIsNone(diagnostics.vision_failure('Vision Ready\n'+secret))
 
+    def test_vision_detail_keeps_only_public_stages_and_failure_categories(self):
+        d=self.diagnostics();source=(ROOT/'assets/vision/managed.py').read_text()
+        secret='PRIVATE-CREDENTIAL-https://secret.invalid/token'
+        line='Vision failed during checking trusted HTTPS fallback: curl exited with 28 (request timed out); rollback=failed_rolled_back'
+        self.assertEqual(d.vision_detail(line+'\n'+secret,source),dict(stage='checking trusted HTTPS fallback',
+            reason='curl exited with 28 (request timed out)',rollback='failed_rolled_back'))
+        unknown=d.vision_detail(line.replace('curl exited with 28 (request timed out)',secret),source)
+        self.assertEqual(unknown['reason'],'unknown')
+        self.assertIsNone(d.vision_detail(line.replace('checking trusted HTTPS fallback',secret),source))
+        self.assertIsNone(d.vision_detail(line.replace('failed_rolled_back',secret),source))
+        self.assertNotIn(secret,json.dumps(unknown))
+
+    def test_api_restart_metrics_exclude_private_data_and_invalid_values(self):
+        d=self.diagnostics();secret='PRIVATE-SESSION-https://secret.invalid/token'
+        result=d.api_restart_metrics('28 000 20.001234 0.000123 0.002345 0.000000\n'+secret+
+            '\n22 503 0.123456 0.001234 0.002345 0.003456\n')
+        self.assertEqual(result,[dict(curl_exit=28,http_status=0,seconds=20.001234,connect_seconds=.000123,
+            tls_seconds=.002345,first_byte_seconds=0),dict(curl_exit=22,http_status=503,seconds=.123456,
+            connect_seconds=.001234,tls_seconds=.002345,first_byte_seconds=.003456)])
+        for line in ('100 200 1.000000 0.000000 0.000000 0.000000','0 999 1.000000 0.000000 0.000000 0.000000',
+                     '0 200 nan 0 0 0','0 200 -1.000000 0.000000 0.000000 0.000000'):
+            self.assertEqual(d.api_restart_metrics(line),[])
+        self.assertNotIn(secret,json.dumps(result))
+        nginx=d.api_restart_nginx_errors('limiting requests, '+secret+' /panel/api/server/restartXrayService\n'+
+            'connect() failed, '+secret+' /panel/api/server/restartXrayService\nupstream timed out /other')
+        self.assertEqual(nginx,['backend_connect','rate_limit'])
+        self.assertEqual(d.api_restart_nginx_errors(secret),[])
+        self.assertNotIn(secret,json.dumps(nginx))
+
+    def test_api_restart_probe_preserves_real_curl_body_status_and_other_requests(self):
+        from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+        import threading
+        d=self.diagnostics();payload=b'PRIVATE-FIXTURE-RESPONSE'
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.send_response(503 if self.path.startswith('/fail/') else 200)
+                self.send_header('Content-Length',str(len(payload)));self.end_headers();self.wfile.write(payload)
+            def log_message(self,*args):pass
+        server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix='api probe ') as directory:
+                root=Path(directory);wrapper=d.api_restart_probe(root)/'curl'
+                self.assertEqual(wrapper.stat().st_mode & 0o777,0o700)
+                subprocess.run(['bash','-n',str(wrapper)],check=True)
+                for path in ('/other','/panel/api/server/restartXrayService','/fail/panel/api/server/restartXrayService'):
+                    args=['-q','--fail','--silent','--show-error','--noproxy','*','--max-time','2','--data-binary','{}',
+                          f'http://127.0.0.1:{server.server_port}'+path]
+                    expected=subprocess.run(['/usr/bin/curl',*args],capture_output=True)
+                    actual=subprocess.run([str(wrapper),*args],capture_output=True)
+                    self.assertEqual((actual.returncode,actual.stdout,actual.stderr),
+                                     (expected.returncode,expected.stdout,expected.stderr))
+                metrics=(root/'api-restarts.metrics').read_text()
+                self.assertNotIn(payload.decode(),metrics)
+                self.assertEqual([(r['curl_exit'],r['http_status']) for r in d.api_restart_metrics(metrics)],[(0,200),(22,503)])
+        finally:
+            server.shutdown();server.server_close();thread.join(timeout=2)
+
     def test_domain_failure_diagnostics_are_limited_to_public_source_constants(self):
         d=self.diagnostics();source=(ROOT/'assets/domains/managed.py').read_text()
         message='Unknown x-ui service layout.';secret='PRIVATE-SESSION-https://secret.invalid/token'

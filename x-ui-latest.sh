@@ -4,6 +4,8 @@
 # ─── Output helpers ──────────────────────────────────────────────────────────
 # Per invocation only: CLI and sourced helpers always start in English.
 UI_LANG=en
+UI_INTERACTIVE=0
+UI_COMPLETION_FD=
 ui_text() {
     local format=$1
     [[ ${UI_LANG:-en} != ru ]] || format=$2
@@ -14,18 +16,71 @@ ui_text() {
 }
 
 msg_ok() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;32m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
-msg_err() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;41m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
-msg_inf() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;34m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
+msg_err() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;31m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
+msg_inf() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;36m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
 msg_warn() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;33m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
+
+ui_rule() {
+    printf '%s\n' '------------------------------------------------------------'
+}
+ui_title() {
+    printf '\n%s\n' '============================================================'
+    msg_inf "  $1"
+    printf '%s\n\n' '============================================================'
+}
+ui_section() {
+    printf '\n'; msg_inf "  $1"; ui_rule
+}
+ui_header() {
+    ui_title '                   3X-UI AUTO NGINX'
+    msg_inf "  $1"; ui_rule
+}
+ui_prompt() {
+    ui_rule; ui_text '  Select an option: ' '  Выберите пункт: '
+}
+ui_back() {
+    if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then
+        printf '\e[2m%s\e[0m\n' "$1"
+    else printf '%s\n' "$1"; fi
+}
+ui_values() {
+    if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then
+        printf '\e[1;36m'; ui_text "$@"; printf '\e[0m'
+    else ui_text "$@"; fi
+}
+ui_complete() {
+    # Private acknowledgement to manager_menu, separate from live stdout/stderr.
+    # Cancellation still returns 0; no public operation exit codes are repurposed.
+    if [[ ${UI_COMPLETION_FD:-} == 3 ]]; then printf 'completed\n' >&3; fi
+    return 0
+}
+ui_size() {
+    local bytes=$1 divisor=1 unit=B
+    if (( bytes >= 1073741824 )); then divisor=1073741824 unit=GiB
+    elif (( bytes >= 1048576 )); then divisor=1048576 unit=MiB
+    elif (( bytes >= 1024 )); then divisor=1024 unit=KiB; fi
+    if (( divisor == 1 )); then printf '%d B' "$bytes"
+    else printf '%d.%d %s' "$((bytes/divisor))" "$((bytes%divisor*10/divisor))" "$unit"; fi
+}
+ui_archive() {
+    local archive=$1 bytes
+    bytes=$(stat -c %s -- "$archive") || return 1
+    ui_text '  File: ' '  Файл: '; printf '%q\n' "${archive##*/}"
+    ui_text '  Size: %s\n' '  Размер: %s\n' "$(ui_size "$bytes")"
+    ui_text '  Directory: ' '  Каталог: '; printf '%q\n' "${archive%/*}"
+}
 
 select_language() {
     local answer
     while true; do
-        printf '\n3X-UI AUTO NGINX\n\nSelect language / Выберите язык\n\n1. English\n2. Русский\n3. Exit / Выход\n\nSelect / Выбор: '
+        ui_header 'SELECT LANGUAGE / ВЫБЕРИТЕ ЯЗЫК'
+        printf '\n  1. English\n  2. Русский\n'
+        ui_back '  3. Exit / Выход'
+        printf '\n'; ui_rule; printf '  Select / Выбор: '
         IFS= read -r answer || return 1
         case "$answer" in
-            1) UI_LANG=en; return 0 ;;
-            2) UI_LANG=ru; return 0 ;;
+            1) UI_LANG=en; UI_INTERACTIVE=1; return 0 ;;
+            2) UI_LANG=ru; UI_INTERACTIVE=1; return 0 ;;
             3) return 1 ;;
             *) printf 'Invalid selection / Неверный выбор.\n' ;;
         esac
@@ -2488,19 +2543,23 @@ show_results() {
     version=$(/usr/local/x-ui/x-ui -v 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1) || version=""
     [[ -n "$version" ]] && version_label=" (3X-UI ${version})"
 
-    echo
-    msg_inf '============================================================'
-    msg_inf "$(ui_text ' [i] Base OS                %s (full upgrade is not rollbackable)' ' [i] Базовая ОС             %s (полное обновление нельзя откатить)' "${BASE_OS_RESULT:-not_prepared}")"
-    msg_inf "$(ui_text ' [i] Local timezone         %s' ' [i] Часовой пояс           %s' "$(timedatectl show -p Timezone --value)")"
-    if [[ "${APT_RESULT:-not_requested}" == configured ]]; then
-        msg_inf "$(ui_text ' [i] APT schedule           update 02:30 / upgrade 02:50; reboot 04:38, including logged-in users' ' [i] Расписание APT         update 02:30 / upgrade 02:50; перезагрузка 04:38, даже при активных пользователях')"
+    if [[ ${UI_INTERACTIVE:-0} == 1 ]]; then
+        if (( ${1:-0} )); then
+            ui_title "$(ui_text 'INSTALLATION / PARTIAL' 'УСТАНОВКА / PARTIAL')"
+            msg_warn "$(ui_text 'Some requested actions failed. Review the warnings and component states.' 'Часть запрошенных действий не выполнена. Проверьте предупреждения и состояния компонентов.')"
+        else
+            ui_title "$(ui_text 'INSTALLATION COMPLETED' 'УСТАНОВКА ЗАВЕРШЕНА')"
+        fi
+        ui_section "$(ui_text 'COMPONENTS' 'КОМПОНЕНТЫ')"
+    else
+        printf '\n'
+        msg_inf '============================================================'
+        msg_inf "$(ui_text '  3X-UI Auto Nginx — Installation Result' '  3X-UI Auto Nginx — Результат установки')"
+        msg_inf '============================================================'
     fi
-    [[ ! -e /var/run/reboot-required ]] || msg_warn "$(ui_text ' [!] Reboot required; post-reboot acceptance pending' ' [!] Нужна перезагрузка; проверка после неё ещё не выполнена')"
-    msg_inf "$(ui_text '  3X-UI Auto Nginx — Installation Result' '  3X-UI Auto Nginx — Результат установки')"
-    msg_inf '============================================================'
     # The core passed its initial gate; optional rollback may leave its current health unverified.
     if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_warn "$(ui_text ' [!] 3X-UI / Xray           Post-rollback health not verified' ' [!] 3X-UI / Xray           Работа после отката не подтверждена')"
+        msg_err "$(ui_text ' [!] 3X-UI / Xray           Post-rollback health not verified' ' [!] 3X-UI / Xray           Работа после отката не подтверждена')"
     else
         msg_ok "$(ui_text ' [✓] 3X-UI / Xray           Running%s' ' [✓] 3X-UI / Xray           Работает%s' "$version_label")"
     fi
@@ -2510,7 +2569,7 @@ show_results() {
         *)    msg_inf "$(ui_text ' [i] CPU support             %s' ' [i] Поддержка CPU          %s' "${CPU_SUPPORT_TEXT:-$(ui_text 'Compatible (acceleration not assessed)' 'Совместим (ускорение не проверялось)')}")" ;;
     esac
     if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_warn "$(ui_text ' [!] nginx                  Post-rollback health not verified' ' [!] nginx                  Работа после отката не подтверждена')"
+        msg_err "$(ui_text ' [!] nginx                  Post-rollback health not verified' ' [!] nginx                  Работа после отката не подтверждена')"
     else
         msg_ok "$(ui_text ' [✓] nginx                  Running' ' [✓] nginx                  Работает')"
     fi
@@ -2522,12 +2581,12 @@ show_results() {
         msg_warn "$(ui_text ' [!] TLS certificates       Check certificate files' ' [!] Сертификаты TLS        Проверьте файлы сертификатов')"
     fi
     if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_warn "$(ui_text ' [!] XHTTP                  Post-rollback health not verified' ' [!] XHTTP                  Работа после отката не подтверждена')"
+        msg_err "$(ui_text ' [!] XHTTP                  Post-rollback health not verified' ' [!] XHTTP                  Работа после отката не подтверждена')"
     else
         msg_ok "$(ui_text ' [✓] XHTTP                  Ready' ' [✓] XHTTP                  Готов')"
     fi
     if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_warn "$(ui_text ' [!] Diagnostics            Post-rollback health not verified' ' [!] Диагностика            Работа после отката не подтверждена')"
+        msg_err "$(ui_text ' [!] Diagnostics            Post-rollback health not verified' ' [!] Диагностика            Работа после отката не подтверждена')"
     elif [[ -s /var/www/diagnostics/index.html && -s /var/www/diagnostics/speedtest.js &&
           -s /var/www/diagnostics/speedtest_worker.js && -s /usr/local/lib/3x-ui-pro/mtr-backend.py ]]; then
         msg_ok "$(ui_text ' [✓] Diagnostics            Ready' ' [✓] Диагностика            Готова')"
@@ -2549,7 +2608,7 @@ show_results() {
         case "$state" in
             configured) msg_ok "$(ui_text ' [✓] %s — Configured' ' [✓] %s — Настроен' "$component")" ;;
             failed_rolled_back) msg_warn "$(ui_text ' [!] %s — Failed, rolled back / unchanged' ' [!] %s — Ошибка, выполнен откат / без изменений' "$component")" ;;
-            failed_unverified) msg_warn "$(ui_text ' [!] %s — Failed, rollback not verified' ' [!] %s — Ошибка, откат не подтверждён' "$component")" ;;
+            failed_unverified) msg_err "$(ui_text ' [!] %s — Failed, rollback not verified' ' [!] %s — Ошибка, откат не подтверждён' "$component")" ;;
         esac
     done
     case "${TUNING_RESULT:-}" in
@@ -2564,14 +2623,14 @@ show_results() {
     case "${VISION_RESULT:-not_requested}" in
         configured) msg_ok "$(ui_text ' [✓] VLESS TLS Vision       Ready (%s:443)' ' [✓] VLESS TLS Vision       Готов (%s:443)' "$vision_domain")" ;;
         failed_rolled_back) msg_warn "$(ui_text ' [!] VLESS TLS Vision       Failed — rolled back' ' [!] VLESS TLS Vision       Ошибка — выполнен откат')" ;;
-        failed_unverified) msg_warn "$(ui_text ' [!] VLESS TLS Vision       Failed — rollback not verified' ' [!] VLESS TLS Vision       Ошибка — откат не подтверждён')" ;;
+        failed_unverified) msg_err "$(ui_text ' [!] VLESS TLS Vision       Failed — rollback not verified' ' [!] VLESS TLS Vision       Ошибка — откат не подтверждён')" ;;
     esac
     case "${CLIENT_RESULT:-not_requested}" in
         configured)
             msg_ok "$(ui_text ' [✓] Client                  Created' ' [✓] Клиент                 Создан')"
             msg_ok "$(ui_text ' [✓] Subscription            Ready' ' [✓] Подписка               Готова')"
             ;;
-        failed_unverified) msg_warn "$(ui_text ' [!] Client / Subscription   Failed verification — inspect panel before retrying' ' [!] Клиент / Подписка       Проверка не пройдена — проверьте панель перед повторной попыткой')" ;;
+        failed_unverified) msg_err "$(ui_text ' [!] Client / Subscription   Failed verification — inspect panel before retrying' ' [!] Клиент / Подписка       Проверка не пройдена — проверьте панель перед повторной попыткой')" ;;
     esac
     case "${AGH_RESULT:-not_requested}" in
         installed)
@@ -2581,11 +2640,11 @@ show_results() {
             msg_warn "$(ui_text ' [!] AdGuard Home           Failed — rolled back' ' [!] AdGuard Home           Ошибка — выполнен откат')"
             msg_warn "$(ui_text ' [!] DNS-over-HTTPS         Not installed' ' [!] DNS-over-HTTPS         Не установлен')" ;;
         failed_unverified)
-            msg_warn "$(ui_text ' [!] AdGuard Home           Failed — rollback not verified' ' [!] AdGuard Home           Ошибка — откат не подтверждён')"
-            msg_warn "$(ui_text ' [!] DNS-over-HTTPS         State not verified' ' [!] DNS-over-HTTPS         Состояние не подтверждено')" ;;
+            msg_err "$(ui_text ' [!] AdGuard Home           Failed — rollback not verified' ' [!] AdGuard Home           Ошибка — откат не подтверждён')"
+            msg_err "$(ui_text ' [!] DNS-over-HTTPS         State not verified' ' [!] DNS-over-HTTPS         Состояние не подтверждено')" ;;
     esac
     if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_warn "$(ui_text ' [!] Certificate renewal    Post-rollback health not verified' ' [!] Продление сертификатов Работа после отката не подтверждена')"
+        msg_err "$(ui_text ' [!] Certificate renewal    Post-rollback health not verified' ' [!] Продление сертификатов Работа после отката не подтверждена')"
     else
         msg_ok "$(ui_text ' [✓] Certificate renewal    Webroot + systemd timer' ' [✓] Продление сертификатов Webroot + таймер systemd')"
     fi
@@ -2596,38 +2655,54 @@ show_results() {
         *)                   msg_warn "$(ui_text ' [!] Firewall / UFW         Unknown — review firewall settings' ' [!] Firewall / UFW         Состояние неизвестно — проверьте настройки firewall')" ;;
     esac
 
-    ui_text '\n Enabled by default: REALITY · XHTTP · Hysteria2\n Optional profiles: WS · Trojan gRPC\n' '\n Включены по умолчанию: REALITY · XHTTP · Hysteria2\n Дополнительные профили: WS · Trojan gRPC\n'
-    msg_inf "$(ui_text '\\n Panel:' '\n Панель:')"
+    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text 'PANEL ACCESS' 'ДОСТУП К ПАНЕЛИ')"
+    msg_inf "$(ui_text '\n Panel:' '\n Панель:')"
     msg_inf " https://${domain}/${panel_path}/"
-    msg_inf "$(ui_text '\\n Diagnostics (panel login required):' '\n Диагностика (нужен вход в панель):')"
+    if [[ ${UI_INTERACTIVE:-0} == 1 ]]; then
+        ui_values '\n Username: %s\n Password: %s\n' '\n Логин: %s\n Пароль: %s\n' "$config_username" "$config_password"
+    else
+        ui_text '\n Username: %s\n Password: %s\n' '\n Логин: %s\n Пароль: %s\n' "$config_username" "$config_password"
+    fi
+    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text 'SUBSCRIPTION AND SERVICES' 'ПОДПИСКА И ДОПОЛНИТЕЛЬНЫЕ СЕРВИСЫ')"
+    msg_inf "$(ui_text '\n Diagnostics (panel login required):' '\n Диагностика (нужен вход в панель):')"
     msg_inf " https://${domain}/${panel_path}/diag"
-    ui_text '\n Username: %s\n Password: %s\n' '\n Логин: %s\n Пароль: %s\n' "$config_username" "$config_password"
     if [[ "${CLIENT_RESULT:-not_requested}" == configured ]]; then
         local subscription_url
         subscription_url=$(printf '%s' "$CLIENT_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["url"])')
-        msg_inf "$(ui_text '\\n Subscription:' '\n Подписка:')"
+        msg_inf "$(ui_text '\n Subscription:' '\n Подписка:')"
         msg_inf " $subscription_url"
         printf '%s' "$CLIENT_OUTPUT" | python3 -c 'import json,sys; print(" " + " / ".join(json.load(sys.stdin)["protocols"]))'
         CLIENT_OUTPUT=''
     fi
     if [[ "${AWG_RESULT:-not_requested}" == configured ]]; then
-        msg_inf "\n AmneziaWG:"
+        printf '\n AmneziaWG:\n'
         msg_inf "$(ui_text ' AWG vpn:// export requires an Amnezia-compatible application.' ' Для экспорта AWG vpn:// требуется приложение с поддержкой Amnezia.')"
     fi
-    msg_inf "$(ui_text '\\n Backup:' '\n Резервная копия:')"
-    printf ' x-ui-backup backup\n\n'
     if [[ "${AGH_RESULT:-not_requested}" == installed ]]; then
         msg_inf " AdGuard Home:"
         msg_inf " https://${domain}/${AGH_PATH}/"
-        ui_text ' Login: admin\n Password: %s\n DoH: https://%s/dns-query\n\n' ' Логин: admin\n Пароль: %s\n DoH: https://%s/dns-query\n\n' "$AGH_PASSWORD" "$domain"
+        if [[ ${UI_INTERACTIVE:-0} == 1 ]]; then
+            ui_values ' Login: admin\n Password: %s\n DoH: https://%s/dns-query\n\n' ' Логин: admin\n Пароль: %s\n DoH: https://%s/dns-query\n\n' "$AGH_PASSWORD" "$domain"
+        else
+            ui_text ' Login: admin\n Password: %s\n DoH: https://%s/dns-query\n\n' ' Логин: admin\n Пароль: %s\n DoH: https://%s/dns-query\n\n' "$AGH_PASSWORD" "$domain"
+        fi
         AGH_PASSWORD=''
     elif [[ "${AGH_RESULT:-not_requested}" == failed_rolled_back ]]; then
         msg_warn "$(ui_text ' AdGuard Home was not installed. The core 3X-UI stack remains operational.' ' AdGuard Home не установлен. Основной стек 3X-UI продолжает работать.')"
     elif [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_warn "$(ui_text ' Post-rollback core health could not be verified. Inspect nginx and core services.' ' Работа основного стека после отката не подтверждена. Проверьте nginx и основные службы.')"
+        msg_err "$(ui_text ' Post-rollback core health could not be verified. Inspect nginx and core services.' ' Работа основного стека после отката не подтверждена. Проверьте nginx и основные службы.')"
     fi
+    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text 'OTHER INFORMATION' 'ПРОЧАЯ ИНФОРМАЦИЯ')"
+    msg_inf "$(ui_text ' [i] Base OS                %s (full upgrade is not rollbackable)' ' [i] Базовая ОС             %s (полное обновление нельзя откатить)' "${BASE_OS_RESULT:-not_prepared}")"
+    msg_inf "$(ui_text ' [i] Local timezone         %s' ' [i] Часовой пояс           %s' "$(timedatectl show -p Timezone --value)")"
+    if [[ "${APT_RESULT:-not_requested}" == configured ]]; then
+        msg_inf "$(ui_text ' [i] APT schedule           update 02:30 / upgrade 02:50; reboot 04:38, including logged-in users' ' [i] Расписание APT         update 02:30 / upgrade 02:50; перезагрузка 04:38, даже при активных пользователях')"
+    fi
+    ui_text '\n Enabled by default: REALITY · XHTTP · Hysteria2\n Optional profiles: WS · Trojan gRPC\n' '\n Включены по умолчанию: REALITY · XHTTP · Hysteria2\n Дополнительные профили: WS · Trojan gRPC\n'
+    msg_inf "$(ui_text '\n Backup:' '\n Резервная копия:')"
+    printf ' x-ui-backup backup\n\n'
     msg_inf '============================================================'
-    msg_inf "$(ui_text ' Save these credentials before closing the terminal.' ' Сохраните эти учётные данные перед закрытием терминала.')"
+    msg_warn "$(ui_text ' Save these credentials before closing the terminal.' ' Сохраните эти учётные данные перед закрытием терминала.')"
     msg_inf '============================================================'
 }
 
@@ -2922,6 +2997,7 @@ acquire_stack_lock() {
 }
 
 main() {
+    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_title "$(ui_text 'INSTALLATION' 'УСТАНОВКА')"
     confirm_destructive_reinstall || exit 1
     validate_domains || exit 1
     select_security || exit 1
@@ -2929,6 +3005,7 @@ main() {
     select_amneziawg || exit 1
     select_adguard || exit 1
     select_client || exit 1
+    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text '[1] SYSTEM PREPARATION' '[1] ПОДГОТОВКА СИСТЕМЫ')"
     ui_text '\nPreparing system...\n' '\nПодготовка системы...\n'
     msg_warn "$(ui_text 'Initial full OS upgrade is mandatory; services may restart. A required initial reboot is manual (sudo reboot).' 'Первоначальное полное обновление ОС обязательно; службы могут перезапуститься. При необходимости перезагрузите сервер вручную (sudo reboot).')"
     preflight_base_os || { msg_err "$(ui_text 'Base OS preflight failed; existing deployment was not removed.' 'Предварительная проверка ОС не пройдена; существующая установка не удалена.')"; exit 1; }
@@ -2937,6 +3014,7 @@ main() {
     preflight_amneziawg || { msg_err "$(ui_text 'AmneziaWG preflight failed; existing deployment was not removed.' 'Предварительная проверка AmneziaWG не пройдена; существующая установка не удалена.')"; exit 1; }
     preflight_integrated_features || { msg_err "$(ui_text 'Feature preparation stopped before cleanup; see the component error above.' 'Подготовка компонентов остановлена до удаления данных; проверьте ошибку компонента выше.')"; exit 1; }
     setup_swap || { SWAP_RESULT=skipped; SWAP_REASON='setup failed'; }
+    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text '[2] BASE OS AND DNS' '[2] БАЗОВАЯ ОС И DNS')"
     prepare_base_os || { msg_err "$(ui_text 'OS preparation failed; deployment was not removed, package changes may remain.' 'Подготовка ОС завершилась ошибкой; установка не удалена, но изменения пакетов могли сохраниться.')"; exit 1; }
     prepare_system_dns || { msg_err "$(ui_text 'DNS preparation failed; existing deployment was not removed.' 'Подготовка DNS завершилась ошибкой; существующая установка не удалена.')"; exit 1; }
     local awg_xui_stopped=n
@@ -2955,13 +3033,16 @@ main() {
         fi
         exit 1
     }
+    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text '[3] STACK, DEPENDENCIES AND NETWORK' '[3] СТЕК, ЗАВИСИМОСТИ И СЕТЬ')"
     clean_previous_install || { msg_err "$(ui_text 'Previous deployment cleanup failed (exit %s). See the cause above; installation stopped.' 'Удаление прежней установки завершилось ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
     install_packages || { msg_err "$(ui_text 'Dependency setup failed.' 'Не удалось установить зависимости.')"; exit 1; }
     setup_firewall || { msg_err "$(ui_text 'Firewall setup failed.' 'Не удалось настроить firewall.')"; exit 1; }
     get_server_ip || { msg_err "$(ui_text 'VPS IP detection failed (exit %s). See the cause above; installation stopped.' 'Не удалось определить IP VPS (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
+    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text '[4] TLS CERTIFICATES' '[4] СЕРТИФИКАТЫ TLS')"
     setup_acme_http || { msg_err "$(ui_text 'ACME HTTP setup failed.' 'Не удалось настроить HTTP для ACME.')"; exit 1; }
     get_ssl_certs || { msg_err "$(ui_text 'Webroot certificate setup failed.' 'Не удалось получить или настроить сертификаты через webroot.')"; exit 1; }
 
+    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text '[5] 3X-UI, PROTOCOLS AND NGINX' '[5] 3X-UI, ПРОТОКОЛЫ И NGINX')"
     install_panel || { msg_err "$(ui_text '3X-UI installation failed (exit %s). See the cause above; installation stopped.' 'Установка 3X-UI завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
 
     configure_nginx || { msg_err "$(ui_text 'nginx configuration failed (exit %s). See the cause above; installation stopped.' 'Настройка nginx завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
@@ -2973,6 +3054,7 @@ main() {
     install_backup_tool || { msg_err "$(ui_text 'Backup tool setup failed (exit %s). See the cause above; installation stopped.' 'Установка утилиты Backup завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
     setup_certificate_renewal || { msg_err "$(ui_text 'Certificate renewal setup failed.' 'Не удалось настроить продление сертификатов.')"; exit 1; }
 
+    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text '[6] CORE HEALTH CHECK' '[6] ПРОВЕРКА ОСНОВНОГО СТЕКА')"
     if ! systemctl is-enabled --quiet x-ui; then
         systemctl daemon-reload && systemctl enable x-ui.service || { msg_err "$(ui_text '3X-UI service enablement failed (exit %s). Installation stopped.' 'Не удалось включить службу 3X-UI (exit %s). Установка остановлена.' "$?")"; exit 1; }
     fi
@@ -2980,6 +3062,7 @@ main() {
     check_installation || { msg_err "$(ui_text 'Installation failed mandatory health checks.' 'Установка не прошла обязательные проверки работоспособности.')"; exit 1; }
     DNS_FINALIZED=y  # Core is ready; later optional failures must not undo working DNS.
 
+    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text '[7] OPTIONAL COMPONENTS' '[7] ДОПОЛНИТЕЛЬНЫЕ КОМПОНЕНТЫ')"
     local install_result=0
     VISION_RESULT=not_requested
     CLIENT_RESULT=not_requested
@@ -3008,6 +3091,7 @@ main() {
             CLIENT_RESULT=failed_unverified
         fi
     fi
+    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text '[8] FINAL CHECK' '[8] ФИНАЛЬНАЯ ПРОВЕРКА')"
     CORE_RESULT=configured
     if [[ "${INSTALL_SECURITY:-n}${INSTALL_VISION:-n}${INSTALL_AWG:-n}${INSTALL_AGH:-n}${CREATE_CLIENT:-n}" != nnnnn ]]; then
         if ! check_installation; then CORE_RESULT=failed_unverified; install_result=1; fi
@@ -3015,7 +3099,7 @@ main() {
     if [[ "$CORE_RESULT" == configured ]]; then
         write_managed_state || { msg_err "$(ui_text 'Managed-state could not be recorded; core data retained.' 'Не удалось записать сведения об управляемой установке; данные основного стека сохранены.')"; install_result=1; }
     fi
-    show_results
+    show_results "$install_result"
     finish_initial_reboot "$install_result" || install_result=1
     return "$install_result"
 }
@@ -3127,12 +3211,60 @@ backup_list() {
     for archive in /var/backups/x-ui/*.tar.gz; do
         [[ -f "$archive" && ! -L "$archive" ]] || continue
         BACKUP_CHOICES+=("$archive")
+    done
+    if [[ ${UI_INTERACTIVE:-0} == 1 ]]; then
+        ui_title "$(ui_text 'BACKUP LIST' 'СПИСОК РЕЗЕРВНЫХ КОПИЙ')"
+        ui_text '  Archives found: %d\n' '  Найдено архивов: %d\n' "${#BACKUP_CHOICES[@]}"
+    fi
+    for archive in "${BACKUP_CHOICES[@]}"; do
         number=$((number+1))
         size=$(stat -c %s -- "$archive") || return 1
         timestamp=$(date -u -r "$archive" '+%Y-%m-%d %H:%M UTC') || return 1
-        ui_text '%d. %q  %s  %s bytes\n' '%d. %q  %s  %s байт\n' "$number" "$archive" "$timestamp" "$size"
+        if [[ ${UI_INTERACTIVE:-0} == 1 ]]; then
+            printf '\n  [%d] %s\n' "$number" "$timestamp"
+            ui_text '      Size: %s\n      File: ' '      Размер: %s\n      Файл: ' "$(ui_size "$size")"
+            printf '%q\n' "${archive##*/}"
+        else
+            ui_text '%d. %q  %s  %s bytes\n' '%d. %q  %s  %s байт\n' "$number" "$archive" "$timestamp" "$size"
+        fi
     done
     (( number )) || ui_text 'No backups in /var/backups/x-ui.\n' 'В /var/backups/x-ui нет резервных копий.\n'
+    if [[ ${UI_INTERACTIVE:-0} == 1 ]]; then
+        printf '\n'; ui_rule
+        ui_text '  Directory: /var/backups/x-ui\n  File dates: UTC\n' '  Каталог: /var/backups/x-ui\n  Даты файлов: UTC\n'
+        ui_text '  Listing does not verify archive integrity.\n' '  Просмотр списка не проверяет целостность архивов.\n'
+        ui_rule
+    fi
+}
+
+backup_metadata() {
+    ui_title "$(ui_text 'RESTORE / SELECTED ARCHIVE' 'ВОССТАНОВЛЕНИЕ / ВЫБРАННЫЙ АРХИВ')"
+    # Only the existing inspect result is rendered; no archive/code is opened here.
+    python3 -c '
+import datetime, json, pathlib, sys
+data=json.load(sys.stdin)
+ru=sys.argv[1]=="ru"
+def safe(value):
+    return "".join(c if c.isprintable() else c.encode("unicode_escape").decode("ascii") for c in str(value))
+def row(en,rus,value): print("  "+(rus if ru else en)+": "+safe(value))
+row("File","Файл",pathlib.Path(sys.argv[2]).name)
+if "created" in data:
+    created=data["created"]
+    try:
+        stamp=datetime.datetime.fromisoformat(created.replace("Z","+00:00"))
+        if stamp.tzinfo is not None: created=stamp.astimezone(datetime.timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
+    except (ValueError,TypeError,AttributeError): pass
+    row("Created","Создан",created)
+for key,en,rus in (("format_version","Format","Формат"),("os_id","OS","ОС"),
+                   ("os_version","OS version","Версия ОС"),("arch","Architecture","Архитектура"),
+                   ("x_ui_version","3X-UI","3X-UI"),("xray_version","Xray","Xray")):
+    if key in data: row(en,rus,("Backup v"+str(data[key])) if key=="format_version" else data[key])
+if "adguard_home" in data:
+    value=data["adguard_home"]
+    if type(value) is not bool:
+        row("AdGuard Home","AdGuard Home",value); sys.exit(0)
+    row("AdGuard Home","AdGuard Home",("Да" if value else "Нет") if ru else ("Yes" if value else "No"))
+' "$UI_LANG" "$1"
 }
 
 prepare_restore_security() {
@@ -3156,9 +3288,9 @@ post_restore_security() (
     if [[ "$ufw" == y ]]; then
         /usr/bin/python3 -I "$directory/managed.py" --enable-ufw < /dev/null > "$directory/ufw.json" || ufw_code=$?
     fi
-    /usr/bin/python3 -I - "$directory" "$apt" "$ufw" "$apt_code" "$ufw_code" <<'PYSECURITY'
+    /usr/bin/python3 -I - "$directory" "$apt" "$ufw" "$apt_code" "$ufw_code" "${UI_INTERACTIVE:-0}" <<'PYSECURITY'
 import json, pathlib, sys
-directory, apt, ufw, apt_code, ufw_code = sys.argv[1:]
+directory, apt, ufw, apt_code, ufw_code, interactive = sys.argv[1:]
 results = dict(APT='NOT_REQUESTED', Fail2ban='NOT_REQUESTED', UFW='NOT_REQUESTED')
 def read(name):
     try:
@@ -3185,7 +3317,8 @@ if ufw == 'y':
                       'failed_unverified':'FAILED_UNVERIFIED'}.get(data.get('status'), 'FAILED_UNVERIFIED')
     if ufw_code != '0' and results['UFW'] in ('CONFIGURED', 'PRESERVED'):
         results['UFW'] = 'FAILED_UNVERIFIED'
-for key, value in results.items(): print(key + ': ' + value)
+for key, value in results.items():
+    if interactive != '1' or value != 'NOT_REQUESTED': print(key + ': ' + value)
 failed = any(v in ('FAILED', 'FAILED_UNVERIFIED') for v in results.values())
 if failed:
     state = 'STATE_UNVERIFIED' if 'FAILED_UNVERIFIED' in results.values() else (
@@ -3206,8 +3339,17 @@ backup_action() (
     prepare_backup_helper || exit 1
     if [[ "$action" == backup ]]; then
         local result
+        [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_title "$(ui_text 'CREATING BACKUP' 'СОЗДАНИЕ РЕЗЕРВНОЙ КОПИИ')"
         result=$(bash /usr/local/bin/x-ui-backup backup --json) || exit $?
-        printf '%s\n' "$result" | python3 -c 'import json,sys; r=json.load(sys.stdin); r.get("status")=="success" or sys.exit(1); print(sys.argv[1]+ascii(r["archive"]))' "$(ui_text 'Created archive: ' 'Создан архив: ')" || exit 1
+        if [[ ${UI_INTERACTIVE:-0} == 1 ]]; then
+            archive=$(printf '%s\n' "$result" | python3 -c 'import json,sys; r=json.load(sys.stdin); r.get("status")=="success" or sys.exit(1); print(r["archive"])') || exit 1
+            ui_title "$(ui_text 'BACKUP CREATED' 'РЕЗЕРВНАЯ КОПИЯ СОЗДАНА')"
+            msg_ok "$(ui_text '  [OK] Archive created and verified' '  [OK] Архив создан и проверен')"
+            ui_archive "$archive" || exit 1
+            ui_rule
+        else
+            printf '%s\n' "$result" | python3 -c 'import json,sys; r=json.load(sys.stdin); r.get("status")=="success" or sys.exit(1); print(sys.argv[1]+ascii(r["archive"]))' "$(ui_text 'Created archive: ' 'Создан архив: ')" || exit 1
+        fi
         exit 0
     fi
     backup_list || exit 1
@@ -3219,7 +3361,14 @@ backup_action() (
         archive=${BACKUP_CHOICES[10#$choice-1]}
     elif [[ "$choice" == /* ]]; then archive=$choice
     else msg_err "$(ui_text 'Enter an archive number or absolute path.' 'Укажите номер архива или абсолютный путь.')"; exit 1; fi
-    bash /usr/local/bin/x-ui-backup inspect "$archive" || exit $?
+    if [[ ${UI_INTERACTIVE:-0} == 1 ]]; then
+        local metadata
+        metadata=$(bash /usr/local/bin/x-ui-backup inspect "$archive") || exit $?
+        printf '%s' "$metadata" | backup_metadata "$archive" || exit $?
+        ui_section "$(ui_text 'WARNING' 'ВНИМАНИЕ')"
+    else
+        bash /usr/local/bin/x-ui-backup inspect "$archive" || exit $?
+    fi
     ui_text 'Optional Security configures automatic security updates and SSH Fail2ban.\nAutomatic reboot is allowed at 04:38 server time, including with active users.\nConfigure automatic security updates and SSH Fail2ban? [y/N] ' 'Опция Security настраивает автоматические обновления безопасности и Fail2ban для SSH.\nАвтоматическая перезагрузка разрешена в 04:38 по времени сервера, даже при активных пользователях.\nНастроить автоматические обновления безопасности и Fail2ban для SSH? [y/N] '
     IFS= read -r answer || exit 0
     [[ "$answer" != y && "$answer" != Y ]] || apt=y
@@ -3238,11 +3387,14 @@ backup_action() (
         fi
     fi
     local status=0
+    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_title "$(ui_text 'RESTORING BACKUP' 'ВОССТАНОВЛЕНИЕ')"
     bash /usr/local/bin/x-ui-backup restore "$archive" || status=$?
     # The foreground child has exited, including its EXIT cleanup.
+    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_title "$(ui_text 'RESTORE RESULT' 'РЕЗУЛЬТАТ ВОССТАНОВЛЕНИЯ')"
     if (( status )); then
         printf 'Restore: FAILED (exit %d)\nOverall: FAILED\n' "$status"
-        ui_text '' 'Ошибка Restore. Проверьте диагностику и состояние отката перед новой операцией.\n'
+        msg_err "$(ui_text 'Restore failed. Check the reported rollback state before another operation.' 'Ошибка Restore. Проверьте диагностику и состояние отката перед новой операцией.')"
+        ui_text 'Keep the archive and any reported recovery directory in /var/backups/x-ui.\n' 'Сохраните архив и указанную в диагностике папку восстановления в /var/backups/x-ui.\n'
         exit "$status"
     fi
     printf 'Restore: SUCCESS\n'
@@ -3250,7 +3402,11 @@ backup_action() (
     trap 'printf "Security: STATE_UNVERIFIED\nOverall: PARTIAL\n" >&2; ui_text "Check UFW, SSH access and Security services. Restored data retained.\n" "Проверьте UFW, доступ по SSH и службы Security. Восстановленные данные сохранены.\n" >&2; exit 130' INT
     trap 'printf "Security: STATE_UNVERIFIED\nOverall: PARTIAL\n" >&2; ui_text "Check UFW, SSH access and Security services. Restored data retained.\n" "Проверьте UFW, доступ по SSH и службы Security. Восстановленные данные сохранены.\n" >&2; exit 143' TERM
     post_restore_security "$RESTORE_SECURITY_DIR" "$apt" "$ufw" || status=$?
-    if (( status )); then ui_text '' 'Restore завершён частично: данные сохранены, но настройка Security не завершена. Проверьте UFW, доступ по SSH и службы Security.\n'; fi
+    if (( status )); then
+        msg_warn "$(ui_text 'Restore is partial: restored data retained, but Security is incomplete. Check UFW, SSH access and Security services.' 'Restore завершён частично: данные сохранены, но настройка Security не завершена. Проверьте UFW, доступ по SSH и службы Security.')"
+    else
+        ui_complete
+    fi
     exit "$status"
 )
 
@@ -3352,7 +3508,13 @@ change_domains_action() (
     (( ${#current[@]} == 2 )) || exit 1
     current_panel=${current[0]} current_reality=${current[1]}
     while true; do
-        ui_text '\nCHANGE DOMAINS\n\nCurrent Panel:   %s\nCurrent REALITY: %s\n\n1. Change Panel domain\n2. Change REALITY domain\n3. Change both domains\n0. Back\n\nSelect an option: ' '\nСМЕНА ДОМЕНОВ\n\nТекущий домен панели:  %s\nТекущий домен REALITY: %s\n\n1. Изменить домен панели\n2. Изменить домен REALITY\n3. Изменить оба домена\n0. Назад\n\nВыберите пункт: ' "$current_panel" "$current_reality"
+        ui_header "$(ui_text 'CHANGE DOMAINS' 'СМЕНА ДОМЕНОВ')"
+        ui_section "$(ui_text 'CURRENT DOMAINS' 'ТЕКУЩИЕ ДОМЕНЫ')"
+        ui_text '  Current Panel:   %s\n  Current REALITY: %s\n' '  Текущий домен панели:  %s\n  Текущий домен REALITY: %s\n' "$current_panel" "$current_reality"
+        ui_section "$(ui_text 'SELECT OPERATION' 'ВЫБОР ОПЕРАЦИИ')"
+        ui_text '\n  1. Change Panel domain\n  2. Change REALITY domain\n  3. Change both domains\n' '\n  1. Изменить домен панели\n  2. Изменить домен REALITY\n  3. Изменить оба домена\n'
+        ui_back "$(ui_text '  0. Back' '  0. Назад')"
+        printf '\n'; ui_prompt
         IFS= read -r choice || exit 0
         new_panel=$current_panel new_reality=$current_reality
         case "$choice" in
@@ -3360,6 +3522,7 @@ change_domains_action() (
             1|2|3) ;;
             *) ui_text 'Invalid selection.\n' 'Неверный выбор.\n'; continue ;;
         esac
+        ui_section "$(ui_text 'NEW DOMAINS' 'НОВЫЕ ДОМЕНЫ')"
         if [[ "$choice" == 1 || "$choice" == 3 ]]; then
             ui_text 'New Panel domain: ' 'Новый домен панели: '; IFS= read -r new_panel || exit 0
             new_panel=${new_panel,,}
@@ -3369,54 +3532,91 @@ change_domains_action() (
             new_reality=${new_reality,,}
         fi
         valid_hostname "$new_panel" && valid_hostname "$new_reality" || { msg_err "$(ui_text 'Invalid hostname; installation was not changed.' 'Некорректный домен; установка не изменена.')"; exit 1; }
-        ui_text '\nPanel:   %s -> %s\nREALITY: %s -> %s\n' '\nПанель:  %s -> %s\nREALITY: %s -> %s\n' "$current_panel" "$new_panel" "$current_reality" "$new_reality"
+        ui_section "$(ui_text 'REVIEW BEFORE CONFIRMATION' 'ПРОВЕРКА ПЕРЕД ПОДТВЕРЖДЕНИЕМ')"
+        ui_domain_changes "$current_panel" "$new_panel" "$current_reality" "$new_reality"
         ui_text 'Point new A/AAAA records to this VPS and allow HTTP-01 on port 80.\nAffected client configurations and old subscription URLs may need updating.\nA full Backup v3 will be created before changes. Type YES to continue: ' 'Направьте новые записи A/AAAA на этот VPS и обеспечьте HTTP-01 через порт 80.\nКлиентские конфигурации и старые URL подписок могут потребовать обновления.\nДо изменений будет создан полный Backup v3. Для продолжения введите YES: '
         IFS= read -r answer || exit 0
         [[ "$answer" == YES ]] || { ui_text 'Cancelled.\n' 'Отменено.\n'; exit 0; }
         local status=0
+        ui_section "$(ui_text 'CHANGING DOMAINS' 'СМЕНА ДОМЕНОВ: ВЫПОЛНЕНИЕ')"
         domains_tool change "$new_panel" "$new_reality" "$current_panel" "$current_reality" || status=$?
         if (( status )); then
-            ui_text '' 'Смена доменов завершилась ошибкой. Проверьте исходную диагностику и состояние отката перед новой операцией.\n' >&2
+            ui_title "$(ui_text 'CHANGE DOMAINS / FAILED' 'СМЕНА ДОМЕНОВ / FAILED')"
+            msg_err "$(ui_text 'Change Domains failed. Check the original diagnostics and reported rollback state before another operation.' 'Смена доменов завершилась ошибкой. Проверьте исходную диагностику и состояние отката перед новой операцией.')" >&2
         else
-            ui_text '' 'Смена доменов завершена. Обновите затронутые клиентские конфигурации и URL подписок.\n'
+            ui_title "$(ui_text 'DOMAINS CHANGED SUCCESSFULLY' 'СМЕНА ДОМЕНОВ УСПЕШНО ЗАВЕРШЕНА')"
+            ui_section "$(ui_text 'RESULT' 'РЕЗУЛЬТАТ')"
+            ui_domain_changes "$current_panel" "$new_panel" "$current_reality" "$new_reality"
+            msg_ok "$(ui_text '  [OK] Full Backup v3 created and verified' '  [OK] Полный Backup v3 создан и проверен')"
+            msg_ok "$(ui_text '  [OK] Domains changed' '  [OK] Смена доменов завершена')"
+            ui_section "$(ui_text 'IMPORTANT' 'ВАЖНО')"
+            msg_warn "$(ui_text 'Update affected client configurations and subscription URLs.' 'Обновите затронутые клиентские конфигурации и URL подписок.')"
+            ui_rule
+            ui_complete
         fi
         exit "$status"
     done
 )
 
+ui_domain_changes() {
+    if [[ $1 != "$2" ]]; then ui_text '  Panel:\n' '  Панель:\n'; msg_inf "    $1"; msg_inf "       -> $2"; fi
+    if [[ $3 != "$4" ]]; then printf '  REALITY:\n'; msg_inf "    $3"; msg_inf "       -> $4"; fi
+}
+
 manager_menu() {
-    local choice status=0 reported=0
+    local choice status=0 reported=0 completion
+    UI_INTERACTIVE=1
     recover_domain_operation || return $?
     while true; do
         reported=0
-        printf '\n'
-        msg_inf '3X-UI AUTO NGINX'
-        ui_text '\n1. Installation\n2. Change Domains\n3. Backups\n\n0. Exit\n\nSelect an option: ' '\n1. Установка\n2. Смена доменов\n3. Резервные копии\n\n0. Выход\n\nВыберите пункт: '
+        ui_header "$(ui_text 'MAIN MENU' 'ГЛАВНОЕ МЕНЮ')"
+        ui_text '\n  1. Installation\n  2. Change Domains\n  3. Backups\n\n' '\n  1. Установка\n  2. Смена доменов\n  3. Резервные копии\n\n'
+        ui_back "$(ui_text '  0. Exit' '  0. Выход')"
+        printf '\n'; ui_prompt
         IFS= read -r choice || return "$status"
         case "$choice" in
             0) return "$status" ;;
-            1) run_installation; status=$? ;;
-            2) change_domains_action; status=$?; reported=1 ;;
+            1) run_installation; status=$?; (( status )) || return 0 ;;
+            2)
+                # Capture only fd 3. Ordinary output retains its original TTY.
+                {
+                    completion=$(UI_COMPLETION_FD=3 change_domains_action 3>&1 1>&4)
+                    status=$?
+                } 4>&1
+                reported=1
+                if (( status == 0 )) && [[ $completion == completed ]]; then return 0; fi ;;
             3)
-                ui_text '\nBACKUPS\n\n1. Create backup\n2. List backups\n3. Restore backup\n0. Back\n\nSelect an option: ' '\nРЕЗЕРВНЫЕ КОПИИ\n\n1. Создать резервную копию\n2. Список резервных копий\n3. Восстановить резервную копию\n0. Назад\n\nВыберите пункт: '
-                IFS= read -r choice || return "$status"
-                case "$choice" in
-                    0) continue ;;
-                    1) backup_action backup; status=$? ;;
-                    2) backup_action list; status=$? ;;
-                    3) backup_action restore; status=$?; reported=1 ;;
-                    *) ui_text 'Invalid selection.\n' 'Неверный выбор.\n'; continue ;;
-                esac ;;
+                while true; do
+                    ui_header "$(ui_text 'BACKUPS' 'РЕЗЕРВНЫЕ КОПИИ')"
+                    ui_text '\n  1. Create backup\n  2. List backups\n  3. Restore backup\n' '\n  1. Создать резервную копию\n  2. Список резервных копий\n  3. Восстановить резервную копию\n'
+                    ui_back "$(ui_text '  0. Back' '  0. Назад')"
+                    printf '\n'; ui_prompt
+                    IFS= read -r choice || return "$status"
+                    reported=0
+                    case "$choice" in
+                        0) break ;;
+                        1) backup_action backup; status=$? ;;
+                        2) backup_action list; status=$? ;;
+                        3)
+                            {
+                                completion=$(UI_COMPLETION_FD=3 backup_action restore 3>&1 1>&4)
+                                status=$?
+                            } 4>&1
+                            reported=1
+                            if (( status == 0 )) && [[ $completion == completed ]]; then return 0; fi ;;
+                        *) ui_text 'Invalid selection.\n' 'Неверный выбор.\n'; continue ;;
+                    esac
+                    (( status == 0 )) || break
+                done ;;
             *) ui_text 'Invalid selection.\n' 'Неверный выбор.\n'; continue ;;
         esac
         if (( status )); then
             if (( EUID != 0 )); then ui_text '' 'Для этой операции нужны права root. Запустите менеджер через sudo или от root.\n' >&2; fi
             if (( ! reported )); then
-                ui_text 'FAILED (exit %d). Check the reported recovery state before another operation.\n' 'FAILED (exit %d). Перед новой операцией проверьте указанное состояние восстановления.\n' "$status" >&2
+                msg_err "$(ui_text 'FAILED (exit %d). Check the reported recovery state before another operation.' 'FAILED (exit %d). Перед новой операцией проверьте указанное состояние восстановления.' "$status")" >&2
             fi
             return "$status"
         fi
-        (( reported )) || printf 'SUCCESS\n'
     done
 }
 

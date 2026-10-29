@@ -10,6 +10,10 @@ no root access, downloads, network checks or system changes, including when a
 domain recovery journal exists. The language lasts for this invocation only and
 is not asked again when returning to the main menu.
 
+The English and Russian screens share section headings, readable result blocks
+and 60-column ASCII separators. Color is optional: `NO_COLOR`, `TERM=dumb` and
+redirected output remain readable without ANSI escapes. System logs stay visible.
+
 The main menu is **1 Installation / Установка**, **2 Change Domains / Смена
 доменов**, **3 Backups / Резервные копии**, **0 Exit / Выход**. With no
 unfinished domain operation, opening it, Back and Exit need no root access and
@@ -31,11 +35,20 @@ user-facing explanations can accompany them. Language selection changes no
 installation, Backup/Restore or recovery behavior.
 
 Backups offers Create, List and Restore. Create reports the exact archive made by
-that operation. Listing shows UTC file dates and byte sizes, without opening each
+that operation. Listing shows numbered entries, UTC file dates, filenames and
+readable sizes (KiB/MiB/GiB), without opening each
 archive. A listed filename is not evidence of integrity or trusted provenance.
-Restore accepts a list number or absolute path, shows archive metadata and asks
+Restore accepts a list number or absolute path, shows human-readable metadata
+from the existing `inspect` result, and asks
 for `YES` before replacing managed data. Restore keeps the existing Backup v3
 OS/version/architecture and recovery contracts.
+
+Successful Installation, Change Domains and Restore finish at their result and
+exit to the shell. Installation ends with the credential-saving notice and,
+only when required, the manual reboot instruction. Create and List return to
+the Backups submenu; **0 Back** returns to the main menu. Cancellation, EOF and
+invalid selections do not start another stack operation. Failed or partial
+operations preserve their nonzero exit status and recovery diagnostics.
 
 Restore offers two independent options, both **No** by default:
 

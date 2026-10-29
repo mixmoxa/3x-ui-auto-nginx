@@ -2,6 +2,7 @@
 import ast
 import json
 import re
+import shlex
 import struct
 import time
 
@@ -16,12 +17,54 @@ VISION_STAGES = {
 }
 
 
+def api_restart_probe(root):
+    """Observe the existing curl request; preserve its bytes, options and exit."""
+    directory = root/'api-probe'; directory.mkdir(mode=0o700)
+    metrics = '%output{>>'+str(root/'api-restarts.metrics')+'}%{exitcode} %{http_code} %{time_total} %{time_connect} %{time_appconnect} %{time_starttransfer}\n'
+    wrapper = directory/'curl'
+    wrapper.write_text('#!/bin/bash\nif [[ ${!#} == */panel/api/server/restartXrayService ]]; then\n'
+                       '  exec /usr/bin/curl "$@" --write-out '+shlex.quote(metrics)+'\nfi\nexec /usr/bin/curl "$@"\n')
+    wrapper.chmod(0o700)
+    return directory
+
+
+def api_restart_metrics(text):
+    result = []
+    for line in text.splitlines():
+        if not re.fullmatch(r'[0-9]{1,3} [0-9]{3}(?: [0-9]{1,3}\.[0-9]{6}){4}', line): continue
+        code, status, *times = line.split()
+        if int(code) > 99 or (int(status) != 0 and not 100 <= int(status) <= 599): continue
+        result.append(dict(zip(('curl_exit','http_status','seconds','connect_seconds','tls_seconds','first_byte_seconds'),
+                               (int(code),int(status),*map(float,times)))))
+    return result
+
+
+def api_restart_nginx_errors(text):
+    categories = {'limiting requests':'rate_limit', 'connect() failed':'backend_connect',
+                  'upstream timed out':'backend_timeout', 'upstream prematurely closed connection':'backend_closed',
+                  'recv() failed':'backend_receive', 'access forbidden by rule':'access_rule'}
+    return sorted({category for line in text.splitlines() if '/panel/api/server/restartXrayService' in line
+                   for phrase, category in categories.items() if phrase in line})
+
+
 def vision_failure(log):
     matches = re.findall(r'Vision failed during ([^\n]+?) \(exit ([0-9]{1,3})\): rollback=([^\s]+)', log)
     if not matches: return None
     stage, code, rollback = matches[-1]
     return {'stage':VISION_STAGES.get(stage, 'unknown'), 'exit_code':int(code),
             'rollback':rollback if rollback in ('failed_rolled_back','failed_unverified') else 'unknown'}
+
+
+def vision_detail(log, source):
+    """Preserve the helper's public failure category, never its API/command data."""
+    public={node.value for node in ast.walk(ast.parse(source)) if isinstance(node,ast.Constant) and isinstance(node.value,str)}
+    matches=re.findall(r'^Vision failed during ([^:\r\n]+): ([^\r\n]+?); rollback=(failed_rolled_back|failed_unverified)(?:;|\r?$)',log,re.M)
+    for stage,reason,rollback in reversed(matches):
+        if stage not in public:continue
+        safe=reason in public or reason in ('ValueError','TypeError','KeyError','JSONDecodeError','TimeoutError','RuntimeError') or bool(re.fullmatch(
+            r'(?:(?:curl|nginx|systemctl|command) exited with -?[0-9]{1,3}(?: \((?:connection refused/unavailable|HTTP error response|request timed out|TLS handshake failed|empty response|connection receive failed|certificate verification failed)\))?|command timed out|OS error \(errno (?:[0-9]{1,3}|None)\))',reason))
+        return dict(stage=stage,reason=reason if safe else 'unknown',rollback=rollback)
+    return None
 
 
 def domain_failure(log, source):

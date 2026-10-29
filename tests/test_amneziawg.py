@@ -138,7 +138,8 @@ else: sys.exit(1)
                     for pid in children:
                         while time.monotonic()<deadline:
                             try: state=Path(f'/proc/{pid}/stat').read_text().split(') ',1)[1].split()[0]
-                            except FileNotFoundError: break
+                            # procfs can report ENOENT or ESRCH after the child exits.
+                            except (FileNotFoundError, ProcessLookupError): break
                             if state=='Z': break
                             time.sleep(.01)
                         else: self.fail('Private UDP fixture child did not terminate')
