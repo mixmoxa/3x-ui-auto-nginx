@@ -19,6 +19,127 @@ def helper(name):
 
 
 class IntegratedFeatures(unittest.TestCase):
+    def test_xhttp_cdn_prompt_defaults_languages_and_exact_parameters(self):
+        cdn = helper('xhttp-cdn')
+        for lang, prompt in (('en', 'Add an additional CDN-compatible XHTTP connection?'),
+                             ('ru', 'Добавить дополнительное подключение XHTTP, совместимое с CDN?')):
+            for answer, expected in (('', 'n'), ('\n', 'n'), ('N\n', 'n'), ('y\n', 'y'), ('bad\nY\n', 'y')):
+                script=function('ui_text')+'\n'+function('select_xhttp_cdn')+'\nselect_xhttp_cdn; echo "RESULT:$INSTALL_XHTTP_CDN"'
+                result=subprocess.run(['bash','-eu','-c',script],input=answer,text=True,capture_output=True,
+                                      env={**os.environ,'UI_LANG':lang})
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertIn(prompt,result.stdout); self.assertIn('RESULT:'+expected,result.stdout)
+        row=cdn.inbound(12345,'/RandomPrefix12345/cookie','🇫🇮')
+        self.assertIs(row['enable'],False)
+        self.assertEqual((row['remark'],row['protocol'],row['listen'],row['port']),('🇫🇮 xhttp CDN','vless','127.0.0.1',12345))
+        self.assertEqual(row['settings'],dict(clients=[],decryption='none',encryption='none',fallbacks=[]))
+        self.assertEqual(row['streamSettings']['network'],'xhttp');self.assertEqual(row['streamSettings']['security'],'none')
+        settings=row['streamSettings']['xhttpSettings']
+        expected=dict(mode='packet-up',xPaddingBytes='100-1000',xPaddingObfsMode=True,xPaddingKey='_dc',xPaddingHeader='X-Cache',
+                      xPaddingPlacement='queryInHeader',xPaddingMethod='tokenish',uplinkDataPlacement='cookie',uplinkDataKey='edge_data',
+                      scMaxEachPostBytes='2048',uplinkHTTPMethod='GET',scMaxBufferedPosts=30,scStreamUpServerSecs='20-80',
+                      serverMaxHeaderBytes=0,noSSEHeader=False,noGRPCHeader=False,enableXmux=False)
+        self.assertEqual({k:settings[k] for k in expected},expected)
+        self.assertIsInstance(settings['scMaxEachPostBytes'],str)
+        route=cdn.nginx(12345,settings['path'])
+        self.assertIn('proxy_pass http://127.0.0.1:12345;',route)
+        for directive in ('proxy_buffering off;','proxy_request_buffering off;','proxy_cache off;','proxy_http_version 1.1;'):
+            self.assertIn(directive,route)
+        self.assertNotIn('proxy_set_header Cookie',route)
+        for path in ('/bad;cookie','/short/cookie','/validprefix123/other'):
+            with self.assertRaises(ValueError): cdn.nginx(12345,path)
+
+    def test_xhttp_cdn_n_and_unknown_version_stop_without_side_effects(self):
+        from release_contract import baseline
+        for requested,version,expected in (('n','v9.99.0',0),('y','v9.99.0',1),('y','v3.10.2',1),('y','',1)):
+            script="ui_text() { printf '%s' \"$1\"; }; msg_err() { :; }; make_port() { echo MUTATION; }; curl() { echo DOWNLOAD; };\n"
+            script+="verified_panel_release() { cat <<'CDN_BASELINE'\n"+json.dumps(baseline())+"\nCDN_BASELINE\n}\n"
+            script+=function('preflight_xhttp_cdn')+'\npreflight_xhttp_cdn'
+            result=subprocess.run(['bash','-eu','-c',script],capture_output=True,text=True,
+                                  env={**os.environ,'INSTALL_XHTTP_CDN':requested,'PANEL_TAG':version})
+            self.assertEqual(result.returncode,expected,result.stderr)
+            self.assertNotIn('MUTATION',result.stdout);self.assertNotIn('DOWNLOAD',result.stdout)
+
+    def test_xhttp_cdn_failure_removes_only_its_new_disabled_inbound_and_route(self):
+        import copy
+        cdn=helper('xhttp-cdn')
+        for stage in ('create-response','host','nginx-test','nginx-reload','none','rollback'):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                previous={'id':1,'tag':'core','port':8443}
+                rows=[previous];calls=[];used=False
+                class Panel:
+                    def request(self,path,data=None):
+                        nonlocal used
+                        if path.endswith('/list'):return {'obj':copy.deepcopy(rows)}
+                        if path.endswith('/inbounds/add'):
+                            rows.append({'id':2,**copy.deepcopy(data)})
+                            if stage=='create-response':raise ValueError('Private API response omitted')
+                            return {'obj':copy.deepcopy(rows[-1])}
+                        if path.endswith('/hosts/add'):
+                            if stage in ('host','rollback'):raise ValueError('Private API response omitted')
+                            return {'obj':[dict(inboundId=2,address='panel.example',port=443,security='tls',
+                                               fingerprint='firefox',alpn=[],sni='panel.example',hostHeader='',groupId='cdnfixture123456') ]}
+                        if '/inbounds/del/' in path:
+                            if stage=='rollback':raise ValueError('Private API response omitted')
+                            rows[:]=[r for r in rows if r['id']!=2];return {'success':True}
+                        raise AssertionError('Unexpected API action')
+                def command(*args):
+                    nonlocal used
+                    calls.append(args)
+                    if not used and ((stage=='nginx-test' and args==('nginx','-t')) or
+                                     (stage=='nginx-reload' and args==('systemctl','reload','nginx'))):
+                        used=True;raise OSError('Injected local command failure')
+                route=Path(directory)/'cdn.conf'
+                with patch.object(cdn,'run',side_effect=command):
+                    result=cdn.configure(Panel(),'panel.example',12345,'/Independent12345/cookie','🇫🇮',route)
+                self.assertEqual(result,'configured' if stage=='none' else 'failed_unverified' if stage=='rollback' else 'failed_rolled_back')
+                self.assertEqual(rows[0],previous)
+                if stage not in ('none','rollback'):
+                    self.assertEqual(rows,[previous]);self.assertFalse(route.exists())
+                if stage=='none':self.assertIs(rows[1]['enable'],False)
+
+    def test_xhttp_cdn_preflight_uses_independent_random_path_and_reserved_free_port(self):
+        import socket
+        from release_contract import baseline
+        with tempfile.TemporaryDirectory() as directory, socket.socket() as occupied:
+            occupied.bind(('127.0.0.1',0))
+            stage=Path(directory)
+            script='source "'+str(ROOT/'x-ui-latest.sh')+'"\n'
+            script+='''
+get_port() { printf '%s' "$OCCUPIED"; }
+curl() {
+    local file=$HELPER_SOURCE
+    [[ "$*" != *assets/amneziawg/* ]] || file=$API_SOURCE
+    cp "$file" "${!#}"
+}
+make_port core_port
+preflight_xhttp_cdn
+printf 'RESULT:%s:%s:%s\n' "$core_port" "$xhttp_cdn_port" "$xhttp_cdn_path"
+'''
+            result=subprocess.run(['bash','-eu','-c',script],capture_output=True,text=True,env={**os.environ,
+                'INSTALL_XHTTP_CDN':'y','PANEL_TAG':baseline()['version'],'PANEL_STAGE':str(stage),
+                'OCCUPIED':str(occupied.getsockname()[1]),'xhttp_path':'CoreRandomPath123',
+                'HELPER_SOURCE':str(ROOT/'assets/xhttp-cdn/managed.py'),'API_SOURCE':str(ROOT/'assets/amneziawg/managed.py')})
+            self.assertEqual(result.returncode,0,result.stderr)
+            _,core,cdn,path=result.stdout.strip().split(':')
+            self.assertNotEqual(core,cdn);self.assertNotIn(str(occupied.getsockname()[1]),(core,cdn))
+            self.assertRegex(path,r'^/[A-Za-z0-9]{16}/cookie$');self.assertNotEqual(path,'/CoreRandomPath123/cookie')
+            with socket.socket() as probe:probe.bind(('127.0.0.1',int(cdn)))
+            self.assertTrue((stage/'managed-xhttp-cdn.py').is_file())
+
+    def test_xhttp_cdn_cli_keeps_credentials_off_argv_and_reports_failed_rollback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stage=Path(directory)
+            (stage/'managed-xhttp-cdn.py').write_text("import os,sys\nassert not any('fixture-secret' in a for a in sys.argv)\nassert sys.stdin.read().split('\\0')==['fixture-secret-user','fixture-secret-pass']\nstatus=os.environ['FIXTURE_STATUS']\nprint(status)\nsys.exit(0 if status=='configured' else 1)\n")
+            for status in ('configured','failed_rolled_back','failed_unverified'):
+                result=subprocess.run(['bash','-eu','-c',function('install_xhttp_cdn')+'\ninstall_xhttp_cdn'],
+                    capture_output=True,text=True,env={**os.environ,'INSTALL_XHTTP_CDN':'y','PANEL_STAGE':str(stage),
+                    'AWG_HELPER':'unused','domain':'panel.example','panel_path':'panel','xhttp_cdn_port':'12345',
+                    'xhttp_cdn_path':'/Independent12345/cookie','emoji_flag':'🇫🇮','config_username':'fixture-secret-user',
+                    'config_password':'fixture-secret-pass','FIXTURE_STATUS':status})
+                self.assertEqual(result.returncode,0 if status=='configured' else 1,result.stderr)
+                self.assertNotIn('fixture-secret',result.stdout+result.stderr)
+
     def test_minimal_ufw_preserves_active_and_refuses_ambiguous_ssh_or_firewall(self):
         import hashlib
         for scenario in ('active', 'service', 'socket', 'missing', 'foreign', 'deny', 'custom-before', 'nft', 'legacy', 'enable-fails'):
@@ -446,10 +567,10 @@ sysctl() {
     def test_preparation_errors_preserve_deployment_and_initial_reboot_is_manual(self):
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
                'select_adguard','select_client','preflight_base_os','preflight_panel_release','make_port','preflight_amneziawg',
-               'preflight_integrated_features','setup_swap','prepare_base_os','prepare_system_dns')
+               'select_xhttp_cdn','preflight_xhttp_cdn','preflight_integrated_features','setup_swap','prepare_base_os','prepare_system_dns')
         base='\n'.join(n+'() { echo '+n+'; };' for n in names)
         base+='\nmsg_err() { echo "$*" >&2; }; msg_warn() { :; }; cleanup_adguard() { echo CLEANUP; exit 19; };\n'
-        for failure in ('preflight_base_os','preflight_integrated_features','prepare_base_os','prepare_system_dns'):
+        for failure in ('preflight_base_os','select_xhttp_cdn','preflight_xhttp_cdn','preflight_integrated_features','prepare_base_os','prepare_system_dns'):
             result=subprocess.run(['bash','-eu','-c',base+function('main')+'\n'+failure+'() { return 1; }; main'],capture_output=True,text=True)
             self.assertEqual(result.returncode,1,result.stderr)
             self.assertNotIn('CLEANUP',result.stdout)
@@ -498,7 +619,7 @@ sysctl() {
                 if case=='disabled-apt': override=override.replace("    return ''\n","    if args[0]=='apt-config': return 'APT::Periodic::Enable \"0\";'\n    return ''\n")
                 prefix, cli=source.split("if __name__ == '__main__':",1)
                 (root/'helper.py').write_text(prefix.replace("root=Path('/')", 'root=Path('+repr(str(root))+')')+override+"if __name__ == '__main__':"+cli)
-                names=('confirm_destructive_reinstall','validate_domains','select_vision','select_amneziawg','select_adguard','select_client',
+                names=('confirm_destructive_reinstall','validate_domains','select_vision','select_amneziawg','select_xhttp_cdn','preflight_xhttp_cdn','select_adguard','select_client',
                        'preflight_panel_release','make_port','preflight_amneziawg','preflight_vision_artifacts','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state')
                 stubs='\n'.join(name+'() { :; }' for name in names)
                 stubs+='\nselect_security() { INSTALL_SECURITY='+('n' if case=='declined' else 'y')+'; }; msg_err() { echo "$*" >&2; }; msg_warn() { :; };\n'
@@ -554,7 +675,7 @@ sysctl() {
     def test_main_stops_after_mandatory_setup_failure(self):
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
                'select_adguard','select_client','preflight_base_os','preflight_panel_release','make_port','preflight_amneziawg',
-               'preflight_integrated_features','setup_swap','prepare_base_os','prepare_system_dns','cleanup_adguard','clean_previous_install',
+               'select_xhttp_cdn','preflight_xhttp_cdn','preflight_integrated_features','setup_swap','prepare_base_os','prepare_system_dns','cleanup_adguard','clean_previous_install',
                'install_packages','setup_firewall','get_server_ip','setup_acme_http','get_ssl_certs','install_panel',
                'configure_nginx','configure_xui_db','install_clash_sub','install_fake_site','install_diagnostics','tune_system',
                'install_backup_tool','setup_certificate_renewal','check_installation','show_results','finish_initial_reboot','write_managed_state')
@@ -725,7 +846,7 @@ sysctl() {
     def test_optional_dns_failure_continues_core_only_after_verified_rollback(self):
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
                'select_adguard','select_client','preflight_base_os','preflight_panel_release','make_port','preflight_amneziawg',
-               'preflight_integrated_features','setup_swap','prepare_base_os','verify_base_os','cleanup_adguard','clean_previous_install',
+               'select_xhttp_cdn','preflight_xhttp_cdn','preflight_integrated_features','setup_swap','prepare_base_os','verify_base_os','cleanup_adguard','clean_previous_install',
                'install_packages','setup_firewall','get_server_ip','setup_acme_http','get_ssl_certs','install_panel',
                'configure_nginx','configure_xui_db','install_clash_sub','install_fake_site','install_diagnostics','tune_system',
                'install_backup_tool','setup_certificate_renewal','check_installation','finish_initial_reboot','write_managed_state')
@@ -1091,7 +1212,7 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
     def test_declined_features_never_mutate_system(self):
         declined=subprocess.run(['bash','-eu','-c','python3() { echo MUTATION; return 1; };\n'+function('prepare_system_dns')+'\nINSTALL_SECURITY=n; prepare_system_dns'],capture_output=True,text=True)
         self.assertEqual(declined.returncode,0,declined.stderr); self.assertNotIn('MUTATION',declined.stdout)
-        names = ('confirm_destructive_reinstall', 'validate_domains', 'select_amneziawg', 'select_adguard',
+        names = ('confirm_destructive_reinstall', 'validate_domains', 'select_amneziawg', 'select_xhttp_cdn', 'preflight_xhttp_cdn', 'select_adguard',
                  'preflight_panel_release','make_port', 'preflight_amneziawg', 'cleanup_adguard', 'clean_previous_install',
                  'install_packages', 'setup_firewall', 'get_server_ip', 'setup_acme_http', 'get_ssl_certs',
                  'install_panel', 'configure_nginx', 'configure_xui_db', 'install_clash_sub', 'install_fake_site',
@@ -1153,7 +1274,7 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
         # Security, Vision, AWG, AGH, Client; exact required six combinations.
         scenarios=('nnnnn','ynnny','nynny','ynnyy','nyyny','yyyyy')
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
-               'select_adguard','select_client','preflight_panel_release','make_port','preflight_amneziawg','preflight_integrated_features',
+               'select_adguard','select_client','preflight_panel_release','make_port','preflight_amneziawg','select_xhttp_cdn','preflight_xhttp_cdn','preflight_integrated_features',
                'cleanup_adguard','clean_previous_install','install_packages','setup_firewall','get_server_ip','setup_acme_http',
                'get_ssl_certs','install_panel','configure_nginx','configure_xui_db','install_clash_sub','install_fake_site',
                'install_diagnostics','tune_system','install_backup_tool','setup_certificate_renewal','check_installation','show_results','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state')

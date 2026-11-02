@@ -112,6 +112,23 @@ class DomainFixture:
     def p(self, path):
         return self.root/path.lstrip('/')
 
+    def cdn(self):
+        cdn=helper('xhttp-cdn'); path='/Independent12345/cookie'; port=12345
+        with self.operation.connection(False) as db:
+            row=dict(db.execute("SELECT * FROM inbounds WHERE id=?",(self.operation.discover()['inbound_roles']['xhttp'],)).fetchone())
+            row.update(id=99,remark='user renamed this inbound',enable=0,listen='127.0.0.1',port=port,
+                       tag='inbound-12345',stream_settings=json.dumps(cdn.inbound(port,path,'🇫🇮')['streamSettings']))
+            db.execute('INSERT INTO inbounds ('+','.join(row)+') VALUES ('+','.join('?' for _ in row)+')',tuple(row.values()))
+            host=dict(db.execute("SELECT * FROM hosts WHERE remark='xhttp'").fetchone())
+            host.update(id=99,inbound_id=99,group_id='cdnfixture123456',remark='xhttp CDN',sni=self.panel,alpn='[]')
+            db.execute('INSERT INTO hosts ('+','.join(host)+') VALUES ('+','.join('?' for _ in host)+')',tuple(host.values()))
+        snippet=cdn.nginx(port,path)
+        self.write('/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf',snippet,0o600)
+        marker=json.loads(self.p(self.module.MANIFEST).read_text())
+        marker['inbound_roles']['xhttp_cdn']=99;marker['features']['xhttp_cdn']=True
+        marker['xhttp_cdn']=dict(port=port,path=path,host=host,snippet=snippet)
+        self.write(self.module.MANIFEST,json.dumps(marker),0o600)
+
     def write(self, name, content, mode=0o644):
         path = self.p(name); path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content); path.chmod(mode)
@@ -220,6 +237,58 @@ class Domains(unittest.TestCase):
     def fixture(self, **kwargs):
         temporary = tempfile.TemporaryDirectory(prefix='domain-operation-'); self.addCleanup(temporary.cleanup)
         return DomainFixture(temporary.name, **kwargs)
+
+    def test_cdn_initial_host_updates_but_custom_and_additional_hosts_are_preserved(self):
+        for custom in (False, True):
+            with self.subTest(custom=custom):
+                f=self.fixture();f.cdn()
+                with f.operation.connection(False) as db:
+                    if custom:
+                        db.execute("UPDATE hosts SET address='edge.example',sni='custom.example',host_header='origin.example',fingerprint='chrome' WHERE id=99")
+                    row=dict(db.execute('SELECT * FROM hosts WHERE id=99').fetchone())
+                    extra={**row,'id':100,'group_id':'extracdn12345678','address':f.panel,'sni':'extra.example'}
+                    db.execute('INSERT INTO hosts ('+','.join(extra)+') VALUES ('+','.join('?' for _ in extra)+')',tuple(extra.values()))
+                before=f.state()
+                route=f.p('/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf').read_bytes()
+                for panel in ('second.example','third.example'):
+                    f.change(panel)
+                    with f.operation.connection(True) as db:
+                        actual=dict(db.execute('SELECT * FROM hosts WHERE id=99').fetchone())
+                        self.assertEqual(actual,row if custom else {**row,'address':panel,'sni':panel})
+                        self.assertEqual(dict(db.execute('SELECT * FROM hosts WHERE id=100').fetchone()),extra)
+                        self.assertEqual(db.execute('SELECT enable FROM inbounds WHERE id=99').fetchone()[0],0)
+                    self.assertEqual(f.p('/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf').read_bytes(),route)
+                after=f.state()
+                for table in ('clients','client_inbounds','users','client_traffics'):
+                    self.assertTrue(before[table]==after[table],table+' changed')
+
+    def test_cdn_mismatched_route_is_refused_before_backup_or_database_changes(self):
+        f=self.fixture();f.cdn();before=f.state()
+        marker=json.loads(f.p(f.module.MANIFEST).read_text())
+        bad=marker['xhttp_cdn']['snippet'].replace('127.0.0.1:12345','127.0.0.1:23456')
+        marker['xhttp_cdn']['snippet']=bad
+        f.write(f.module.MANIFEST,json.dumps(marker),0o600)
+        f.write('/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf',bad,0o600)
+        with self.assertRaises(f.module.Refusal):f.change('second.example')
+        self.assertTrue(f.state()==before)
+        self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] for _,args in f.calls))
+
+    def test_cdn_rebuild_cleanup_checks_ownership_and_declining_removes_old_route(self):
+        from test_personal_backup import relocated
+        for foreign in ('none','before-preflight','after-preflight'):
+            with self.subTest(foreign=foreign):
+                f=self.fixture();f.cdn();before=f.state()
+                route=f.p('/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf')
+                if foreign=='before-preflight':route.write_text('# foreign route; preserve\n')
+                script='systemctl() { :; }; msg_err() { :; };\n'
+                script+='\n'.join(relocated(function(name),f.root) for name in ('preflight_xhttp_cdn','clean_previous_install'))
+                script+='\nINSTALL_XHTTP_CDN=n; preflight_xhttp_cdn; '
+                if foreign=='after-preflight':script+="printf '# changed route; preserve\\n' > "+str(route)+'; '
+                script+='clean_previous_install'
+                result=subprocess.run(['bash','-eu','-c',script],capture_output=True,text=True)
+                self.assertEqual(result.returncode,0 if foreign=='none' else 1,result.stderr)
+                self.assertEqual(route.exists(),foreign!='none')
+                if foreign!='none':self.assertTrue(f.state()==before,'Foreign route caused data removal')
 
     def test_panel_reality_both_preserve_client_keys_ids_new_fields_and_optional_state(self):
         for mode in ('panel','reality','both'):
@@ -485,6 +554,40 @@ class Domains(unittest.TestCase):
         result=backup.run_tool('restore',archive)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         self.assertTrue(state()==before,'Backup v3 did not preserve the post-switch SQLite state')
+
+    def test_cdn_backup_restore_preserves_disabled_and_user_enabled_custom_state(self):
+        for enabled in (0,1):
+            with self.subTest(enabled=enabled):
+                f=self.fixture();f.cdn()
+                with f.operation.connection(False) as db:
+                    db.execute('UPDATE inbounds SET enable=? WHERE id=99',(enabled,))
+                    if enabled:db.execute("UPDATE hosts SET address='edge.example',sni='cdn.example' WHERE id=99")
+                f.change('second.example')
+                backup,_,state=self.backup_fixture(f)
+                before=state();route=backup.path('/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf')
+                contents=route.read_bytes();marker=backup.path(f.module.MANIFEST).read_bytes()
+                archive=backup.backup()
+                with sqlite3.connect(backup.path(f.module.DB)) as db:
+                    db.execute('UPDATE inbounds SET enable=? WHERE id=99',(1-enabled,))
+                    db.execute("UPDATE hosts SET address='broken.example' WHERE id=99")
+                route.write_text('# damaged route\n')
+                result=backup.run_tool('restore',archive)
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                self.assertTrue(state()==before,'CDN SQLite state changed during Restore')
+                self.assertEqual(route.read_bytes(),contents)
+                self.assertEqual(backup.path(f.module.MANIFEST).read_bytes(),marker)
+                # Return the restored DB to the existing domain fixture. Only
+                # its infrastructure paths were relocated by backup_fixture.
+                shutil.copyfile(backup.path(f.module.DB),f.p(f.module.DB))
+                with f.operation.connection(False) as db:
+                    for key,value in db.execute('SELECT key,value FROM settings').fetchall():
+                        db.execute('UPDATE settings SET value=? WHERE key=?',(value.replace(str(backup.root),''),key))
+                    for iid,value in db.execute('SELECT id,stream_settings FROM inbounds').fetchall():
+                        db.execute('UPDATE inbounds SET stream_settings=? WHERE id=?',(value.replace(str(backup.root),''),iid))
+                f.change('third.example')
+                with f.operation.connection(True) as db:
+                    row=db.execute('SELECT address,sni FROM hosts WHERE id=99').fetchone()
+                    self.assertEqual(tuple(row),('edge.example','cdn.example') if enabled else ('third.example','third.example'))
 
     def test_original_backup_restores_after_both_and_repeated_restore(self):
         f=self.fixture();backup,sync,state=self.backup_fixture(f)

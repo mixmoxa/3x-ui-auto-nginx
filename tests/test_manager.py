@@ -115,19 +115,20 @@ entrypoint "$@"
         with tempfile.TemporaryDirectory() as temporary:
             script=Path(temporary)/'questions.sh'
             script.write_text(library+'''
-validate_domains && select_security && select_vision && select_amneziawg && select_adguard && select_client || exit $?
-printf 'FLAGS:%s:%s:%s:%s:%s:%s:%s:%s\n' "$INSTALL_SECURITY" "$INSTALL_VISION" "$INSTALL_AWG" "$INSTALL_AGH" "$CREATE_CLIENT" "$domain" "$reality_domain" "$vision_domain"
+validate_domains && select_security && select_vision && select_amneziawg && select_xhttp_cdn && select_adguard && select_client || exit $?
+printf 'FLAGS:%s:%s:%s:%s:%s:%s:%s:%s:%s\n' "$INSTALL_SECURITY" "$INSTALL_VISION" "$INSTALL_AWG" "$INSTALL_XHTTP_CDN" "$INSTALL_AGH" "$CREATE_CLIENT" "$domain" "$reality_domain" "$vision_domain"
 ''')
-            code,text=tty_run(script,b'Panel.Example\nReality.Example\n\ny\nVision.Example\ny\ny\n\n')
+            code,text=tty_run(script,b'Panel.Example\nReality.Example\n\ny\nVision.Example\ny\ny\ny\n\n')
             self.assertEqual(code,0,text)
             for prompt in ('домен панели 3X-UI','домен VLESS REALITY','Усилить безопасность VPS? [Y/n]',
                            'дополнительное подключение VLESS TCP/TLS','домен VLESS TLS Vision',
                            'дополнительное подключение AmneziaWG? [y/N]','Установить и настроить AdGuard Home? [y/N]',
                            'Создать клиента в 3X-UI'):
                 self.assertIn(prompt,text)
-            self.assertIn('FLAGS:y:y:y:y:y:panel.example:reality.example:vision.example',text)
+            self.assertIn('Добавить дополнительное подключение XHTTP, совместимое с CDN? [y/N]:',text)
+            self.assertIn('FLAGS:y:y:y:y:y:y:panel.example:reality.example:vision.example',text)
             for name,variable,default in (('select_security','INSTALL_SECURITY','y'),('select_vision','INSTALL_VISION','n'),
-                    ('select_amneziawg','INSTALL_AWG','n'),('select_adguard','INSTALL_AGH','n'),('select_client','CREATE_CLIENT','y')):
+                    ('select_amneziawg','INSTALL_AWG','n'),('select_xhttp_cdn','INSTALL_XHTTP_CDN','n'),('select_adguard','INSTALL_AGH','n'),('select_client','CREATE_CLIENT','y')):
                 for answers,expected in ((b'\n',default),(b'bad\nn\n','n'),(b'\x04','n')):
                     with self.subTest(question=name,answers=answers):
                         script.write_text(library+name+'; printf "RESULT:%s\\n" "$'+variable+'"\n')

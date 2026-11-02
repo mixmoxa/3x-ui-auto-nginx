@@ -98,7 +98,7 @@ def validate_schema(db):
             'Custom triggers on managed SQLite tables are unsupported.')
 
 
-def database_context(db, panel, reality):
+def database_context(db, panel, reality, manifest=None):
     """Read roles by structure; names/tags alone never establish identity."""
     validate_schema(db)
     require(tuple(db.execute('PRAGMA quick_check').fetchone()) == ('ok',), 'SQLite integrity check failed.')
@@ -156,19 +156,36 @@ def database_context(db, panel, reality):
         require(not awg_settings.get('kernelMode', False) and not awg_settings.get('server', {}).get('kernelMode', False),
                 'Kernel AmneziaWG is outside Change Domains support.')
         roles['amneziawg'] = row['id']
+    cdn = (manifest or {}).get('xhttp_cdn')
+    cdn_hosts = []
+    if cdn is not None:
+        require(type(cdn.get('port')) is int and 1024 <= cdn['port'] <= 65535 and
+                re.fullmatch(r'/[A-Za-z0-9]{10,64}/cookie', cdn.get('path', '')),
+                'Unknown XHTTP CDN endpoint layout.')
+        iid = manifest.get('inbound_roles', {}).get('xhttp_cdn')
+        row = single([r for r in rows if r['id'] == iid], 'Missing XHTTP CDN inbound.')
+        stream = streams[iid]
+        require((row['protocol'], row['listen'], row['port']) == ('vless', '127.0.0.1', cdn['port']) and row['node_id'] in (None, 0) and
+                stream.get('network') == 'xhttp' and stream.get('security') == 'none' and
+                stream.get('xhttpSettings', {}).get('mode') == 'packet-up' and
+                stream['xhttpSettings'].get('path') == cdn['path'], 'XHTTP CDN topology differs from manifest.')
+        roles['xhttp_cdn'] = iid
+        cdn_hosts = [dict(h) for h in db.execute('SELECT * FROM hosts WHERE inbound_id=?', (iid,))]
     hosts = {}
     for name, iid in roles.items():
-        if name == 'amneziawg':
+        if name in ('amneziawg', 'xhttp_cdn'):
             continue
         address = vision if name == 'vision' else panel
         security = 'same' if name in ('reality', 'hysteria2', 'vision') else 'tls'
         hosts[name] = single([dict(h) for h in db.execute('SELECT * FROM hosts WHERE inbound_id=? AND address=? AND port=443 AND security=?',
                                                       (iid, address, security))], 'Missing or ambiguous managed Host: '+name)
-    managed_ids = {h['id'] for h in hosts.values()}
+    managed_ids = {h['id'] for h in (*hosts.values(), *cdn_hosts)}
     require(all(h['id'] in managed_ids for h in db.execute('SELECT id FROM hosts WHERE address=?', (panel,))),
             'Additional Hosts depend on Panel; ownership is ambiguous.')
+    features = dict(vision=bool(vision), amneziawg=bool(awg))
+    if cdn is not None: features['xhttp_cdn'] = True
     return dict(domains=dict(panel=panel, reality=reality, vision=vision), inbound_roles=roles,
-                features=dict(vision=bool(vision), amneziawg=bool(awg)), settings=settings, hosts=hosts,
+                features=features, settings=settings, hosts=hosts, cdn_hosts=cdn_hosts,
                 rows={r['id']: r for r in rows}, streams=streams)
 
 
@@ -209,6 +226,12 @@ def database_edits(db, context, panel, reality):
             section, field = path[2:].split('.')
             require(stream.get(section, {}).get(field) == old['panel'], 'Custom WS/gRPC domain override prevents a safe switch.')
             add('inbounds', context['inbound_roles'][name], 'stream_settings', None, [(path, panel)])
+        cdn = (context.get('manifest') or {}).get('xhttp_cdn')
+        if cdn and cdn['host'] in context['cdn_hosts']:
+            # Only the exact initial Host is managed. Any user edit preserves it
+            # in full; all additional Hosts are left untouched as well.
+            add('hosts', cdn['host']['id'], 'address', panel)
+            add('hosts', cdn['host']['id'], 'sni', panel)
         add('inbounds', context['inbound_roles']['hysteria2'], 'stream_settings', None,
             [('$.tlsSettings.serverName', panel), ('$.tlsSettings.certificates[0].certificateFile', '/root/cert/'+panel+'/fullchain.pem'),
              ('$.tlsSettings.certificates[0].keyFile', '/root/cert/'+panel+'/privkey.pem')])
@@ -315,8 +338,10 @@ class Operation:
         hostname(panel); hostname(reality)
         require(panel != reality, 'Panel and REALITY domains conflict.')
         self.check('hook', panel, reality)
+        marker = self.path(MANIFEST)
+        state = json.loads(self.read(MANIFEST)) if marker.exists() or marker.is_symlink() else None
         with self.connection(True) as db:
-            context = database_context(db, panel, reality)
+            context = database_context(db, panel, reality, state)
         context['features']['adguard'] = self.path(AGH).exists()
         agh_paths = ('/opt/AdGuardHome/AdGuardHome.yaml', '/etc/nginx/snippets/x-ui-auto-optional/adguard.conf',
                      '/usr/local/lib/3x-ui-pro/managed-adguard.sh')
@@ -324,8 +349,6 @@ class Operation:
                 'Incomplete or foreign AdGuard Home layout; no data changed.')
         if context['features']['adguard']:
             require(json.loads(self.read(AGH)).get('domain') == panel, 'AdGuard Home domain disagrees with Panel.')
-        marker = self.path(MANIFEST)
-        state = json.loads(self.read(MANIFEST)) if marker.exists() or marker.is_symlink() else None
         if state is not None and not ignore_manifest:
             require(marker.stat().st_uid == 0 and stat.S_IMODE(marker.stat().st_mode) == 0o600,
                     'Manifest must be a private root-owned 0600 file.')
@@ -342,6 +365,13 @@ class Operation:
         return context
 
     def validate_files(self, context):
+        cdn = (context.get('manifest') or {}).get('xhttp_cdn')
+        if cdn:
+            route = self.read('/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf')
+            require(route == cdn['snippet'] and
+                    re.findall(r'proxy_pass http://127\.0\.0\.1:([0-9]+);', route) == [str(cdn['port'])] and
+                    re.findall(r'location (?:=|\^~) (\S+) \{', route) == [cdn['path'], cdn['path']+'/'],
+                    'XHTTP CDN nginx route differs from its managed snapshot.')
         domains = context['domains']; panel, reality, vision = (domains[k] for k in ('panel', 'reality', 'vision'))
         stream = self.read(STREAM)
         expected = ('map_hash_bucket_size 272;map $ssl_preread_server_name $sni_name {hostnames;' +
@@ -726,6 +756,9 @@ class Operation:
         marker = copy.deepcopy(context['manifest']) if context['manifest'] else dict(format=1, layout='nginx-stream-v1',
                    installed_by='legacy-v2.1.7-layout', source_ref=source, inbound_roles=context['inbound_roles'], features=context['features'])
         marker['domains'] = dict(panel=panel, reality=reality, vision=old['vision'])
+        cdn = marker.get('xhttp_cdn')
+        if cdn and panel != old['panel'] and cdn['host'] in context['cdn_hosts']:
+            cdn['host'].update(address=panel, sni=panel)
         marker['domain_change_source'] = source
         history = marker.setdefault('retained_domains', {})
         for name in (old['panel'], old['reality']):
@@ -843,7 +876,7 @@ class Operation:
         return left == right
 
     def database_current(self, db, item):
-        allowed = {'settings': {'value'}, 'inbounds': {'stream_settings', 'share_addr'}, 'hosts': {'address'}}
+        allowed = {'settings': {'value'}, 'inbounds': {'stream_settings', 'share_addr'}, 'hosts': {'address', 'sni'}}
         require(item.get('table') in allowed and item.get('column') in allowed[item['table']], 'Invalid SQLite recovery record.')
         key = 'key' if item['table'] == 'settings' else 'id'
         if key == 'key':

@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import struct
 import subprocess
@@ -20,6 +21,31 @@ def png(rgb=b'\xff\xff\xff'):
 
 
 class CIScope(unittest.TestCase):
+    def test_cdn_documentation_languages_sections_prompts_and_legacy_anchors(self):
+        from ci_scope import references, local_path
+        for language in ('','EN','AR','ES','FA','TR','ZH_CN'):
+            name='README'+('_'+language if language else '')+'.md'
+            text=(ROOT/name).read_text()
+            self.assertEqual(text.count('<a id="xhttp-cdn"></a>'),1,name)
+            self.assertTrue(re.search(r'(?m)^### 6\. 🌐 .+XHTTP.*',text),name)
+            self.assertIn('### 7. 🛡️ AdGuard Home + DNS-over-HTTPS',text)
+            self.assertRegex(text,r'(?m)^### 8\. 👤 ')
+            self.assertIn('<a id="6--adguard-home--dns-over-https"></a>',text)
+            prompt='Добавить дополнительное подключение XHTTP, совместимое с CDN? [y/N]:' if not language else 'Add an additional CDN-compatible XHTTP connection? [y/N]:'
+            self.assertIn('> `'+prompt+'`',text)
+            section=text.split('### 6. 🌐 ',1)[1].split('\n---',1)[0]
+            for term in ('VLESS','XHTTP','packet-up','CDN','3X-UI','HTTPS','Host'):
+                self.assertIn(term,section,name)
+            table=text.split('| VLESS + XHTTP |',1)[1].splitlines()
+            self.assertIn('CDN',table[1],name)
+            for link in references(text):
+                destination=local_path(ROOT,name,link)
+                if destination is not None:
+                    self.assertTrue(destination.exists(),name+' references missing file')
+        pointer=(ROOT/'README_RU.md').read_text()
+        for fragment in ('xhttp-cdn','7--adguard-home--dns-over-https','8--автоматическое-создание-клиента-и-подписки'):
+            self.assertIn('README.md#'+fragment,pointer)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

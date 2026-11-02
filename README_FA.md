@@ -186,7 +186,25 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ---
 
-### 6. 🛡️ AdGuard Home + DNS-over-HTTPS
+<a id="xhttp-cdn"></a>
+
+### 6. 🌐 VLESS + XHTTP برای CDN
+
+> `Add an additional CDN-compatible XHTTP connection? [y/N]:`
+
+*اتصال اضافی · به‌صورت پیش‌فرض نصب نمی‌شود (`N`)*
+
+یک اتصال مستقل VLESS با انتقال XHTTP در حالت packet-up ساخته می‌شود که تنظیمات سرور آن برای استفاده از CDN آماده شده است. این اتصال در پنل 3X-UI به‌صورت غیرفعال ساخته می‌شود.
+
+از دامنهٔ HTTPS فعلی پنل استفاده می‌شود و نیازی به دامنه یا گواهی اضافی نیست. پس از فعال‌سازی، اتصال بدون CDN نیز به‌صورت مستقیم قابل استفاده است.
+
+برای استفاده از CDN، کاربر باید سرویس‌دهندهٔ خود را تنظیم کند و پارامترهای Host را در 3X-UI تغییر دهد. نصب‌کننده CDN را تنظیم نمی‌کند؛ فقط یک پروفایل آمادهٔ سرور برای استفاده و تنظیمات بعدی ارائه می‌دهد.
+
+---
+
+<a id="6--adguard-home--dns-over-https"></a>
+
+### 7. 🛡️ AdGuard Home + DNS-over-HTTPS
 
 > `Install and configure AdGuard Home? [y/N]:`
 
@@ -224,7 +242,9 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ---
 
-### 7. 👤 ساخت خودکار کلاینت و اشتراک
+<a id="7--ساخت-خودکار-کلاینت-و-اشتراک"></a>
+
+### 8. 👤 ساخت خودکار کلاینت و اشتراک
 
 > `Create a client in 3X-UI and display a subscription link after installation? [Y/n]:`
 
@@ -246,6 +266,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 | --- | :---: |
 | VLESS + REALITY | ✅ آمادهٔ استفاده |
 | VLESS + XHTTP | ✅ آمادهٔ استفاده |
+| VLESS + XHTTP برای CDN | ✅ اختیاری |
 | Hysteria2 | ✅ آمادهٔ استفاده |
 | VLESS + WebSocket (TLS) | ✅ آمادهٔ استفاده |
 | Trojan + gRPC | ✅ آمادهٔ استفاده |
@@ -254,9 +275,11 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 نصب‌کننده پنج پروفایل اصلی را تنظیم می‌کند: REALITY، XHTTP و Hysteria2 از ابتدا فعال هستند و WebSocket و Trojan gRPC را می‌توان در صورت نیاز از پنل 3X-UI فعال کرد.
 
-XTLS Vision و Amnezia WG تنها در صورت انتخاب هنگام نصب اضافه می‌شوند. **برای استفاده از اتصال‌ها باید کلاینت بسازید**؛ این کار هنگام نصب به‌صورت خودکار یا بعداً دستی در پنل انجام می‌شود. کلاینت‌های Amnezia WG جداگانه ساخته می‌شوند.
+XTLS Vision، Amnezia WG و XHTTP برای CDN فقط در صورت انتخاب هنگام نصب اضافه می‌شوند. XHTTP برای CDN به‌صورت غیرفعال ساخته می‌شود و تا زمان فعال‌سازی و اتصال یک کلاینت، در اشتراک‌ها نمایش داده نمی‌شود.
 
-سازگاری به برنامهٔ کلاینت و نسخهٔ آن بستگی دارد.
+برای استفاده از اتصال‌ها، کلاینت‌ها را هنگام نصب به‌صورت خودکار یا در پنل به‌صورت دستی بسازید. کلاینت‌های Amnezia WG جداگانه ساخته می‌شوند.
+
+سازگاری به برنامهٔ کلاینت و نسخهٔ آن بستگی دارد. برای XHTTP از طریق CDN، تنظیمات و محدودیت‌های سرویس‌دهندهٔ CDN نیز اهمیت دارند.
 
 ### اشتراک‌ها
 

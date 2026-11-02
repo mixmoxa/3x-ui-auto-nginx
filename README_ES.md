@@ -186,7 +186,25 @@ La configuración y la regla del cortafuegos están incluidas en **Backup / Rest
 
 ---
 
-### 6. 🛡️ AdGuard Home + DNS-over-HTTPS
+<a id="xhttp-cdn"></a>
+
+### 6. 🌐 VLESS + XHTTP para CDN
+
+> `Add an additional CDN-compatible XHTTP connection? [y/N]:`
+
+*Conexión adicional · No se instala por defecto (`N`)*
+
+Se crea una conexión VLESS independiente con transporte XHTTP en modo packet-up, preparada para usarla a través de una CDN. La conexión se crea desactivada en 3X-UI.
+
+Se utiliza el dominio HTTPS existente del panel, sin necesidad de otro dominio ni certificado. Una vez activada, la conexión también se puede usar directamente, sin CDN.
+
+Para utilizar una CDN, debes configurar tu proveedor y ajustar los parámetros de Host en 3X-UI. El instalador no configura servicios CDN; proporciona un perfil de servidor listo para adaptarlo a tus necesidades.
+
+---
+
+<a id="6--adguard-home--dns-over-https"></a>
+
+### 7. 🛡️ AdGuard Home + DNS-over-HTTPS
 
 > `Install and configure AdGuard Home? [y/N]:`
 
@@ -224,7 +242,9 @@ Utiliza identificadores largos y aleatorios. Consulta las [recomendaciones ofici
 
 ---
 
-### 7. 👤 Creación automática del cliente y la suscripción
+<a id="7--creación-automática-del-cliente-y-la-suscripción"></a>
+
+### 8. 👤 Creación automática del cliente y la suscripción
 
 > `Create a client in 3X-UI and display a subscription link after installation? [Y/n]:`
 
@@ -246,6 +266,7 @@ Si una actualización del sistema operativo requiere reiniciar, el instalador lo
 | --- | :---: |
 | VLESS + REALITY | ✅ Listo para usar |
 | VLESS + XHTTP | ✅ Listo para usar |
+| VLESS + XHTTP para CDN | ✅ Opcional |
 | Hysteria2 | ✅ Listo para usar |
 | VLESS + WebSocket (TLS) | ✅ Listo para usar |
 | Trojan + gRPC | ✅ Listo para usar |
@@ -254,9 +275,11 @@ Si una actualización del sistema operativo requiere reiniciar, el instalador lo
 
 El instalador configura cinco perfiles básicos: REALITY, XHTTP y Hysteria2 quedan habilitados de inmediato; WebSocket y Trojan gRPC se pueden habilitar desde el panel 3X-UI cuando sea necesario.
 
-XTLS Vision y Amnezia WG solo se añaden si los eliges durante la instalación. **Para usar las conexiones debes crear clientes**, automáticamente durante la instalación o manualmente desde el panel. Los clientes de Amnezia WG se crean por separado.
+XTLS Vision, Amnezia WG y XHTTP para CDN se añaden solo si se eligen durante la instalación. XHTTP para CDN se crea desactivado y no aparece en las suscripciones hasta que se active y se vincule un cliente.
 
-La compatibilidad depende de la aplicación cliente y de su versión.
+Para usar las conexiones, crea clientes automáticamente durante la instalación o manualmente en el panel. Los clientes de Amnezia WG se crean por separado.
+
+La compatibilidad depende de la aplicación cliente y de su versión. Con XHTTP a través de una CDN, también influyen la configuración y las limitaciones del proveedor.
 
 ### Suscripciones
 

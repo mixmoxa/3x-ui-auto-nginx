@@ -186,7 +186,25 @@ Yapılandırma ve gerekli güvenlik duvarı kuralı **Backup / Restore v3** kaps
 
 ---
 
-### 6. 🛡️ AdGuard Home + DNS-over-HTTPS
+<a id="xhttp-cdn"></a>
+
+### 6. 🌐 CDN için VLESS + XHTTP
+
+> `Add an additional CDN-compatible XHTTP connection? [y/N]:`
+
+*Ek bağlantı · Varsayılan olarak kurulmaz (`N`)*
+
+CDN üzerinden kullanıma önceden hazırlanmış, packet-up modunda XHTTP taşımasını kullanan ayrı bir VLESS bağlantısı oluşturulur. Bağlantı 3X-UI panelinde devre dışı bırakılmış olarak oluşturulur.
+
+Panelin mevcut HTTPS alan adı kullanılır; ek alan adı veya sertifika gerekmez. Etkinleştirdikten sonra bağlantı CDN olmadan doğrudan da kullanılabilir.
+
+CDN kullanmak için sağlayıcınızı kendiniz yapılandırmalı ve 3X-UI içindeki Host ayarlarını değiştirmelisiniz. Kurulum aracı CDN hizmetlerini yapılandırmaz; kendi ihtiyaçlarınıza uyarlayabileceğiniz hazır bir sunucu profili sağlar.
+
+---
+
+<a id="6--adguard-home--dns-over-https"></a>
+
+### 7. 🛡️ AdGuard Home + DNS-over-HTTPS
 
 > `Install and configure AdGuard Home? [y/N]:`
 
@@ -224,7 +242,9 @@ Uzun ve rastgele kimlikler seçin. [Resmî AdGuard Home güvenlik önerilerine](
 
 ---
 
-### 7. 👤 Otomatik istemci ve abonelik oluşturma
+<a id="7--otomatik-istemci-ve-abonelik-oluşturma"></a>
+
+### 8. 👤 Otomatik istemci ve abonelik oluşturma
 
 > `Create a client in 3X-UI and display a subscription link after installation? [Y/n]:`
 
@@ -246,6 +266,7 @@ Kurulum sonunda **panel adresi, kullanıcı adı ve parola, tanılama adresi ve 
 | --- | :---: |
 | VLESS + REALITY | ✅ Kullanıma hazır |
 | VLESS + XHTTP | ✅ Kullanıma hazır |
+| CDN için VLESS + XHTTP | ✅ İsteğe bağlı |
 | Hysteria2 | ✅ Kullanıma hazır |
 | VLESS + WebSocket (TLS) | ✅ Kullanıma hazır |
 | Trojan + gRPC | ✅ Kullanıma hazır |
@@ -254,9 +275,11 @@ Kurulum sonunda **panel adresi, kullanıcı adı ve parola, tanılama adresi ve 
 
 Kurulum aracı beş temel profili hazırlar: REALITY, XHTTP ve Hysteria2 baştan etkindir; WebSocket ve Trojan gRPC ise gerektiğinde 3X-UI panelinden etkinleştirilebilir.
 
-XTLS Vision ve Amnezia WG yalnızca kurulumda seçildiklerinde eklenir. **Bağlantıları kullanmak için istemci oluşturmanız gerekir**; istemciler kurulumda otomatik veya panelde elle oluşturulabilir. Amnezia WG istemcileri ayrı oluşturulur.
+XTLS Vision, Amnezia WG ve CDN için XHTTP yalnızca kurulumda seçildiklerinde eklenir. CDN için XHTTP devre dışı oluşturulur; etkinleştirilip bir istemci bağlanana kadar aboneliklerde görünmez.
 
-Uyumluluk kullandığınız istemci uygulamasına ve sürümüne bağlıdır.
+Bağlantıları kullanmak için kurulum sırasında otomatik olarak veya panelde elle istemci oluşturun. Amnezia WG istemcileri ayrı oluşturulur.
+
+Uyumluluk, istemci uygulamasına ve sürümüne bağlıdır. CDN üzerinden XHTTP kullanımında sağlayıcının ayarları ve kısıtlamaları da önemlidir.
 
 ### Abonelikler
 

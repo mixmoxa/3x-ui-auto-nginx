@@ -186,7 +186,25 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ---
 
-### 6. 🛡️ AdGuard Home + DNS-over-HTTPS
+<a id="xhttp-cdn"></a>
+
+### 6. 🌐 VLESS + XHTTP لشبكات CDN
+
+> `Add an additional CDN-compatible XHTTP connection? [y/N]:`
+
+*اتصال إضافي · لا يُثبّت افتراضيًا (`N`)*
+
+يُنشأ اتصال VLESS مستقل يستخدم نقل XHTTP في وضع packet-up، بإعدادات خادم مهيأة للاستخدام عبر CDN. يُنشأ الاتصال معطّلًا في لوحة 3X-UI.
+
+يستخدم نطاق HTTPS الحالي للوحة، فلا يلزم نطاق أو شهادة إضافية. بعد تفعيله، يمكن استخدام الاتصال مباشرةً دون CDN أيضًا.
+
+للاستخدام عبر CDN، يتولى المستخدم إعداد مزوّده وتعديل إعدادات Host في 3X-UI. لا يُعدّ المُثبّت خدمات CDN، بل يوفّر ملف خادم جاهزًا لتخصيصه لاحقًا.
+
+---
+
+<a id="6--adguard-home--dns-over-https"></a>
+
+### 7. 🛡️ AdGuard Home + DNS-over-HTTPS
 
 > `Install and configure AdGuard Home? [y/N]:`
 
@@ -224,7 +242,11 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ---
 
-### 7. 👤 إنشاء العميل والاشتراك تلقائيًا
+<a id="7--إنشاء-العميل-والاشتراك-تلقائيا"></a>
+
+<a id="7--إنشاء-العميل-والاشتراك-تلقائيًا"></a>
+
+### 8. 👤 إنشاء العميل والاشتراك تلقائيًا
 
 > `Create a client in 3X-UI and display a subscription link after installation? [Y/n]:`
 
@@ -246,6 +268,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 | --- | :---: |
 | VLESS + REALITY | ✅ جاهز للاستخدام |
 | VLESS + XHTTP | ✅ جاهز للاستخدام |
+| VLESS + XHTTP لشبكات CDN | ✅ اختياري |
 | Hysteria2 | ✅ جاهز للاستخدام |
 | VLESS + WebSocket (TLS) | ✅ جاهز للاستخدام |
 | Trojan + gRPC | ✅ جاهز للاستخدام |
@@ -254,9 +277,11 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 يُجهّز المُثبّت خمسة ملفات اتصال أساسية: تُفعّل REALITY وXHTTP وHysteria2 فورًا، بينما يمكن تفعيل WebSocket وTrojan gRPC لاحقًا من لوحة 3X-UI عند الحاجة.
 
-لا يُضاف XTLS Vision وAmnezia WG إلا إذا اخترتهما أثناء التثبيت. **يجب إنشاء عملاء لاستخدام الاتصالات**، تلقائيًا خلال التثبيت أو يدويًا من اللوحة. يُنشأ عملاء Amnezia WG بصورة منفصلة.
+تُضاف XTLS Vision وAmnezia WG وXHTTP لشبكات CDN عند اختيارها أثناء التثبيت فقط. يُنشأ XHTTP لشبكات CDN معطّلًا ولا يظهر في الاشتراكات إلا بعد تفعيله وربط عميل به.
 
-يعتمد التوافق على تطبيق العميل وإصداره.
+لاستخدام الاتصالات، أنشئ العملاء تلقائيًا أثناء التثبيت أو يدويًا من اللوحة. يُنشأ عملاء Amnezia WG بصورة منفصلة.
+
+يعتمد التوافق على تطبيق العميل وإصداره. وعند استخدام XHTTP عبر CDN، تؤثر أيضًا إعدادات المزوّد وقيوده.
 
 ### الاشتراكات
 

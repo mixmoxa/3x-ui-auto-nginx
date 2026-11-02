@@ -299,7 +299,7 @@ _panel_initial_config() { :; }
             (root/'.github/workflows').mkdir(parents=True)
             shutil.copy2(ROOT/'.github/workflows/upstream-canary.yml',root/'.github/workflows/upstream-canary.yml')
             with patch.object(upstream_canary,'ROOT',root):
-                for feature in ('vision','client'):
+                for feature in ('vision','client','xhttp-cdn'):
                     previous = upstream_canary.fingerprint()
                     path = root/f'assets/{feature}/managed.py'
                     path.write_text(path.read_text()+'\n# changed API contract\n')

@@ -39,15 +39,19 @@
 
 [ 5. 🔑 Amnezia WG ](README.md#5--amnezia-wg)
 
+<a id="xhttp-cdn"></a>
+
+[ 6. 🌐 VLESS + XHTTP для CDN ](README.md#xhttp-cdn)
+
 <a id="6--adguard-home--dns-over-https"></a>
 
 <a id="6-️-adguard-home--dns-over-https"></a>
 
-[ 6. 🛡️ AdGuard Home + DNS-over-HTTPS ](README.md#6--adguard-home--dns-over-https)
+[ 7. 🛡️ AdGuard Home + DNS-over-HTTPS ](README.md#7--adguard-home--dns-over-https)
 
 <a id="7--автоматическое-создание-клиента-и-подписки"></a>
 
-[ 7. 👤 Автоматическое создание клиента и подписки ](README.md#7--автоматическое-создание-клиента-и-подписки)
+[ 8. 👤 Автоматическое создание клиента и подписки ](README.md#8--автоматическое-создание-клиента-и-подписки)
 
 <a id="-профили-подключения"></a>
 

@@ -184,6 +184,16 @@ vision_domain=''
 
 # ─── Stop & clean previous install (called from main, after domain validation) ─
 clean_previous_install() {
+    # A confirmed full rebuild removes only the exact previously owned route.
+    # Preserve an unknown or independently modified optional snippet.
+    local cdn_route=/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf
+    if [[ -e $cdn_route || -L $cdn_route ]]; then
+        [[ -f $cdn_route && ! -L $cdn_route && $(stat -c '%u:%a:%h' "$cdn_route") == 0:600:1 &&
+           -n ${XHTTP_CDN_PREVIOUS_SHA:-} && $(sha256sum "$cdn_route" | cut -d ' ' -f1) == "$XHTTP_CDN_PREVIOUS_SHA" ]] || {
+            msg_err 'XHTTP CDN route ownership changed; rebuild stopped before cleanup.'; return 1;
+        }
+        rm -f "$cdn_route" || return 1
+    fi
     systemctl stop x-ui 2>/dev/null || true
     if [[ "${VISION_PREVIOUS_HOOK:-}" == owned ]]; then
         rm -f /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision
@@ -2242,6 +2252,96 @@ select_amneziawg() {
     done
 }
 
+select_xhttp_cdn() {
+    INSTALL_XHTTP_CDN=n
+    local answer
+    while true; do
+        ui_text 'Add an additional CDN-compatible XHTTP connection? [y/N]: ' 'Добавить дополнительное подключение XHTTP, совместимое с CDN? [y/N]: '
+        IFS= read -r answer || return 0
+        case "$answer" in
+            ''|n|N) return 0 ;;
+            y|Y) INSTALL_XHTTP_CDN=y; return 0 ;;
+            *) ui_text 'Please enter y or n.\n' 'Введите y или n.\n' ;;
+        esac
+    done
+}
+
+preflight_xhttp_cdn() {
+    XHTTP_CDN_PREVIOUS_SHA=''
+    if [[ -e /etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf || -L /etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf ]]; then
+        XHTTP_CDN_PREVIOUS_SHA=$(python3 - <<'PYCDNOWNER'
+import hashlib, json, pathlib, re, sqlite3, stat
+root=pathlib.Path('/etc/x-ui')
+dbpath=root/'x-ui.db';marker=root/'auto-nginx-managed.json'
+route=pathlib.Path('/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf')
+for directory in (root, root.parent, route.parent, route.parent.parent, route.parent.parent.parent):
+    info=directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid!=0 or info.st_mode&0o022:
+        raise ValueError('Unknown XHTTP CDN directory ownership')
+for path in (dbpath,marker,route):
+    info=path.lstat()
+    mask=0o022 if path==dbpath else 0o077
+    if not stat.S_ISREG(info.st_mode) or info.st_uid!=0 or info.st_nlink!=1 or info.st_mode&mask:
+        raise ValueError('Unknown XHTTP CDN ownership')
+    if path!=dbpath and stat.S_IMODE(info.st_mode)!=0o600:
+        raise ValueError('Unknown XHTTP CDN file mode')
+state=json.loads(marker.read_text());cdn=state['xhttp_cdn'];iid=state['inbound_roles']['xhttp_cdn']
+if (state.get('format')!=1 or state.get('layout')!='nginx-stream-v1' or
+        not re.fullmatch(r'source@[0-9a-f]{40}',state.get('installed_by','')) or
+        not re.fullmatch(r'[0-9a-f]{40}',state.get('source_ref','')) or
+        type(cdn.get('port')) is not int or not 1024<=cdn['port']<=65535 or
+        not re.fullmatch(r'/[A-Za-z0-9]{10,64}/cookie',cdn.get('path',''))):
+    raise ValueError('Unknown XHTTP CDN manifest')
+data=route.read_bytes();text=data.decode()
+if (text!=cdn['snippet'] or not text.startswith('# Managed by 3x-ui Auto Nginx: XHTTP CDN\n') or
+        re.findall(r'proxy_pass http://127\.0\.0\.1:([0-9]+);',text)!=[str(cdn['port'])]):
+    raise ValueError('Unknown XHTTP CDN route')
+with sqlite3.connect(dbpath.as_uri()+'?mode=ro',uri=True) as db:
+    rows=db.execute('SELECT protocol,listen,port,stream_settings,node_id FROM inbounds WHERE id=?',(iid,)).fetchall()
+if len(rows)!=1:raise ValueError('Unknown XHTTP CDN inbound')
+protocol,listen,port,value,node=rows[0];stream=json.loads(value)
+if ((protocol,listen,port)!=('vless','127.0.0.1',cdn['port']) or node not in (None,0) or
+        stream.get('network')!='xhttp' or stream.get('security')!='none' or
+        stream.get('xhttpSettings',{}).get('mode')!='packet-up' or stream['xhttpSettings'].get('path')!=cdn['path']):
+    raise ValueError('Unknown XHTTP CDN topology')
+print(hashlib.sha256(data).hexdigest())
+PYCDNOWNER
+        ) || {
+            msg_err "$(ui_text 'Existing XHTTP CDN route ownership could not be verified; stopped before cleanup.' 'Не удалось подтвердить принадлежность существующего маршрута XHTTP CDN; остановка до удаления данных.')"; return 1;
+        }
+    fi
+    [[ ${INSTALL_XHTTP_CDN:-n} == y ]] || return 0
+    [[ -n ${PANEL_TAG:-} && $PANEL_TAG == "$(verified_panel_release | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')" ]] || {
+        msg_err "$(ui_text 'XHTTP CDN requires the verified 3X-UI baseline; select N with other versions.' 'Для XHTTP CDN нужна проверенная базовая версия 3X-UI; с другими версиями выберите N.')"; return 1;
+    }
+    make_port xhttp_cdn_port || return 1
+    local prefix
+    while true; do
+        prefix=$(gen_random_string 16) || return 1
+        [[ /$prefix != "/${xhttp_path:-}" ]] && break
+    done
+    xhttp_cdn_path=/$prefix/cookie
+    curl -fsSL --connect-timeout 15 --max-time 60 "$GITHUB_RAW/assets/xhttp-cdn/managed.py" -o "$PANEL_STAGE/managed-xhttp-cdn.py" || return 1
+    AWG_HELPER="$PANEL_STAGE/managed-amneziawg.py"
+    if [[ ! -s $AWG_HELPER ]]; then
+        curl -fsSL --connect-timeout 15 --max-time 60 "$GITHUB_RAW/assets/amneziawg/managed.py" -o "$AWG_HELPER" || return 1
+    fi
+    python3 - "$PANEL_STAGE/managed-xhttp-cdn.py" <<'PYCDN'
+import ast, sys
+ast.parse(open(sys.argv[1]).read())
+PYCDN
+}
+
+install_xhttp_cdn() {
+    [[ ${INSTALL_XHTTP_CDN:-n} == y ]] || return 0
+    XHTTP_CDN_RESULT=failed_unverified
+    local output status=0
+    output=$(printf '%s\0%s' "$config_username" "$config_password" | python3 "$PANEL_STAGE/managed-xhttp-cdn.py" "$AWG_HELPER" \
+        "$domain" "$panel_path" "$xhttp_cdn_port" "$xhttp_cdn_path" "$emoji_flag") || status=$?
+    case "$output" in configured|failed_rolled_back|failed_unverified) XHTTP_CDN_RESULT=$output ;; esac
+    [[ $status == 0 && $XHTTP_CDN_RESULT == configured ]]
+}
+
 awg_port_available() {
     python3 - <<'PYPORT'
 import errno, socket, sys
@@ -2598,6 +2698,11 @@ show_results() {
     else
         msg_warn "$(ui_text ' [!] Backup / Restore       Backup utility unavailable' ' [!] Backup / Restore       Утилита Backup недоступна')"
     fi
+    case "${XHTTP_CDN_RESULT:-not_requested}" in
+        configured) msg_ok "$(ui_text ' [✓] XHTTP CDN              Created disabled; edit Host, attach a client and enable in 3X-UI.' ' [✓] XHTTP CDN              Создан выключенным; настройте Host, привяжите клиента и включите в 3X-UI.')" ;;
+        failed_rolled_back) msg_warn "$(ui_text ' [!] XHTTP CDN              Not configured; rollback verified.' ' [!] XHTTP CDN              Не настроен; откат проверен.')" ;;
+        failed_unverified) msg_err "$(ui_text ' [!] XHTTP CDN              ROLLBACK_UNVERIFIED; inspect retained configuration.' ' [!] XHTTP CDN              ROLLBACK_UNVERIFIED; проверьте сохранённую конфигурацию.')" ;;
+    esac
     case "${AWG_RESULT:-not_requested}" in
         configured) msg_ok "$(ui_text ' [✓] AmneziaWG              Configured (UDP/8443)' ' [✓] AmneziaWG              Настроен (UDP/8443)')" ;;
         failed) msg_warn "$(ui_text ' [!] AmneziaWG              Not configured' ' [!] AmneziaWG              Не настроен')" ;;
@@ -3003,6 +3108,7 @@ main() {
     select_security || exit 1
     select_vision || exit 1
     select_amneziawg || exit 1
+    select_xhttp_cdn || exit 1
     select_adguard || exit 1
     select_client || exit 1
     [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text '[1] SYSTEM PREPARATION' '[1] ПОДГОТОВКА СИСТЕМЫ')"
@@ -3013,6 +3119,7 @@ main() {
     make_port sub_port panel_port ws_port trojan_port mtr_backend_port || exit 1
     preflight_amneziawg || { msg_err "$(ui_text 'AmneziaWG preflight failed; existing deployment was not removed.' 'Предварительная проверка AmneziaWG не пройдена; существующая установка не удалена.')"; exit 1; }
     preflight_integrated_features || { msg_err "$(ui_text 'Feature preparation stopped before cleanup; see the component error above.' 'Подготовка компонентов остановлена до удаления данных; проверьте ошибку компонента выше.')"; exit 1; }
+    preflight_xhttp_cdn || { msg_err "$(ui_text 'XHTTP CDN preflight failed; existing deployment was not removed.' 'Предварительная проверка XHTTP CDN не пройдена; существующая установка не удалена.')"; exit 1; }
     setup_swap || { SWAP_RESULT=skipped; SWAP_REASON='setup failed'; }
     [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text '[2] BASE OS AND DNS' '[2] БАЗОВАЯ ОС И DNS')"
     prepare_base_os || { msg_err "$(ui_text 'OS preparation failed; deployment was not removed, package changes may remain.' 'Подготовка ОС завершилась ошибкой; установка не удалена, но изменения пакетов могли сохраниться.')"; exit 1; }
@@ -3075,6 +3182,10 @@ main() {
         install_amneziawg || install_result=1
     fi
     AGH_RESULT=not_requested
+    XHTTP_CDN_RESULT=not_requested
+    if [[ ${INSTALL_XHTTP_CDN:-n} == y ]]; then
+        install_xhttp_cdn || install_result=1
+    fi
     if [[ "$INSTALL_AGH" == y ]]; then
         install_adguard || install_result=1
     fi
@@ -3093,7 +3204,7 @@ main() {
     fi
     [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text '[8] FINAL CHECK' '[8] ФИНАЛЬНАЯ ПРОВЕРКА')"
     CORE_RESULT=configured
-    if [[ "${INSTALL_SECURITY:-n}${INSTALL_VISION:-n}${INSTALL_AWG:-n}${INSTALL_AGH:-n}${CREATE_CLIENT:-n}" != nnnnn ]]; then
+    if [[ "${INSTALL_SECURITY:-n}${INSTALL_VISION:-n}${INSTALL_AWG:-n}${INSTALL_AGH:-n}${CREATE_CLIENT:-n}${INSTALL_XHTTP_CDN:-n}" != nnnnnn ]]; then
         if ! check_installation; then CORE_RESULT=failed_unverified; install_result=1; fi
     fi
     if [[ "$CORE_RESULT" == configured ]]; then
@@ -3109,10 +3220,10 @@ main() {
 write_managed_state() {
     [[ ${CORE_RESULT:-} == configured && ${PROJECT_SOURCE_SHA:-} =~ ^[0-9a-f]{40}$ ]] || return 1
     python3 - "$XUIDB" "$PROJECT_SOURCE_SHA" "$domain" "$reality_domain" \
-        "${VISION_RESULT:-not_requested}" "${AWG_RESULT:-not_requested}" "${AGH_RESULT:-not_requested}" <<'PYSTATE'
+        "${VISION_RESULT:-not_requested}" "${AWG_RESULT:-not_requested}" "${AGH_RESULT:-not_requested}" "${XHTTP_CDN_RESULT:-not_requested}" <<'PYSTATE'
 import json, os, pathlib, sqlite3, tempfile, sys
-path,revision,panel,reality,vision_result,awg_result,agh_result=sys.argv[1:]
-roles={}; vision=None
+path,revision,panel,reality,vision_result,awg_result,agh_result,cdn_result=sys.argv[1:]
+roles={}; vision=None; cdn=None
 with sqlite3.connect('file:'+path+'?mode=ro',uri=True) as db:
     settings=dict(db.execute('SELECT key,value FROM settings'))
     for key,name in (('webCertFile','fullchain.pem'),('webKeyFile','privkey.pem'),('subCertFile','fullchain.pem'),('subKeyFile','privkey.pem')):
@@ -3136,6 +3247,15 @@ with sqlite3.connect('file:'+path+'?mode=ro',uri=True) as db:
         vision=stream['tlsSettings']['serverName']
     if awg_result=='configured':
         single('amneziawg',lambda r,s:r[1:4]==('amneziawg','0.0.0.0',8443) and r[5:]==('custom',panel))
+    if cdn_result=='configured':
+        stream=single('xhttp_cdn',lambda r,s:r[1]=='vless' and r[2]=='127.0.0.1' and s.get('network')=='xhttp' and
+                      s.get('security')=='none' and s.get('xhttpSettings',{}).get('mode')=='packet-up')
+        row=next(r for r in rows if r[0]==roles['xhttp_cdn'])
+        db.row_factory=sqlite3.Row
+        hosts=db.execute('SELECT * FROM hosts WHERE inbound_id=?',(row[0],)).fetchall()
+        if len(hosts)!=1: raise ValueError('Ambiguous XHTTP CDN Host')
+        cdn=dict(port=row[3],path=stream['xhttpSettings']['path'],host=dict(hosts[0]),
+                 snippet=pathlib.Path('/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf').read_text())
     for role,iid in roles.items():
         if role!='amneziawg' and not db.execute('SELECT 1 FROM hosts WHERE inbound_id=? AND address=? AND port=443',
                 (iid,vision if role=='vision' else panel)).fetchone(): raise ValueError('Missing Host relationship: '+role)
@@ -3145,6 +3265,9 @@ if agh_result=='installed':
 state=dict(format=1,layout='nginx-stream-v1',installed_by='source@'+revision,source_ref=revision,
            domains=dict(panel=panel,reality=reality,vision=vision),inbound_roles=roles,
            features=dict(adguard=agh_result=='installed',vision=vision_result=='configured',amneziawg=awg_result=='configured'))
+if cdn is not None:
+    state['xhttp_cdn']=cdn
+    state['features']['xhttp_cdn']=True
 directory=pathlib.Path(path).parent;target=directory/'auto-nginx-managed.json'
 if directory.is_symlink() or directory.stat().st_uid!=0 or directory.stat().st_mode&0o022:
     raise ValueError('Unsafe managed-state directory')

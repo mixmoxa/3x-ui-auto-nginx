@@ -157,7 +157,7 @@ def install(scenario, ref):
         report[phase+'_vision_failure'] = vision
     flags = values.get('components', {})
     allowed = {'core_running','dot_configured','fail2ban_configured','apt_configured','vision_ready',
-               'awg_configured','agh_running','client_created','subscription_ready','dns_rollback_verified',
+               'awg_configured','xhttp_cdn_disabled','agh_running','client_created','subscription_ready','dns_rollback_verified',
                'rollback_unverified','core_health_unverified','xray_runtime_failure'}
     assert isinstance(flags, dict) and set(flags) <= allowed and all(type(v) is bool for v in flags.values())
     report[phase+'_components'] = flags

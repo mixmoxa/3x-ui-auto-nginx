@@ -450,8 +450,8 @@ def manager_backup():
     import pty, select
     state=json.loads(Path('/etc/x-ui/auto-nginx-managed.json').read_text())
     assert state['format']==1 and re.fullmatch('[0-9a-f]{40}',state['source_ref'])
-    assert state['features']==dict(adguard=True,vision=True,amneziawg=True)
-    assert set(state['inbound_roles'])=={'reality','ws','xhttp','grpc','hysteria2','vision','amneziawg'}
+    assert state['features']==dict(adguard=True,vision=True,amneziawg=True,xhttp_cdn=True)
+    assert set(state['inbound_roles'])=={'reality','ws','xhttp','grpc','hysteria2','vision','amneziawg','xhttp_cdn'}
     agh=adguard_state({'domain':'backup-persist-'+os.urandom(6).hex()+'.example.test','answer':'203.0.113.7'})
     (ROOT/'backup-adguard.private.json').write_text(json.dumps(agh))
     before={unit:run('systemctl','is-active',unit) for unit in ('x-ui','nginx','AdGuardHome','certbot.timer')}
@@ -551,7 +551,9 @@ def change_domains():
             if key not in allowed:assert new_settings[key]==value,'Unrelated panel setting changed'
         for previous,current in zip(before['hosts'],after['hosts']):
             for key in previous:
-                if key=='address' and previous['inbound_id'] in [roles[n] for n in ('reality','ws','grpc','xhttp','hysteria2')]:
+                if key in ('address','sni') and previous['inbound_id']==roles['xhttp_cdn']:
+                    assert current[key]==new_panel
+                elif key=='address' and previous['inbound_id'] in [roles[n] for n in ('reality','ws','grpc','xhttp','hysteria2')]:
                     assert current[key]==new_panel
                 else:assert previous[key]==current[key],'Host ID, metadata or v3.11 field changed'
         for previous,current in zip(before['inbounds'],after['inbounds']):

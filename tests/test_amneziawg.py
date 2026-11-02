@@ -10,7 +10,7 @@ class AmneziaWG(unittest.TestCase):
         import tempfile
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
                'select_adguard','select_client','preflight_base_os','preflight_panel_release','make_port','preflight_amneziawg',
-               'preflight_integrated_features','prepare_base_os','prepare_system_dns','install_packages','setup_firewall',
+               'select_xhttp_cdn','preflight_xhttp_cdn','preflight_integrated_features','prepare_base_os','prepare_system_dns','install_packages','setup_firewall',
                'get_server_ip','setup_acme_http','get_ssl_certs','install_panel','configure_nginx','configure_xui_db',
                'install_clash_sub','install_fake_site','install_diagnostics','tune_system','install_backup_tool',
                'setup_certificate_renewal','check_installation','install_amneziawg','finish_initial_reboot','write_managed_state')
@@ -272,7 +272,7 @@ else: sys.exit(1)
             root=Path(directory)
             paths=('tests/test_fixture.py','x-ui-latest.sh','assets/clash/clash.yaml',
                    'assets/diagnostics/mtr-backend.py','.github/workflows/upstream-canary.yml',
-                   'assets/amneziawg/managed.py','assets/vision/managed.py','assets/client/managed.py')
+                   'assets/amneziawg/managed.py','assets/vision/managed.py','assets/client/managed.py','assets/xhttp-cdn/managed.py')
             for name in paths:
                 path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('fixture')
             with patch.object(upstream_canary,'ROOT',root):

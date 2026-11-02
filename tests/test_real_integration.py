@@ -426,7 +426,7 @@ class RealIntegration(unittest.TestCase):
                       mtr_backend_port=str(self.backends['api']))
         main = main.replace('127.0.0.1:7443',f"127.0.0.1:{self.backends['tls']}")
         main = main.replace('/etc/nginx/snippets/includes.conf',str(self.root/'shared.conf'))
-        main = re.sub(r'include /etc/nginx/snippets/x-ui-auto-optional/\*\.conf;', '', main)
+        main = re.sub(r'include /etc/nginx/snippets/x-ui-auto-optional/\*\.conf;', getattr(self,'optional_snippets',''), main)
         main = re.sub(r'/etc/letsencrypt/live/[^/]+/fullchain.pem',str(self.cert),main)
         main = re.sub(r'/etc/letsencrypt/live/[^/]+/privkey.pem',str(self.key),main)
         main = main.replace('/var/www',str(self.root/'www'))
@@ -668,6 +668,89 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn('unexpected-service',result.stderr)
         self.passed.append('Vision deploy-hook real Xray / renewed TLS serial')
+
+    def test_xhttp_cdn_disabled_native_exports_and_get_cookie_transport(self):
+        from test_integrated_features import helper
+        cdn, awg, client = helper('xhttp-cdn'), helper('amneziawg'), helper('client')
+        local_port=port(self.allocated_ports); path='/Independent12345/cookie'
+        snippets=self.root/'optional'; snippets.mkdir()
+        self.optional_snippets=f'include {snippets}/*.conf;'
+        self.http_access_log=str(self.root/'cdn-access.log')
+        with sqlite3.connect(self.root/'db/x-ui.db') as db:
+            db.execute("UPDATE inbounds SET enable=0 WHERE protocol='trojan' OR json_extract(stream_settings,'$.network')='ws'")
+            for key,value in {'subURI':f'https://deploy.example:{self.public}/subscription/',
+                              'subJsonURI':f'https://deploy.example:{self.public}/jsonsub/'}.items():
+                db.execute('UPDATE settings SET value=? WHERE key=?',(value,key))
+        self.nginx_config()
+        env={**os.environ,'XUI_DB_FOLDER':str(self.root/'db'),'XUI_BIN_FOLDER':str(self.root/'bin'),'XUI_LOG_FOLDER':str(self.root/'logs')}
+        server=self.launch([self.xui],'cdn-panel',env)
+        self.ready(server,('127.0.0.1',self.backends['panel']))
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            api=awg.Panel(f'https://deploy.example:{self.public}/panel/','integration',self.auth,directory,
+                          ['--cacert',str(self.cert),'--resolve',f'deploy.example:{self.public}:127.0.0.1'])
+            def production_run(*args):
+                if args==('nginx','-t'):
+                    args=(self.nginx,'-t','-p',str(self.root)+'/', '-c',str(self.root/'nginx.conf'))
+                elif args==('systemctl','reload','nginx'):
+                    args=(self.nginx,'-s','reload','-p',str(self.root)+'/', '-c',str(self.root/'nginx.conf'))
+                subprocess.run(args,check=True,capture_output=True,timeout=30)
+            with patch.object(cdn,'run',side_effect=production_run):
+                self.assertEqual(cdn.configure(api,'deploy.example',local_port,path,'🇫🇮',snippets/'xhttp-cdn.conf'),'configured')
+            rows=api.request('panel/api/inbounds/list')['obj']
+            self.assertEqual(len(rows),6)
+            row=next(r for r in rows if r['port']==local_port)
+            self.assertIs(row['enable'],False);self.assertEqual(row['remark'],'🇫🇮 xhttp CDN')
+            self.assertEqual(row['streamSettings'],cdn.inbound(local_port,path,'🇫🇮')['streamSettings'])
+            with sqlite3.connect(self.root/'db/x-ui.db') as db:
+                host=db.execute('SELECT address,port,security,fingerprint,alpn,sni,host_header,group_id FROM hosts WHERE inbound_id=?',(row['id'],)).fetchone()
+                self.assertEqual(host[:7],('deploy.example',443,'tls','firefox','[]','deploy.example',''))
+                self.assertRegex(host[7],r'^[a-z0-9]{16}$')
+            initial=client.create(api)
+            raw=client.decode_subscription(client.fetch(api,initial['url']))
+            self.assertFalse(any(parse_qs(urlsplit(link).query).get('path')==[path] for link in raw))
+            disabled_json=json.loads(client.fetch(api,f'https://deploy.example:{self.public}/jsonsub/'+initial['subId']))
+            self.assertFalse(any(o.get('streamSettings',{}).get('xhttpSettings',{}).get('path')==path
+                                 for config in disabled_json for o in config.get('outbounds',[])))
+            record=api.request('panel/api/clients/get/'+initial['email'])['obj']
+            self.assertNotIn(row['id'],record['inboundIds'])
+            # Simulate the user's explicit panel actions, not installer attachment logic.
+            api.request('panel/api/inbounds/setEnable/'+str(row['id']),{'enable':True})
+            api.request('panel/api/clients/'+initial['email']+'/attach',{'inboundIds':[row['id']]})
+            api.request('panel/api/server/restartXrayService',{})
+            self.ready(server,('127.0.0.1',local_port))
+            links=client.decode_subscription(client.fetch(api,initial['url']))
+            link=next(link for link in links if parse_qs(urlsplit(link).query).get('path')==[path])
+            query=parse_qs(urlsplit(link).query)
+            self.assertEqual(query['sni'],['deploy.example']);self.assertEqual(query['fp'],['firefox'])
+            extra=json.loads(query['extra'][0])
+            self.assertNotIn('xmux',extra)
+            for key in ('mode','uplinkHTTPMethod','uplinkDataPlacement','uplinkDataKey','scMaxEachPostBytes',
+                        'xPaddingBytes','xPaddingObfsMode','xPaddingKey','xPaddingHeader','xPaddingPlacement','xPaddingMethod'):
+                self.assertEqual(extra[key],cdn.PARAMETERS[key])
+            configs=json.loads(client.fetch(api,f'https://deploy.example:{self.public}/jsonsub/'+initial['subId']))
+            outgoing=next(o for config in configs for o in config.get('outbounds',[]) if
+                          o.get('streamSettings',{}).get('xhttpSettings',{}).get('path')==path)
+            self.assertNotIn('xmux',outgoing['streamSettings']['xhttpSettings'])
+            for key in extra:
+                if key in cdn.PARAMETERS:
+                    self.assertEqual(outgoing['streamSettings']['xhttpSettings'][key],cdn.PARAMETERS[key])
+            destination=outgoing['settings']['servers'][0] if 'servers' in outgoing['settings'] else outgoing['settings']
+            self.assertEqual((destination['address'],destination['port']),('deploy.example',443))
+            destination.update(address='127.0.0.1',port=self.public)
+            outgoing['streamSettings']['tlsSettings'].update(serverName='deploy.example',allowInsecure=False,
+                       certificates=[{'certificateFile':str(self.cert),'usage':'verify'}])
+            socks=port(self.allocated_ports)
+            config=dict(inbounds=[dict(listen='127.0.0.1',port=socks,protocol='socks',settings=dict(udp=False))],outbounds=[outgoing])
+            process=self.launch([self.xray,'run','-c',self.validate(config,'cdn-client')],'cdn-client')
+            self.ready(process,('127.0.0.1',socks))
+            transfer=subprocess.run(['curl','-fsS','--noproxy','','--socks5-hostname',f'127.0.0.1:{socks}',
+                '--max-time','20',f'http://127.0.0.1:{self.origin.server_port}/cdn-get-cookie'],capture_output=True,timeout=25)
+            self.assertEqual(transfer.returncode,0,'Real packet-up GET/cookie transfer failed')
+            self.assertEqual(transfer.stdout,self.marker.encode())
+            access=(self.root/'cdn-access.log').read_text()
+            self.assertTrue(any('"GET '+path+'/' in line and ' 200 ' in line for line in access.splitlines()))
+            stop(process)
+        self.passed.append('CDN packet-up / native RAW extra / JSON / nginx GET-cookie')
 
     def test_vision_and_initial_client_official_api(self):
         from test_integrated_features import helper

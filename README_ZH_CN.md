@@ -186,7 +186,25 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ---
 
-### 6. 🛡️ AdGuard Home + DNS-over-HTTPS
+<a id="xhttp-cdn"></a>
+
+### 6. 🌐 面向 CDN 的 VLESS + XHTTP
+
+> `Add an additional CDN-compatible XHTTP connection? [y/N]:`
+
+*附加连接 · 默认不安装（`N`）*
+
+创建一个独立的 VLESS 连接，使用 packet-up 模式的 XHTTP 传输，并预先配置好用于 CDN 的服务端参数。该连接在 3X-UI 面板中创建时处于禁用状态。
+
+使用面板现有的 HTTPS 域名，无须额外的域名或证书。启用后，也可以不经过 CDN，直接连接。
+
+如需通过 CDN 使用，用户须自行配置 CDN 服务商，并在 3X-UI 中修改 Host 参数。安装程序不配置 CDN 服务，只提供便于后续使用的服务端配置。
+
+---
+
+<a id="6--adguard-home--dns-over-https"></a>
+
+### 7. 🛡️ AdGuard Home + DNS-over-HTTPS
 
 > `Install and configure AdGuard Home? [y/N]:`
 
@@ -224,7 +242,9 @@ DoH 地址格式示例：
 
 ---
 
-### 7. 👤 自动创建客户端和订阅
+<a id="7--自动创建客户端和订阅"></a>
+
+### 8. 👤 自动创建客户端和订阅
 
 > `Create a client in 3X-UI and display a subscription link after installation? [Y/n]:`
 
@@ -246,6 +266,7 @@ DoH 地址格式示例：
 | --- | :---: |
 | VLESS + REALITY | ✅ 可直接使用 |
 | VLESS + XHTTP | ✅ 可直接使用 |
+| 面向 CDN 的 VLESS + XHTTP | ✅ 可选 |
 | Hysteria2 | ✅ 可直接使用 |
 | VLESS + WebSocket (TLS) | ✅ 可直接使用 |
 | Trojan + gRPC | ✅ 可直接使用 |
@@ -254,9 +275,11 @@ DoH 地址格式示例：
 
 安装程序预先配置五个基本连接：REALITY、XHTTP 和 Hysteria2 默认启用；WebSocket 和 Trojan gRPC 可按需在 3X-UI 面板中启用。
 
-XTLS Vision 和 Amnezia WG 只有在安装时选择才会添加。**使用这些连接之前需要创建客户端**，可以在安装时自动创建，也可以之后在面板中手动创建。Amnezia WG 客户端需要单独添加。
+XTLS Vision、Amnezia WG 和面向 CDN 的 XHTTP 仅在安装时选择后才会添加。面向 CDN 的 XHTTP 默认禁用，启用并绑定客户端后才会出现在订阅中。
 
-兼容性取决于客户端应用及其版本。
+使用连接前需要创建客户端，可以在安装时自动创建，也可以在面板中手动创建。Amnezia WG 客户端需单独创建。
+
+兼容性取决于客户端应用及其版本。通过 CDN 使用 XHTTP 时，还需考虑 CDN 服务商的设置和限制。
 
 ### 订阅
 

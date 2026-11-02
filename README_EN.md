@@ -186,7 +186,25 @@ The configuration and necessary firewall rule are included in **Backup / Restore
 
 ---
 
-### 6. 🛡️ AdGuard Home + DNS-over-HTTPS
+<a id="xhttp-cdn"></a>
+
+### 6. 🌐 VLESS + XHTTP for CDN
+
+> `Add an additional CDN-compatible XHTTP connection? [y/N]:`
+
+*Additional connection · Not installed by default (`N`)*
+
+Creates a separate VLESS connection using XHTTP in packet-up mode, preconfigured for use through a CDN. The connection is created disabled in 3X-UI.
+
+It uses the panel’s existing HTTPS domain, so no additional domain or certificate is needed. Once enabled, it also works directly without a CDN.
+
+To use a CDN, configure your provider yourself and adjust the Host settings in 3X-UI. The installer does not configure CDN services; it provides a server profile you can adapt to your setup.
+
+---
+
+<a id="6--adguard-home--dns-over-https"></a>
+
+### 7. 🛡️ AdGuard Home + DNS-over-HTTPS
 
 > `Install and configure AdGuard Home? [y/N]:`
 
@@ -224,7 +242,9 @@ Choose long, random identifiers. See the [official AdGuard Home security guidanc
 
 ---
 
-### 7. 👤 Automatic client and subscription
+<a id="7--automatic-client-and-subscription"></a>
+
+### 8. 👤 Automatic client and subscription
 
 > `Create a client in 3X-UI and display a subscription link after installation? [Y/n]:`
 
@@ -246,6 +266,7 @@ If an OS update requires a reboot, the installer will notify you. **The initial 
 | --- | :---: |
 | VLESS + REALITY | ✅ Ready to use |
 | VLESS + XHTTP | ✅ Ready to use |
+| VLESS + XHTTP for CDN | ✅ Optional |
 | Hysteria2 | ✅ Ready to use |
 | VLESS + WebSocket (TLS) | ✅ Ready to use |
 | Trojan + gRPC | ✅ Ready to use |
@@ -254,9 +275,11 @@ If an OS update requires a reboot, the installer will notify you. **The initial 
 
 Five standard profiles are configured: REALITY, XHTTP, and Hysteria2 are enabled immediately, while WebSocket and Trojan gRPC can be enabled in 3X-UI as needed.
 
-XTLS Vision and Amnezia WG are added only when selected during setup. **You need to create clients** to use the connections, automatically during installation or manually in the panel. Amnezia WG clients are created separately.
+XTLS Vision, Amnezia WG, and XHTTP for CDN are added only when selected during installation. XHTTP for CDN is created disabled and does not appear in subscriptions until you enable it and attach a client.
 
-Compatibility depends on your client app and its version.
+Create clients automatically during installation or manually in the panel to use the connections. Amnezia WG clients are created separately.
+
+Compatibility depends on the client app and its version. XHTTP through a CDN also depends on your provider’s settings and restrictions.
 
 ### Subscriptions
 

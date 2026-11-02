@@ -68,8 +68,8 @@ def install(scenario, ref):
         if scenario == 'dependency':
             Path('/etc/apt/preferences.d/pilot-mandatory-failure').write_text(
                 'Package: nginx-full\nPin: version *\nPin-Priority: -1\n')
-        answers = b'y\ny\nvision.example.test\ny\ny\ny\n' if scenario != 'dot-outage' else b'y\nn\nn\nn\ny\n'
-        if scenario == 'restore-source': answers = b'n\nn\nn\nn\nn\n'
+        answers = b'y\ny\nvision.example.test\ny\ny\ny\ny\n' if scenario != 'dot-outage' else b'y\nn\nn\nn\nn\ny\n'
+        if scenario == 'restore-source': answers = b'n\nn\nn\nn\nn\nn\n'
         started = time.monotonic()
         with (ROOT/'installer.raw.log').open('wb') as log:
             result = subprocess.run(['bash', str(ROOT/'x-ui-latest.sh'), '-subdomain',
@@ -89,6 +89,7 @@ def install(scenario, ref):
             'apt_configured': r'APT security — Configured',
             'vision_ready': r'\[✓\]\s+VLESS TLS Vision\s+Ready',
             'awg_configured': r'\[✓\]\s+AmneziaWG\s+Configured',
+            'xhttp_cdn_disabled': r'\[✓\]\s+XHTTP CDN\s+Created disabled',
             'agh_running': r'\[✓\]\s+AdGuard Home\s+Running',
             'client_created': r'\[✓\]\s+Client\s+Created',
             'subscription_ready': r'\[✓\]\s+Subscription\s+Ready',
@@ -122,6 +123,7 @@ def install(scenario, ref):
             assert re.search(r'\[✓\]\s+Subscription\s+Ready', private)
             if scenario == 'positive':
                 assert result.returncode == 0, 'Maximum installation failed'
+                assert report['components']['xhttp_cdn_disabled'], 'Requested XHTTP CDN was not created disabled'
                 for component in ('Global DoT', 'Fail2ban', 'APT security'):
                     assert component+' — Configured' in private
             else:
