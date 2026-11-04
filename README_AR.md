@@ -47,6 +47,7 @@ curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x
 - **1 — Installation:** إعداد خادم جديد أو إعادة التثبيت بالكامل.
 - **2 — Change Domains:** تغيير نطاق اللوحة أو REALITY أو كليهما دون إعادة تثبيت.
 - **3 — Backups:** إنشاء النسخ الاحتياطية وعرضها واستعادتها.
+- **4 — Telegram Web Proxy Manager:** فتح المدير المستقل أو تأكيد تثبيته. يؤدي الخروج منه إلى إنهاء جلسة 3X-UI؛ ويعيد إلغاء التثبيت إلى القائمة.
 - **0 — Exit:** خروج.
 
 تحتاج القائمة إلى جلسة SSH مع طرفية تفاعلية.

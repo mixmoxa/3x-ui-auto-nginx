@@ -47,6 +47,7 @@ curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x
 - **1 — Installation:** راه‌اندازی سرور جدید یا نصب مجدد کامل.
 - **2 — Change Domains:** تغییر دامنهٔ پنل، REALITY یا هر دو بدون نصب مجدد.
 - **3 — Backups:** ایجاد، نمایش و بازیابی نسخه‌های پشتیبان.
+- **4 — Telegram Web Proxy Manager:** باز کردن مدیر مستقل یا تأیید نصب آن. خروج از مدیر، نشست 3X-UI را پایان می‌دهد؛ لغو نصب شما را به منو برمی‌گرداند.
 - **0 — Exit:** خروج.
 
 برای استفاده از منو باید از یک ترمینال تعاملی SSH استفاده کنید.

@@ -47,6 +47,7 @@ curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x
 - **1 — Installation：**全新部署或完整重装服务器。
 - **2 — Change Domains：**无需重装即可更换面板域名、REALITY 域名或两者。
 - **3 — Backups：**创建、查看和恢复备份。
+- **4 — Telegram Web Proxy Manager：**打开独立管理器或确认安装。退出管理器会结束 3X-UI 会话；取消安装则返回菜单。
 - **0 — Exit：**退出。
 
 菜单需要在交互式 SSH 终端中使用。

@@ -244,11 +244,12 @@ not permission to modify a restored installation without checking actual state.
 
 Option 4 opens the independent companion through the fixed root-owned regular
 0755 launcher `/usr/local/bin/telegram-web-proxy-manager`. Existing installations
-open without downloads, updates or active-stack requirements. Normal exit returns
-to the main menu; failures retain the external exit status.
+open without downloads, updates or active-stack requirements. Successful completion ends the 3X-UI menu session with status 0; failures retain
+the external exit status. Cancelling installation or EOF before confirmation
+returns to the main menu.
 
 If absent, the entry point requires root, Ubuntu 24.04/26.04, the local 3X-UI
-database and Nginx configuration, active x-ui/nginx and successful `nginx -t`.
+database and Nginx configuration, active x-ui/nginx and successful `nginx -t -q` (quiet on success; errors remain visible).
 Debian 13 remains supported for ordinary 3X-UI operations, but this companion
 cannot be bootstrapped there. A missing working stack requires option 1 first.
 Consent defaults to No; cancellation/EOF downloads nothing.

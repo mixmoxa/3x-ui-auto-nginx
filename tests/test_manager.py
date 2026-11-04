@@ -387,14 +387,14 @@ entrypoint
             script=Path(temporary)/'entry.sh'
             script.write_text('source "'+str(ROOT/'x-ui-latest.sh')+'"\n'+'''
 recover_domain_operation() { :; }
-telegram_manager_action() { [[ -t 0 && -t 1 ]] || return 90; echo COMPANION; return "${COMPANION_EXIT:-0}"; }
+telegram_manager_action() { [[ -t 0 && -t 1 ]] || return 90; echo COMPANION; [[ ${COMPANION_EXIT:-0} == 0 ]] && ui_complete; return "${COMPANION_EXIT:-0}"; }
 entrypoint
 ''')
             for language in ('1','2'):
                 code,text=tty_run(script,(language+'\n4\n0\n').encode())
                 self.assertEqual(code,0,text);self.assertIn('4. Telegram Web Proxy Manager',text)
                 self.assertEqual(text.count('COMPANION'),1)
-                self.assertEqual(text.count('1. Installation' if language=='1' else '1. Установка'),2)
+                self.assertEqual(text.count('1. Installation' if language=='1' else '1. Установка'),1)
             code,text=tty_run(script,b'1\n4\n',env={'COMPANION_EXIT':'42'})
             self.assertEqual(code,42,text)
 
@@ -420,7 +420,10 @@ class ManagerBackup(unittest.TestCase):
         setup='source "'+str(library)+'"\n'+'''
 acquire_stack_lock() { return 99; }
 systemctl() { return "${ACTIVE_EXIT:-0}"; }
-nginx() { return "${NGINX_EXIT:-0}"; }
+nginx() {
+    [[ $* == '-t -q' ]] || { echo nginx-success-noise; return 92; }
+    [[ ${NGINX_EXIT:-0} == 0 ]] || { echo nginx-real-error >&2; return "$NGINX_EXIT"; }
+}
 curl() { printf '%s\n' "$*" > "$NETWORK"; [[ ${DOWNLOAD_EXIT:-0} == 0 ]] || return "$DOWNLOAD_EXIT"; printf fixture > "${@: -1}"; }
 bash() { [[ $# == 1 && -f $1 ]] || return 91; printf bootstrap > "$MARKER"; return "${EXTERNAL_EXIT:-0}"; }
 telegram_manager_action
@@ -440,6 +443,24 @@ telegram_manager_action
             self.assertEqual(run(answer).returncode,0);self.assertFalse(network.exists());self.assertFalse(marker.exists())
         self.assertEqual(run().returncode,0);self.assertEqual(marker.read_text(),'bootstrap')
         self.assertNotIn('--version',network.read_text())
+        self.assertNotIn('nginx-success-noise',run().stdout)
+        failure=run(NGINX_EXIT='1')
+        self.assertNotEqual(failure.returncode,0);self.assertIn('nginx-real-error',failure.stderr)
+        entry=root/'tty-entry'
+        entry.write_text(setup.removesuffix('telegram_manager_action\n')+"recover_domain_operation() { :; }\nentrypoint\n")
+        def menu(answers,code=0):
+            env={'MARKER':str(marker),'NETWORK':str(network)}
+            result,text=tty_run(entry,answers,env=env)
+            self.assertEqual(result,code,text)
+            return text
+        for language in ('1','2'):
+            text=menu((language+'\n4\ny\n').encode())
+            self.assertEqual(text.count('1. Installation' if language=='1' else '1. Установка'),1)
+            self.assertIn('Would you like to proceed with installing' if language=='1' else 'Хотите перейти к установке',text)
+            for answer in ('n\n0\n','\n0\n','\x040\n'):
+                text=menu((language+'\n4\n'+answer).encode())
+                self.assertEqual(text.count('1. Installation' if language=='1' else '1. Установка'),2)
+
         for env,code in (({'DOWNLOAD_EXIT':'23'},23),({'EXTERNAL_EXIT':'42'},42),({'ACTIVE_EXIT':'1'},1),({'NGINX_EXIT':'1'},1)):
             self.assertEqual(run(**env).returncode,code)
         library.write_text(source.replace(hashlib.sha256(b'fixture').hexdigest(),pin))
@@ -452,6 +473,9 @@ telegram_manager_action
         launcher.write_text('#!/bin/bash\nprintf launcher > "$MARKER"\nexit "${EXTERNAL_EXIT:-0}"\n');launcher.chmod(0o755)
         self.assertEqual(run(ACTIVE_EXIT='1').returncode,0);self.assertEqual(marker.read_text(),'launcher');self.assertFalse(network.exists())
         self.assertEqual(run(EXTERNAL_EXIT='43').returncode,43)
+        for language in ('1','2'):
+            text=menu((language+'\n4\n').encode())
+            self.assertEqual(text.count('1. Installation' if language=='1' else '1. Установка'),1)
         for mode in (0o777,0o775,0o644):
             launcher.chmod(mode);self.assertNotEqual(run().returncode,0);self.assertFalse(marker.exists())
         launcher.chmod(0o755);os.chown(launcher,1000,1000)

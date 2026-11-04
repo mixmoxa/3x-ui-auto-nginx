@@ -47,6 +47,7 @@ Al ejecutar el script, elige **1 — English** o **2 — Русский**. Despu
 - **1 — Installation:** configurar un servidor nuevo o realizar una reinstalación completa.
 - **2 — Change Domains:** cambiar el dominio del panel, de REALITY o ambos sin reinstalar.
 - **3 — Backups:** crear, consultar y restaurar copias de seguridad.
+- **4 — Telegram Web Proxy Manager:** abrir el gestor independiente o confirmar su instalación. Al salir del gestor termina la sesión de 3X-UI; cancelar la instalación devuelve al menú.
 - **0 — Exit:** salir.
 
 El menú requiere una sesión SSH con terminal interactiva.

@@ -3695,26 +3695,28 @@ ui_domain_changes() {
 telegram_manager_action() (
     # Independent companion: no stack lock, version check or service repair.
     (( EUID == 0 )) || { msg_err "$(ui_text 'Run as root.' 'Запустите от root.')"; exit 1; }
-    local launcher=/usr/local/bin/telegram-web-proxy-manager
+    local status launcher=/usr/local/bin/telegram-web-proxy-manager
     if [[ -e $launcher || -L $launcher ]]; then
         [[ -f $launcher && ! -L $launcher && $(stat -c '%u:%g:%a' -- "$launcher") == 0:0:755 ]] || {
             msg_err "$(ui_text 'Unsafe Telegram Manager launcher; refusing to execute.' 'Небезопасный launcher Telegram Manager; запуск отклонён.')"; exit 1;
         }
         "$launcher"
-        exit $?
+        status=$?
+        (( status == 0 )) && ui_complete
+        exit "$status"
     fi
-    local ID='' VERSION_ID='' answer stage='' status
+    local ID='' VERSION_ID='' answer stage=''
     . /etc/os-release
     if [[ $ID != ubuntu || ( $VERSION_ID != 24.04 && $VERSION_ID != 26.04 ) ]]; then
         msg_err "$(ui_text 'Telegram Manager requires Ubuntu 24.04/26.04; Debian 13 is not supported by this companion.' 'Telegram Manager требует Ubuntu 24.04/26.04; Debian 13 пока не поддерживается этим companion-проектом.')"
         exit 1
     fi
     if [[ ! -f /etc/x-ui/x-ui.db || ! -f /etc/nginx/nginx.conf || ! -f /etc/nginx/stream-enabled/stream.conf ]] ||
-       ! systemctl is-active --quiet x-ui || ! systemctl is-active --quiet nginx || ! nginx -t; then
+       ! systemctl is-active --quiet x-ui || ! systemctl is-active --quiet nginx || ! nginx -t -q; then
         msg_err "$(ui_text 'First run option 1 - Installation of 3X-UI AUTO NGINX; a working stack is required.' 'Сначала выполните пункт 1 — Установка 3X-UI AUTO NGINX; нужен работающий стек.')"
         exit 1
     fi
-    ui_text 'Install and open the independent Telegram Web Proxy Manager? [y/N]: ' 'Установить и открыть самостоятельный Telegram Web Proxy Manager? [y/N]: '
+    ui_text 'Would you like to proceed with installing Telegram Web Proxy Manager? [y/N]: ' 'Хотите перейти к установке Telegram Web Proxy Manager? [y/N]: '
     IFS= read -r answer || exit 0
     [[ $answer == y || $answer == Y ]] || exit 0
     umask 077
@@ -3731,6 +3733,7 @@ telegram_manager_action() (
     }
     bash "$stage/install.sh"
     status=$?
+    (( status == 0 )) && ui_complete
     exit "$status"
 )
 
@@ -3779,7 +3782,12 @@ manager_menu() {
                     esac
                     (( status == 0 )) || break
                 done ;;
-            4) telegram_manager_action; status=$? ;;
+            4)
+                {
+                    completion=$(UI_COMPLETION_FD=3 telegram_manager_action 3>&1 1>&4)
+                    status=$?
+                } 4>&1
+                if (( status == 0 )) && [[ $completion == completed ]]; then return 0; fi ;;
             *) ui_text 'Invalid selection.\n' 'Неверный выбор.\n'; continue ;;
         esac
         if (( status )); then

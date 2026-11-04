@@ -47,6 +47,7 @@ Betiği çalıştırdıktan sonra **1 — English** veya **2 — Русский*
 - **1 — Installation:** yeni sunucu kurma veya tam yeniden kurulum.
 - **2 — Change Domains:** panel alan adını, REALITY alan adını veya ikisini yeniden kurmadan değiştirme.
 - **3 — Backups:** yedek oluşturma, listeleme ve geri yükleme.
+- **4 — Telegram Web Proxy Manager:** bağımsız yöneticiyi açın veya kurulumunu onaylayın. Yöneticiden çıkış 3X-UI oturumunu bitirir; kurulumu iptal etmek menüye döndürür.
 - **0 — Exit:** çıkış.
 
 Menü, etkileşimli bir SSH terminali gerektirir.
