@@ -1350,6 +1350,67 @@ rules:
                     self.assertEqual(stream['tlsSettings']['alpn'],['h3'])
         self.passed.append('Subscription semantics')
 
+    def test_telemt_backup_restore_accepts_real_manager_install_plan(self):
+        # Authenticated original v1.1.5 parser, never a simplified local stand-in.
+        helper = self.tools/'telemt-safety.py'
+        digest = 'b39c535ba12599b8fcf158308c6891165193e09153ffc45b4b5885ba9843a7c1'
+        cached = os.environ.get('TELEMT_SAFETY_SOURCE')
+        if cached:
+            shutil.copyfile(cached,helper)
+        else:
+            download('https://raw.githubusercontent.com/xPROMSx/telegram-web-proxy-manager/'
+                     '3e73ceac75f1b7a7008446fa14c5811a76418c42/lib/safety.py',helper)
+        self.assertEqual(hashlib.sha256(helper.read_bytes()).hexdigest(),digest)
+        code = r'''import hashlib, json, os, sys, types, unittest
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from test_personal_backup import PersonalBackup, relocated
+from telemt_fixtures import VHOST, ACME
+source = Path(sys.argv[2]).read_bytes()
+assert hashlib.sha256(source).hexdigest() == sys.argv[3]
+case = unittest.TestCase()
+for includes in (False,True):
+    for historical in (False,True):
+        f = PersonalBackup('runTest'); f.setUp()
+        try:
+            f.seed_telemt(includes)
+            module = types.ModuleType('telemt_backup_acceptance')
+            sys.modules[module.__name__] = module
+            exec(compile(relocated(source.decode(),f.root),'authenticated-telemt-safety.py','exec'),module.__dict__)
+            case.assertEqual(module.render_vhost('telegram.example.com'),relocated(VHOST,f.root))
+            case.assertEqual(module.render_acme('telegram.example.com',str(f.path('/var/lib/telemt-web-manager-acme'))),relocated(ACME,f.root))
+            output = Path(f.temp.name)/'plan.json'
+            if not includes:
+                module.nginx_plan(str(f.path('/etc/nginx')),'telegram.example.com',output)
+                case.assertEqual(json.loads(output.read_text())['edits'],[])
+            archive = f.historical_telemt_archive() if historical else f.backup()
+            original = archive.read_bytes()
+            f.clear_telemt_restore_target()
+            result = f.run_tool('restore',archive)
+            case.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            case.assertEqual(archive.read_bytes(),original)
+            module.nginx_plan(str(f.path('/etc/nginx')),'telegram.example.com',output)
+            edits = json.loads(output.read_text())['edits']
+            case.assertEqual(len(edits),2)
+            case.assertEqual({Path(e['path']).name for e in edits},{'stream.conf','telemt-web-manager.conf'})
+            for edit in edits:
+                path = Path(edit['path'])
+                case.assertTrue(path.is_relative_to(f.root))
+                path.parent.mkdir(parents=True,exist_ok=True)
+                path.write_text(edit['content'])
+            # A fresh route can be added without stale ownership or collisions.
+            module.nginx_plan(str(f.path('/etc/nginx')),'telegram.example.com',output)
+            case.assertEqual(json.loads(output.read_text())['edits'],[])
+        finally:
+            f.doCleanups()
+print('PARTIAL Telemt integration: real nginx staged Restore and v1.1.5 install plan PASS; full Install NOT RUN')
+'''
+        result = subprocess.run(['sudo','--preserve-env=NGINX_BIN,PYTHONDONTWRITEBYTECODE',sys.executable,
+            '-c',code,str(ROOT/'tests'),str(helper),digest],capture_output=True,text=True,timeout=180)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        print(result.stdout,flush=True)
+        self.passed.append('Telemt-independent Restore and real Manager install plan (PARTIAL)')
+
     def test_user_state_restore_with_official_sqlite_schema(self):
         # As in services_restore.py, sudo is limited to the private ownership/Restore fixture.
         # The canonical integration process, actual x-ui and transport processes stay nonroot.

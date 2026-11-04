@@ -518,6 +518,300 @@ with open(path, 'w') as out:
 PY
 }
 
+preflight_target_telemt() {
+    # Read-only, before even package bootstrap: replacing nginx cannot preserve
+    # a separate Telemt lifecycle. Partial/ambiguous installations also refuse.
+    local path status
+    for path in /etc/telemt /var/lib/telemt /var/lib/telemt-web-manager /var/lib/telemt-web-manager-acme /usr/local/bin/telemt \
+        /etc/systemd/system/telemt.service /etc/systemd/system/telemt.service.d \
+        /usr/lib/systemd/system/telemt.service /lib/systemd/system/telemt.service \
+        /etc/nginx/conf.d/telemt-web-manager.conf /etc/nginx/conf.d/telemt-web-manager-acme.conf \
+        /etc/nginx/stream-sni.d/telemt-web-manager.conf /etc/nginx/stream-upstreams.d/telemt-web-manager.conf \
+        /etc/letsencrypt/renewal-hooks/deploy/telemt-web-manager; do
+        [[ ! -e "$path" && ! -L "$path" ]] || die 'Restore over existing or partial Telemt is not supported; no Telemt state was changed.'
+    done
+    if systemctl cat telemt.service >/dev/null 2>&1 || systemctl is-active --quiet telemt.service; then
+        die 'Restore over existing or partial Telemt is not supported; no Telemt state was changed.'
+    fi
+    if [[ -d /etc/nginx ]]; then
+        if grep -rqsE 'twm_frontend|telemt-web-manager|127[.]0[.]0[.]1:7444' /etc/nginx; then
+            die 'Restore over existing or partial Telemt is not supported; no Telemt state was changed.'
+        else
+            status=$?
+            (( status == 1 )) || die 'Cannot inspect target nginx for Telemt; restore refused.'
+        fi
+    fi
+}
+
+exclude_staged_telemt() {
+    # One narrow migration for Manager v1.1.5. Never load code from the archive
+    # or consult target TLS files. The optional LIVE manifest is evidence only
+    # during Backup; historical v3 archives intentionally have no such manifest.
+    python3 - "$STAGING/files" /etc/nginx /etc/letsencrypt /root/cert \
+        "${1:-restore}" /var/lib/telemt-web-manager/manifest.json /var/lib/telemt-web-manager-acme <<'PYTELEMT'
+import hashlib, json, os, pathlib, re, shutil, stat, sys
+root, nginx, certroot, panelcert, mode, manifest, webroot = sys.argv[1:]
+root = pathlib.Path(root)
+def staged(path):
+    return root / path.lstrip('/')
+def require(value):
+    if not value:
+        raise ValueError('unconfirmed Telemt integration')
+def regular(path, directory=False):
+    require(path.is_relative_to(root))
+    for parent in (path, *path.parents):
+        info = parent.lstat()
+        require(not stat.S_ISLNK(info.st_mode))
+        if parent == root:
+            break
+    info = path.stat()
+    require(info.st_uid == 0 and not info.st_mode & 0o022)
+    require(stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode) and info.st_nlink == 1)
+    return path
+def text(path):
+    regular(path)
+    require(path.stat().st_size <= 1024 * 1024)
+    return path.read_text()
+def unique(pairs):
+    result = {}
+    for key, value in pairs:
+        require(key not in result)
+        result[key] = value
+    return result
+def tokens(source):
+    # Bounded lexer for the known stream file; comments/quoted values cannot
+    # manufacture ownership. Native staged nginx validation still follows.
+    pattern = r'''\s+|\#[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[{};]|[^\s{};#"']+'''
+    result = []
+    for match in re.finditer(pattern, source):
+        word = match[0]
+        if word.isspace() or word.startswith('#'):
+            continue
+        word = re.sub(r'\\(.)', r'\1', word.strip('"\''))
+        result.append((word, match.start(), match.end()))
+    return result
+def parse(source):
+    words = tokens(source)
+    index = 0
+    def block(nested=False):
+        nonlocal index
+        nodes = []
+        while index < len(words):
+            if words[index][0] == '}':
+                require(nested)
+                index += 1
+                return nodes
+            args, start = [], words[index][1]
+            while index < len(words) and words[index][0] not in ('{', '}', ';'):
+                args.append(words[index][0]); index += 1
+            require(args and index < len(words))
+            end = words[index][0]; index += 1
+            require(end != '}')
+            children = block(True) if end == '{' else None
+            nodes.append((args, children, start, words[index-1][2]))
+        require(not nested)
+        return nodes
+    return block()
+try:
+    ng = staged(nginx)
+    sources, aliases, linked_dirs = {}, [], []
+    # Do not follow archived nginx symlinks into the live VPS. Ordinary aliases
+    # (sites-enabled/modules-enabled) are checked by existing archive/nginx gates.
+    for base, dirs, files in os.walk(ng, followlinks=False):
+        linked_dirs += [pathlib.Path(base)/name for name in dirs if (pathlib.Path(base)/name).is_symlink()]
+        for name in files:
+            path = pathlib.Path(base) / name
+            if path.is_symlink():
+                aliases.append(path)
+            elif path.is_file():
+                sources[path] = path.read_text(errors='replace')
+    vhost = ng/'conf.d/telemt-web-manager.conf'
+    acme = ng/'conf.d/telemt-web-manager-acme.conf'
+    sni = ng/'stream-sni.d/telemt-web-manager.conf'
+    upstream = ng/'stream-upstreams.d/telemt-web-manager.conf'
+    hook = staged(certroot)/'renewal-hooks/deploy/telemt-web-manager'
+    known = (vhost, acme, sni, upstream, hook)
+    has_manifest = mode == 'backup' and os.path.lexists(manifest)
+    renewal_hint = any('telemt-web-manager' in p.read_text(errors='replace')
+                       for p in (staged(certroot)/'renewal').glob('*.conf') if p.is_file() and not p.is_symlink())
+    if not (has_manifest or renewal_hint or any(os.path.lexists(p) for p in known) or
+            any(re.search(r'twm_frontend|telemt-web-manager|127\.0\.0\.1:7444', s) for s in sources.values())):
+        sys.exit(0)
+    require(not linked_dirs)
+    content = text(vhost)
+    names = re.findall(r'^    server_name ([a-z0-9.-]+);$', content, re.M)
+    require(len(names) == 1)
+    host = names[0]
+    require(len(host) <= 253 and '.' in host and all(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', p) for p in host.split('.')))
+    def uses_host(value):
+        return re.search(r'(?<![A-Za-z0-9_.-])'+re.escape(host)+r'(?![A-Za-z0-9_.-])', value)
+    # Exact render_vhost() bytes, with only domain/Certbot root parameterized.
+    expected = f'''# Managed by telemt-web-manager v1. Manual changes require review.
+server {{
+    listen 127.0.0.1:7444 ssl http2 proxy_protocol;
+    server_name {host};
+    set_real_ip_from 127.0.0.1;
+    real_ip_header proxy_protocol;
+    access_log off;
+    error_log /dev/null crit;
+    ssl_certificate {certroot}/live/{host}/fullchain.pem;
+    ssl_certificate_key {certroot}/live/{host}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    client_max_body_size 2m;
+    client_body_timeout 90s;
+    send_timeout 90s;
+    location / {{
+        proxy_pass http://127.0.0.1:18080;
+        proxy_http_version 1.1;
+        proxy_set_header Host {host};
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Connection "";
+        proxy_set_header Upgrade "";
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 90s;
+        proxy_send_timeout 90s;
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_next_upstream off;
+    }}
+}}
+'''
+    require(content == expected)
+    require(text(hook) == '#!/bin/sh\nset -eu\n/usr/sbin/nginx -t\n/usr/bin/systemctl reload nginx\n')
+    has_acme = os.path.lexists(acme)
+    if has_acme:
+        require(text(acme) == f'''# Managed by telemt-web-manager v1. Persistent ACME webroot.
+server {{
+    listen 80;
+    server_name {host};
+    access_log off;
+    error_log /dev/null crit;
+    location ^~ /.well-known/acme-challenge/ {{
+        root {webroot};
+        default_type text/plain;
+        try_files $uri =404;
+    }}
+    location / {{ return 404; }}
+}}
+''')
+    if has_manifest:
+        path = pathlib.Path(manifest)
+        for parent in (path, *path.parents):
+            info = parent.lstat()
+            require(not stat.S_ISLNK(info.st_mode) and info.st_uid == 0 and
+                    (not info.st_mode & 0o022 or stat.S_ISDIR(info.st_mode) and info.st_mode & stat.S_ISVTX))
+        require(stat.S_ISREG(path.stat().st_mode) and path.stat().st_nlink == 1 and path.stat().st_size <= 16384)
+        require(stat.S_IMODE(path.stat().st_mode) == 0o600 and stat.S_IMODE(path.parent.stat().st_mode) == 0o700)
+        state = json.loads(path.read_text(), object_pairs_hook=unique)
+        require(type(state.get('schema')) is int and state['schema'] == 1 and state.get('domain') == host
+                and state.get('nginx_sha256') == hashlib.sha256(content.encode()).hexdigest()
+                and state.get('acme_webroot') == (webroot if has_acme else ''))
+    stream = ng/'stream-enabled/stream.conf'
+    source = text(stream)
+    nodes = parse(source)
+    maps = [n for n in nodes if n[0][:2] == ['map', '$ssl_preread_server_name']]
+    require(len(maps) == 1 and len(maps[0][0]) == 3 and maps[0][1] is not None)
+    mapping = maps[0]
+    row = f'    {host} twm_frontend; # telemt-web-manager\n'
+    backend = '\n# telemt-web-manager\nupstream twm_frontend { server 127.0.0.1:7444; }\n'
+    edits, remove = {}, [vhost, hook] + ([acme] if has_acme else [])
+    if os.path.lexists(sni) or os.path.lexists(upstream):
+        # Future include contract: wildcard at exactly the map/stream contexts,
+        # one SNI row and one fixed upstream, no other statements in either file.
+        require([n[:2] for n in parse(text(sni))] == [([host, 'twm_frontend'], None)])
+        ups = parse(text(upstream))
+        require(len(ups) == 1 and ups[0][0] == ['upstream','twm_frontend'] and
+                [n[:2] for n in ups[0][1]] == [(['server','127.0.0.1:7444'],None)])
+        for entries, pattern in ((mapping[1], nginx+'/stream-sni.d/*.conf'),
+                                 (nodes, nginx+'/stream-upstreams.d/*.conf')):
+            require(sum(n[0] == ['include',pattern] and n[1] is None for n in entries) == 1)
+            require(sum(t[0] == pattern for saved in sources.values() for t in tokens(saved)) == 1)
+        require(not any('twm_frontend' in t[0] for t in tokens(source)))
+        remove += [sni, upstream]
+    else:
+        rows = [n for n in mapping[1] if n[0] == [host, 'twm_frontend'] and n[1] is None]
+        ups = [n for n in nodes if n[0] == ['upstream','twm_frontend']]
+        require(len(rows) == len(ups) == 1 and [n[:2] for n in ups[0][1]] == [(['server','127.0.0.1:7444'],None)])
+        require(source.count(row) == source.count(backend) == 1)
+        require(source.index(row) + 4 == rows[0][2] and source.index(backend) + len('\n# telemt-web-manager\n') == ups[0][2])
+        edits[stream] = source.replace(row, '', 1).replace(backend, '', 1)
+    # Check all remaining nginx sources, including inactive files: no aliases,
+    # shared routes, extra domain rows, TLS users or external runtime dependencies.
+    for path, saved in sources.items():
+        if path in remove:
+            continue
+        remaining = edits.get(path, saved)
+        words = [t[0] for t in tokens(remaining)]
+        require(not any('twm_frontend' in w or uses_host(w) or 'telemt-web-manager' in w or
+                        '127.0.0.1:7444' in w or '127.0.0.1:18080' in w for w in words))
+    for path in aliases:
+        target = os.readlink(path)
+        require(not uses_host(target) and 'telemt-web-manager' not in target)
+        # Relative aliases stay inside nginx; platform module links are not
+        # archived runtime state. Do not follow either into the source VPS.
+        destination = pathlib.Path(os.path.normpath(target if target.startswith('/') else str(path.parent/target)))
+        if target.startswith(nginx+'/'): destination = staged(target)
+        require(destination.is_relative_to(ng) or target.startswith(('/usr/share/nginx/modules-available/', '/usr/lib/nginx/modules/')))
+    # Do not remove a shared project identity or foreign/shared lineage.
+    require(not os.path.lexists(staged(panelcert)/host))
+    for name in ('3x-ui-auto-nginx', '3x-ui-auto-nginx-vision'):
+        project = staged(certroot)/'renewal-hooks/deploy'/name
+        if project.exists(): require(not uses_host(text(project)))
+    from configobj import ConfigObj
+    certs = staged(certroot)
+    renewal = certs/'renewal'/(host+'.conf')
+    regular(renewal)
+    cfg = ConfigObj(str(renewal), file_error=True, interpolation=False)
+    for stem in ('cert','chain','fullchain','privkey'):
+        require(cfg.get(stem) == certroot+'/live/'+host+'/'+stem+'.pem')
+    require(cfg.get('archive_dir') == certroot+'/archive/'+host)
+    params = cfg['renewalparams']
+    kind = params.get('authenticator')
+    require(kind in ('standalone','webroot'))
+    if kind == 'webroot':
+        paths = params.get('webroot_path')
+        if isinstance(paths,str): paths = [paths.rstrip(',')]
+        require(has_acme and paths == [webroot] and params.get('webroot_map', {host:webroot}) == {host:webroot})
+    else:
+        require(not has_acme and not params.get('webroot_path') and not params.get('webroot_map'))
+    for other in (certs/'renewal').iterdir():
+        if other != renewal:
+            saved = text(other)
+            require(not re.search(re.escape(certroot)+r'/(?:live|archive)/'+re.escape(host)+r'(?![A-Za-z0-9_.-])', saved))
+            require(webroot not in saved and 'telemt-web-manager' not in saved)
+    live, archive = certs/'live'/host, certs/'archive'/host
+    regular(live, True); regular(archive, True)
+    require({p.name for p in live.iterdir()} <= {'README','cert.pem','chain.pem','fullchain.pem','privkey.pem'})
+    if os.path.lexists(live/'README'): regular(live/'README')
+    for path in archive.iterdir():
+        require(re.fullmatch(r'(cert|chain|fullchain|privkey)[0-9]+\.pem', path.name))
+        regular(path)
+    resolved = {}
+    for stem in ('cert','chain','fullchain','privkey'):
+        link = live/(stem+'.pem')
+        require(link.is_symlink() and link.lstat().st_uid == 0)
+        target = os.readlink(link)
+        require(re.fullmatch(r'../../archive/'+re.escape(host)+'/'+stem+r'[0-9]+\.pem', target))
+        resolved[stem] = regular(archive/pathlib.Path(target).name)
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+    cert = x509.load_pem_x509_certificate(resolved['fullchain'].read_bytes())
+    key = serialization.load_pem_private_key(resolved['privkey'].read_bytes(), password=None)
+    san = list(cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value)
+    require(len(san) == 1 and isinstance(san[0],x509.DNSName) and san[0].value == host)
+    public = lambda k: k.public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo)
+    require(public(cert.public_key()) == public(key.public_key()))
+    # All ownership checks finish before any staged deletion. Accounts and all
+    # unrelated Certbot objects stay untouched; Restore still imports selectively.
+    for path, value in edits.items(): path.write_text(value)
+    for path in remove + [renewal]: path.unlink()
+    shutil.rmtree(live); shutil.rmtree(archive)
+except Exception:
+    sys.exit('[FAIL] Telemt objects are incomplete, changed or shared; private staging refused. Live Telemt state was not changed.')
+print('Confirmed Telemt integration excluded from private staging')
+PYTELEMT
+}
+
 cmd_backup() {
     stage 'Backup preflight'
     host_identity
@@ -571,6 +865,7 @@ cmd_backup() {
         systemctl start AdGuardHome && systemctl is-active --quiet AdGuardHome || die 'Cannot recover AdGuard Home after snapshot.'
         RESUME_AGH=0
     fi
+    exclude_staged_telemt backup
     write_metadata
     stage 'Compressing and verifying archive'
     local name="x-ui-backup-$(date -u +%Y%m%d-%H%M%S)-${STAGING##*-}.tar.gz"
@@ -2026,6 +2321,7 @@ recover_restore_target() {
 
 cmd_restore() {
     stage 'Restore preflight'
+    preflight_target_telemt
     local archive=${1:-} service path
     [[ -n "$archive" && -f "$archive" ]] || die 'Usage: x-ui-backup restore <existing archive.tar.gz>'
     archive=$(readlink -f -- "$archive")
@@ -2043,6 +2339,7 @@ cmd_restore() {
     check_compatibility
     install_missing_packages "${PACKAGES[@]}"
     check_python_dependencies
+    exclude_staged_telemt restore
     quick_check "$STAGING/files$DB"
     ADGUARD_HOME=$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["adguard_home"]).lower())' "$STAGING/meta.json")
     load_restored_services
