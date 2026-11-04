@@ -641,7 +641,7 @@ sleep() { :; }
         self.assertEqual(json.loads(row["stream_settings"]), {
             "network": "tcp", "security": "reality",
             "realitySettings": {
-                "show": False, "xver": 0, "target": "127.0.0.1:9443",
+                "show": False, "xver": 1, "target": "127.0.0.1:9443",
                 "serverNames": ["cover.example"], "privateKey": "test-private",
                 "minClient": "", "maxClient": "", "maxTimediff": 0,
                 "shortIds": list("abcdefgh"),

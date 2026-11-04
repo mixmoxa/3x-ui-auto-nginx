@@ -1,6 +1,7 @@
 """Offline loopback integration with authenticated official binaries, never host services."""
 import base64
 import copy
+from contextlib import ExitStack
 import gzip
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,7 +26,7 @@ import time
 import unittest
 from unittest.mock import patch
 import uuid
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlsplit
 
 from test_personal_xhttp import ROOT, FIXTURE, render, seed, SHARED, MAIN, function as installer_function
 from release_contract import selection, verify, validate_layout
@@ -431,6 +432,9 @@ class RealIntegration(unittest.TestCase):
         main = re.sub(r'/etc/letsencrypt/live/[^/]+/privkey.pem',str(self.key),main)
         main = main.replace('/var/www',str(self.root/'www'))
         stream = render('cat > /etc/nginx/stream-enabled/stream.conf')
+        for directory in ('stream-sni.d','stream-upstreams.d'):
+            (self.root/directory).mkdir(exist_ok=True)
+            stream = stream.replace('/etc/nginx/'+directory+'/',str(self.root/directory)+'/')
         stream = stream.replace('127.0.0.1:8443',f"127.0.0.1:{self.backends['reality']}").replace(
             '127.0.0.1:7443',f"127.0.0.1:{self.backends['tls']}")
         stream = stream.replace('listen     443;',f'listen 127.0.0.1:{self.public};').replace('listen     [::]:443;','')
@@ -443,18 +447,28 @@ class RealIntegration(unittest.TestCase):
             stream = self.vision_module.stream_config(stream, 'vision.example', self.vision_port)
         temp = '\n'.join(f'{kind}_temp_path {self.root}/{kind};' for kind in ('client_body','proxy','fastcgi','uwsgi','scgi'))
         maps = render('cat > /etc/nginx/sites-available/00-maps.conf')
-        cover = f"server {{ listen 127.0.0.1:{self.backends['cover']} ssl http2; ssl_certificate {self.cert}; ssl_certificate_key {self.key}; ssl_protocols TLSv1.3; return 200 'cover'; }}"
+        cover = render('cat > "/etc/nginx/sites-available/${reality_domain}"',
+                       getattr(self,'reality_source',None) or (ROOT/'x-ui-latest.sh').read_text())
+        cover = cover.replace('127.0.0.1:9443',f"127.0.0.1:{self.backends['cover']}")
+        cover = re.sub(r'/etc/letsencrypt/live/[^/]+/fullchain.pem',str(self.cert),cover)
+        cover = re.sub(r'/etc/letsencrypt/live/[^/]+/privkey.pem',str(self.key),cover)
+        cover = cover.replace('/etc/nginx/snippets/includes.conf',str(self.root/'shared.conf'))
+        cover = cover.replace('/var/www',str(self.root/'www'))
+        (self.root/'www/html').mkdir(parents=True,exist_ok=True)
+        (self.root/'www/html/index.html').write_text('cover')
+        cover = cover.replace('    server_tokens off;',f'    access_log {self.root}/reality-access.log reality_probe;\n    server_tokens off;')
         config = f'''load_module /usr/lib/nginx/modules/ngx_stream_module.so;
 worker_processes 1; daemon off; pid {self.root}/nginx.pid; error_log {self.root}/nginx-error.log;
 events {{ worker_connections 256; }}
 stream {{ {stream} }}
-http {{ access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {main} {cover} {getattr(self, 'vision_site', '')} }}
+http {{ log_format reality_probe '$remote_addr|$proxy_protocol_addr'; access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {main} {cover} {getattr(self, 'vision_site', '')} }}
 '''
         path = self.root/'nginx.conf';path.write_text(config)
         result = subprocess.run([self.nginx,'-t','-p',str(self.root)+'/', '-c',path],text=True,capture_output=True,timeout=15)
         self.assertEqual(result.returncode,0,result.stderr)
         process = self.launch([self.nginx,'-p',str(self.root)+'/', '-c',path],'nginx')
         self.ready(process,('127.0.0.1',self.public))
+        return process
 
     def client(self, name, negative=False, server_log="xray-server.log", expect_success=True):
         config = copy.deepcopy(self.clients[name])
@@ -512,6 +526,74 @@ http {{ access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {mai
 
     def test_reality(self): self.transport('reality')
 
+    def test_reality_old_and_new_proxy_fallback_trust(self):
+        # Frozen pre-PROXY fallback; works with Canary's depth-one checkout.
+        old = r'''    cat > "/etc/nginx/sites-available/${reality_domain}" <<EOF
+server {
+    server_tokens off;
+    server_name ${reality_domain};
+    listen 127.0.0.1:9443 ssl${http2_listen};
+    ${http2_on}
+    index index.html index.htm index.php;
+    root /var/www/html/;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!eNULL:!MD5:!DES:!RC4:!ADH:!SSLv3:!EXP:!PSK:!DSS;
+    ssl_certificate     /etc/letsencrypt/live/${reality_domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${reality_domain}/privkey.pem;
+    if (\$host !~* ^(.+\.)?${reality_domain}\$)            { return 444; }
+    if (\$scheme ~* https)                                  { set \$safe 1; }
+    if (\$ssl_server_name !~* ^(.+\.)?${reality_domain}\$) { set \$safe "\${safe}0"; }
+    if (\$safe = 10)                                        { return 444; }
+    if (\$request_uri ~ "(\"|'|\`|~|,|:|;|%|\\$|&&|\?\?|0x00|0X00|\||\\|\{|\}|\[|\]|<|>|\.\.\.|\.\.\/|\/\/\/)") { set \$hack 1; }
+    error_page 400 401 402 403 500 501 502 503 504 =404 /404;
+    proxy_intercept_errors on;
+
+    include /etc/nginx/snippets/includes.conf;
+}
+EOF
+'''
+        for xver in (0,1):
+            with self.subTest(xver=xver), ExitStack() as cleanup:
+                self.reality_source = old if xver==0 else None
+                nginx = self.nginx_config()
+                cleanup.callback(stop,nginx)
+                config = copy.deepcopy(self.server)
+                row = next(r for r in config['inbounds'] if r.get('streamSettings',{}).get('security')=='reality')
+                row['streamSettings']['realitySettings']['xver'] = xver
+                server = self.launch([self.xray,'run','-c',self.validate(config,'reality-fallback-'+str(xver))],'reality-fallback')
+                cleanup.callback(stop,server)
+                self.ready(server,('127.0.0.1',self.backends['reality']))
+                self.client('reality',server_log='reality-fallback.log')
+                ctx = ssl.create_default_context(cafile=str(self.cert));ctx.set_alpn_protocols(['http/1.1'])
+                def fallback(port, proxy=b''):
+                    raw = socket.create_connection(('127.0.0.1',port),timeout=5,source_address=('127.0.0.2',0))
+                    try:
+                        if proxy: raw.sendall(proxy)
+                        with ctx.wrap_socket(raw,server_hostname='cover.example') as tls:
+                            tls.sendall(b'GET / HTTP/1.1\r\nHost: cover.example\r\nX-Real-IP: 203.0.113.80\r\nX-Forwarded-For: 203.0.113.81\r\nConnection: close\r\n\r\n')
+                            result=b''
+                            while chunk:=tls.recv(4096): result+=chunk
+                            return result
+                    finally: raw.close()
+                response=fallback(self.public)
+                self.assertIn(b'200 OK',response);self.assertTrue(response.endswith(b'cover'))
+                lines=(self.root/'reality-access.log').read_text().splitlines()
+                self.assertEqual(lines[-1].split('|')[0],'127.0.0.2' if xver else '127.0.0.1')
+                self.assertEqual(lines[-1].split('|')[1],'127.0.0.2' if xver else '-')
+                if xver:
+                    forged=b'PROXY TCP4 203.0.113.99 127.0.0.1 50123 9443\r\n'
+                    # Local peers outside 127.0.0.1 cannot turn a PROXY claim
+                    # into verified remote_addr even at the private fallback.
+                    self.assertIn(b'200 OK',fallback(self.backends['cover'],forged))
+                    self.assertEqual((self.root/'reality-access.log').read_text().splitlines()[-1],'127.0.0.2|203.0.113.99')
+                    with self.assertRaises((ssl.SSLError,OSError)): fallback(self.backends['cover'])
+                    with self.assertRaises((ssl.SSLError,OSError)): fallback(self.public,forged)
+                listeners=subprocess.check_output(['ss','-H','-ltn'],text=True,timeout=5)
+                addresses=[line.split()[3] for line in listeners.splitlines() if line.split()[3].endswith(':'+str(self.backends['cover']))]
+                self.assertEqual(addresses,[f"127.0.0.1:{self.backends['cover']}"])
+                stop(server);stop(nginx)
+        self.passed.append('REALITY xver 0/1 native handshake / TLS fallback / trusted source / forged PROXY')
+
     def test_domain_updates_preserve_native_311_schema_and_host_client_bindings(self):
         from test_integrated_features import helper
         domains=helper('domains');root=self.root/'native-domain-root';folder=root/'etc/x-ui';folder.mkdir(parents=True)
@@ -553,6 +635,66 @@ http {{ access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {mai
         self.assertTrue(after['client_inbounds']==before['client_inbounds'],'Native inbound attachments changed')
         self.assertTrue(all('snis' in h and 'sni_shared_random' in h and 'mihomo_x25519' in h for h in after['hosts']))
         self.passed.append('Change Domains native SQLite UPDATE / WAL / v3.11 Host bindings')
+
+    def test_native_panel_forwarding_headers_preserve_links_redirects_and_login_ip(self):
+        from test_integrated_features import helper
+        self.nginx_config()
+        env={**os.environ,'XUI_DB_FOLDER':str(self.root/'db'),'XUI_BIN_FOLDER':str(self.root/'bin'),'XUI_LOG_FOLDER':str(self.root/'logs')}
+        server=self.launch([self.xui],'forwarded-panel',env)
+        self.ready(server,('127.0.0.1',self.backends['panel']))
+        options=['--cacert',str(self.cert),'--resolve',f'deploy.example:{self.public}:127.0.0.1','--interface','127.0.0.2']
+        header=self.root/'forwarded-request-headers';header.write_text('');header.chmod(0o600)
+        def get(path,html=False):
+            return subprocess.check_output(['curl','-q','-fsS','--noproxy','*',*options,'--header','@'+str(header),
+                '--user-agent','Mozilla/5.0' if html else 'x-ui-header-regression','--max-time','15',
+                f'https://deploy.example:{self.public}'+path],timeout=20)
+        def redirect():
+            response=subprocess.check_output(['curl','-q','-sS','--noproxy','*',*options,'--header','@'+str(header),
+                '--max-time','15','-D','-','-o','/dev/null',f'https://deploy.example:{self.public}/panel'],timeout=20).decode()
+            return re.findall(r'(?im)^location: ([^\r\n]+)',response)
+        api=helper('amneziawg').Panel(f'https://deploy.example:{self.public}/panel/','integration',self.auth,self.root,
+                                     options+['--header','@'+str(header)])
+        def canonical(value):
+            if isinstance(value,dict):
+                result={key:canonical(item) for key,item in value.items()}
+                if 'shortId' in result:
+                    self.assertTrue(result['shortId'] in self.short_ids,'Unknown short ID in native public output')
+                    result['shortId']='managed-short-id'
+                return result
+            if isinstance(value,list):return [canonical(item) for item in value]
+            if isinstance(value,str) and '://' in value:
+                url=urlsplit(value);pairs=[]
+                for key,item in parse_qsl(url.query,keep_blank_values=True):
+                    if key=='sid':
+                        self.assertTrue(item in self.short_ids,'Unknown short ID in native public link')
+                        item='managed-short-id'
+                    pairs.append((key,item))
+                return url._replace(query=urlencode(pairs)).geturl()
+            return value
+        def raw_links():return canonical(base64.b64decode(get('/subscription/fixture'),validate=True).decode().splitlines())
+        paths=('panel/api/inbounds/allLinks','panel/api/clients/subLinks/fixture')
+        baseline=canonical([api.request(path)['obj'] for path in paths])
+        self.assertTrue(canonical([api.request(path)['obj'] for path in paths])==baseline,'Unmodified native links are not stable after known short-ID normalization')
+        raw=raw_links();jsonsub=canonical(json.loads(get('/jsonsub/fixture')));location=redirect()
+        for values in (['X-Forwarded-Host: attacker.example'],['X-Real-IP: 203.0.113.60'],
+                       ['X-Forwarded-For: 203.0.113.61'],
+                       ['X-Forwarded-Host: attacker.example','X-Real-IP: 203.0.113.62','X-Forwarded-For: 203.0.113.63, 127.0.0.1']):
+            header.write_text('\n'.join(values)+'\n')
+            self.assertTrue(canonical([api.request(path)['obj'] for path in paths])==baseline,'Forwarded header changed native administrative/public links')
+            self.assertTrue(raw_links()==raw,'Forwarded header changed RAW subscription')
+            self.assertTrue(canonical(json.loads(get('/jsonsub/fixture')))==jsonsub,'Forwarded header changed JSON subscription')
+            self.assertEqual(redirect(),location)
+            html=get('/subscription/fixture',True)
+            self.assertTrue(b'https://attacker.example' not in html,'Forwarded host affected public subscription URLs')
+        for index in range(6):
+            header.write_text(f'X-Real-IP: 203.0.113.{index+1}\nX-Forwarded-For: 198.51.100.{index+1}\n')
+            with self.assertRaises(ValueError): api.request('login',{'username':'forwarding-fixture','password':'wrong-fixture-password'})
+        log=(Path(env['XUI_LOG_FOLDER'])/'3xui.log').read_text()
+        ips=re.findall(r'failed login: username="forwarding-fixture", IP="([^"]+)"',log)
+        self.assertEqual(ips,['127.0.0.2']*6)
+        self.assertTrue(re.search(r'failed login: username="forwarding-fixture", IP="127\.0\.0\.2"[^\n]*blocked_until=',log),
+                        'Native login limiter did not report a block for the actual source IP')
+        self.passed.append('3.11 forwarding headers: native links / redirects / real login IP and limiter')
 
     def test_single_bootstrap_real_login_and_logout(self):
         from test_integrated_features import helper
@@ -701,6 +843,8 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
             row=next(r for r in rows if r['port']==local_port)
             self.assertIs(row['enable'],False);self.assertEqual(row['remark'],'🇫🇮 xhttp CDN')
             self.assertEqual(row['streamSettings'],cdn.inbound(local_port,path,'🇫🇮')['streamSettings'])
+            sniffing=json.loads(row['sniffing']) if isinstance(row['sniffing'],str) else row['sniffing']
+            self.assertEqual(sniffing,dict(enabled=True,destOverride=['http','tls','quic','fakedns'],routeOnly=False))
             with sqlite3.connect(self.root/'db/x-ui.db') as db:
                 host=db.execute('SELECT address,port,security,fingerprint,alpn,sni,host_header,group_id FROM hosts WHERE inbound_id=?',(row['id'],)).fetchone()
                 self.assertEqual(host[:7],('deploy.example',443,'tls','firefox','[]','deploy.example',''))
@@ -747,9 +891,13 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
                 '--max-time','20',f'http://127.0.0.1:{self.origin.server_port}/cdn-get-cookie'],capture_output=True,timeout=25)
             self.assertEqual(transfer.returncode,0,'Real packet-up GET/cookie transfer failed')
             self.assertEqual(transfer.stdout,self.marker.encode())
-            access=(self.root/'cdn-access.log').read_text()
-            self.assertTrue(any('"GET '+path+'/' in line and ' 200 ' in line for line in access.splitlines()))
             stop(process)
+            code=subprocess.check_output(['curl','-q','-sS','--noproxy','*',*api.options,'--max-time','10',
+                 '-o','/dev/null','-w','%{http_code}',f'https://deploy.example:{self.public}'+path],timeout=15)
+            self.assertEqual(code,b'307')
+            access=(self.root/'cdn-access.log').read_text()
+            self.assertIn('/panel/',access,'Control requests must still reach the normal nginx access log')
+            self.assertNotIn(path,access,'Managed CDN base/packet-up requests leaked to the normal access log')
         self.passed.append('CDN packet-up / native RAW extra / JSON / nginx GET-cookie')
 
     def test_vision_and_initial_client_official_api(self):

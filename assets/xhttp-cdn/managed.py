@@ -32,7 +32,7 @@ def inbound(port, path, flag):
                 settings=dict(clients=[], decryption='none', encryption='none', fallbacks=[]),
                 streamSettings=dict(network='xhttp', security='none',
                                     xhttpSettings=dict(path=path, host='', headers={}, **PARAMETERS)),
-                sniffing=dict(enabled=True, destOverride=['http', 'tls'], routeOnly=False))
+                sniffing=dict(enabled=True, destOverride=['http', 'tls', 'quic', 'fakedns'], routeOnly=False))
 
 
 def nginx(port, path):
@@ -41,9 +41,11 @@ def nginx(port, path):
     # Preserve that slash and the entire URI, query and Cookie upstream.
     return f'''# Managed by 3x-ui Auto Nginx: XHTTP CDN
 location = {path} {{
+    access_log off;
     return 307 {path}/$is_args$args;
 }}
 location ^~ {path}/ {{
+    access_log off;
     proxy_pass http://127.0.0.1:{port};
     proxy_http_version 1.1;
     proxy_set_header Host $host;

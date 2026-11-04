@@ -317,7 +317,8 @@ class PersonalBackup(unittest.TestCase):
         self.write('/etc/os-release', Path('/etc/os-release').read_text())
         self.write('/etc/nginx/nginx.conf', f'pid {self.root}/nginx.pid;\nerror_log stderr;\nevents {{}}\nhttp {{}}\n')
         for path in ('/usr/local/x-ui/bin', '/etc/letsencrypt/live/example.com',
-                     '/root/cert/example.com', '/var/www/html', '/var/www/subpage'):
+                     '/root/cert/example.com', '/var/www/html', '/var/www/subpage',
+                     '/etc/nginx/stream-sni.d', '/etc/nginx/stream-upstreams.d'):
             self.path(path).mkdir(parents=True)
         db = self.path('/etc/x-ui/x-ui.db')
         db.parent.mkdir(parents=True)
@@ -429,8 +430,9 @@ class PersonalBackup(unittest.TestCase):
         upstream = '\n# telemt-web-manager\nupstream twm_frontend { server 127.0.0.1:7444; }\n'
         close = stream.index('}')
         if includes:
-            stream = (stream[:close] + '    include /etc/nginx/stream-sni.d/*.conf;\n' + stream[close:close+1]
-                      + '\ninclude /etc/nginx/stream-upstreams.d/*.conf;\n' + stream[close+1:])
+            if 'include /etc/nginx/stream-sni.d/*.conf;' not in stream:
+                stream = (stream[:close] + '    include /etc/nginx/stream-sni.d/*.conf;\n' + stream[close:close+1]
+                          + '\ninclude /etc/nginx/stream-upstreams.d/*.conf;\n' + stream[close+1:])
             self.write('/etc/nginx/stream-sni.d/telemt-web-manager.conf', row)
             self.write('/etc/nginx/stream-upstreams.d/telemt-web-manager.conf', upstream)
         else:
@@ -483,6 +485,30 @@ class PersonalBackup(unittest.TestCase):
         self.assertEqual(self.path('/etc/telemt/telemt.toml').read_text(),'private Telemt config')
         self.assertEqual(json.loads((self.root/'services.json').read_text())['telemt.service'],'active')
         self.assertFalse(any(c[:2] == ['systemctl','stop'] and 'telemt' in c[-1] for c in self.commands()))
+
+    def test_restore_preserves_old_and_new_reality_proxy_contracts(self):
+        from test_personal_xhttp import render
+        old=subprocess.check_output(['git','-c','safe.directory='+str(ROOT),'show',
+                    'f7f5cbbb2d00c1c0cdb2749745e2b4ff2aaf00c1:x-ui-latest.sh'],cwd=ROOT,text=True)
+        for xver in (0,1):
+            with self.subTest(xver=xver):
+                f=PersonalBackup('runTest');f.setUp()
+                try:
+                    with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                        db.execute("UPDATE inbounds SET stream_settings=json_set(stream_settings,'$.realitySettings.xver',?) WHERE json_extract(stream_settings,'$.security')='reality'",(xver,))
+                    vhost=render('cat > "/etc/nginx/sites-available/${reality_domain}"',old if xver==0 else INSTALLER,
+                                 domain='example.com',reality_domain='reality.example.com')
+                    f.write('/etc/nginx/sites-available/reality.example.com',relocated(vhost,f.root))
+                    expected=f.path('/etc/nginx/sites-available/reality.example.com').read_bytes()
+                    archive=f.backup();original=archive.read_bytes()
+                    result=f.run_tool('restore',archive)
+                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                    with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                        values=db.execute("SELECT json_extract(stream_settings,'$.realitySettings.xver') FROM inbounds WHERE json_extract(stream_settings,'$.security')='reality'").fetchall()
+                    self.assertEqual(values,[(xver,)])
+                    self.assertEqual(f.path('/etc/nginx/sites-available/reality.example.com').read_bytes(),expected)
+                    self.assertEqual(archive.read_bytes(),original)
+                finally:f.doCleanups()
 
     def test_telemt_backup_uses_private_manifest_and_supports_standalone_renewal(self):
         for standalone in (False,True):
@@ -541,9 +567,9 @@ class PersonalBackup(unittest.TestCase):
                                         domain='example.com', reality_domain='reality.example.com')
                         stream = stream.replace('    hostnames;','    hostnames;\n    vision.example.com vision;')
                         stream += '\nupstream vision { server 127.0.0.1:12000; }\n'
-                        row = ('    include /etc/nginx/stream-sni.d/*.conf;\n' if includes else
+                        row = ('' if includes else
                                '    telegram.example.com twm_frontend; # telemt-web-manager\n')
-                        backend = ('\ninclude /etc/nginx/stream-upstreams.d/*.conf;\n' if includes else
+                        backend = ('' if includes else
                                    '\n# telemt-web-manager\nupstream twm_frontend { server 127.0.0.1:7444; }\n')
                         close = stream.index('}')
                         f.write('/etc/nginx/stream-enabled/stream.conf', relocated(stream[:close]+row+stream[close:close+1]+backend+stream[close+1:],f.root))

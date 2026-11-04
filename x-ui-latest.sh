@@ -779,6 +779,7 @@ get_ssl_certs() {
 # ─────────────────────────────────────────────────────────────────────────────
 configure_nginx() {
     install -d -o root -g root -m 0755 /etc/nginx/snippets/x-ui-auto-optional || return 1
+    install -d -o root -g root -m 0755 /etc/nginx/stream-sni.d /etc/nginx/stream-upstreams.d || return 1
     mkdir -p /etc/nginx/stream-enabled /etc/nginx/snippets || return 1
 
     # nginx >= 1.25.1 deprecates "listen ... http2" in favor of "http2 on;";
@@ -800,11 +801,14 @@ map \$ssl_preread_server_name \$sni_name {
     hostnames;
     ${reality_domain}    xray;
     ${domain}            www;
+    include /etc/nginx/stream-sni.d/*.conf;
     default              xray;
 }
 
 upstream xray { server 127.0.0.1:8443; }
 upstream www  { server 127.0.0.1:7443; }
+
+include /etc/nginx/stream-upstreams.d/*.conf;
 
 server {
     proxy_protocol on;
@@ -1170,12 +1174,14 @@ server {
 EOF
     [[ $? -eq 0 ]] || return 1
 
-    # Reality domain vhost (plain TLS at 9443, no proxy_protocol)
+    # REALITY forwards the trusted source via PROXY v1 to this loopback fallback.
     cat > "/etc/nginx/sites-available/${reality_domain}" <<EOF
 server {
     server_tokens off;
     server_name ${reality_domain};
-    listen 127.0.0.1:9443 ssl${http2_listen};
+    listen 127.0.0.1:9443 ssl${http2_listen} proxy_protocol;
+    real_ip_header proxy_protocol;
+    set_real_ip_from 127.0.0.1;
     ${http2_on}
     index index.html index.htm index.php;
     root /var/www/html/;
@@ -1569,7 +1575,7 @@ VALUES (
   "security": "reality",
   "realitySettings": {
     "show": false,
-    "xver": 0,
+    "xver": 1,
     "target": "127.0.0.1:9443",
     "serverNames": ["${reality_domain}"],
     "privateKey": "${private_key}",

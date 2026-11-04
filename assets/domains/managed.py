@@ -40,6 +40,10 @@ CLASH = '/var/www/subpage/clash.yaml.tpl'
 DIAGNOSTICS = '/var/www/diagnostics/index.html'
 AGH = '/opt/AdGuardHome/managed.json'
 CORE = ('reality', 'ws', 'grpc', 'xhttp', 'hysteria2')
+SNI_INCLUDE = '/etc/nginx/stream-sni.d/*.conf'
+UPSTREAM_INCLUDE = '/etc/nginx/stream-upstreams.d/*.conf'
+TELEMT_FILES = ('/etc/nginx/conf.d/telemt-web-manager.conf', '/etc/nginx/conf.d/telemt-web-manager-acme.conf',
+                '/etc/nginx/stream-sni.d/telemt-web-manager.conf', '/etc/nginx/stream-upstreams.d/telemt-web-manager.conf')
 
 
 class Refusal(ValueError):
@@ -362,7 +366,69 @@ class Operation:
             require(all(context[key] == expected[key] for key in ('domains', 'inbound_roles', 'features')),
                     'Managed roles changed independently; recovery material retained.')
         self.validate_files(context)
+        if expected and 'telemt' in expected:
+            require(context['telemt'] == expected['telemt'], 'Telemt nginx integration changed independently; preserved.')
         return context
+
+    def stream_integration(self, context, stream):
+        """Recognize only the two agreed Telemt layouts, without editing them.
+
+        Vhost digests pin render_vhost/render_acme from Manager v1.1.5,
+        3e73ceac75f1b7a7008446fa14c5811a76418c42, replacing only its domain.
+        The remaining complete stream still has to match our bounded template.
+        """
+        normalize = lambda value: re.sub(r'\s+', '', re.sub(r'(?m)#.*$', '', value))
+        entries = []
+        for directory in ('/etc/nginx/stream-sni.d', '/etc/nginx/stream-upstreams.d'):
+            path = self.path(directory)
+            self.parents(directory+'/telemt-web-manager.conf')
+            if os.path.lexists(path):
+                require(stat.S_ISDIR(path.lstat().st_mode) and path.stat().st_uid == path.stat().st_gid == 0 and
+                        stat.S_IMODE(path.stat().st_mode) == 0o755, 'Unsafe nginx stream include directory.')
+                entries += [str(p.relative_to(self.root)) for p in path.iterdir()]
+        require(set(entries) <= {name.lstrip('/') for name in TELEMT_FILES[2:]}, 'Unknown additional nginx stream include files.')
+        included = bool(entries)
+        row = re.findall(r'^    ([a-z0-9.-]+) twm_frontend; # telemt-web-manager\n', stream, re.M)
+        backend = '\n# telemt-web-manager\nupstream twm_frontend { server 127.0.0.1:7444; }\n'
+        if included:
+            require(set(entries) == {name.lstrip('/') for name in TELEMT_FILES[2:]} and not row,
+                    'Incomplete or conflicting Telemt include integration.')
+            sni = self.read(TELEMT_FILES[2])
+            hosts = re.findall(r'^\s*([a-z0-9.-]+)\s+twm_frontend\s*;', re.sub(r'(?m)#.*$', '', sni))
+            host = single(hosts, 'Unknown Telemt SNI include.')
+            require(normalize(sni) == host+'twm_frontend;' and
+                    normalize(self.read(TELEMT_FILES[3])) == 'upstreamtwm_frontend{server127.0.0.1:7444;}',
+                    'Changed Telemt stream include objects.')
+            require(all(stream.count('include '+name+';') == 1 for name in (SNI_INCLUDE, UPSTREAM_INCLUDE)),
+                    'Telemt stream include directives are incomplete or ambiguous.')
+        elif row:
+            host = single(row, 'Duplicate Telemt SNI rows.')
+            literal = f'    {host} twm_frontend; # telemt-web-manager\n'
+            require(stream.count('map $ssl_preread_server_name $sni_name {') == 1, 'Unknown Telemt SNI map.')
+            opening = stream.index('map $ssl_preread_server_name $sni_name {')
+            closing = stream.index('}', opening)
+            require(opening < stream.index(literal) < closing and stream.count(backend) == 1 and
+                    stream.index(backend) == closing+1, 'Changed legacy Telemt stream fragments.')
+            stream = stream.replace(literal, '', 1).replace(backend, '', 1)
+        else:
+            require(not any(os.path.lexists(self.path(name)) for name in TELEMT_FILES), 'Incomplete Telemt nginx integration.')
+            context['telemt'] = None
+            return stream
+        hostname(host)
+        require(host not in context['domains'].values(), 'Telemt SNI conflicts with a managed 3X-UI domain.')
+        vhost = self.read(TELEMT_FILES[0])
+        require(digest(vhost.replace(host, '{domain}').encode()) == 'a35de3320bdd721063a3d13ff7d6ed2ccabd469c57ee10387882c126c42afef5',
+                'Changed or inconsistent Telemt HTTPS vhost.')
+        paths = [TELEMT_FILES[0]] + (list(TELEMT_FILES[2:]) if included else [])
+        if os.path.lexists(self.path(TELEMT_FILES[1])):
+            require(digest(self.read(TELEMT_FILES[1]).replace(host, '{domain}').encode()) ==
+                    '787a182c26bb2d5b335b5a62573a56df524f2f24f35c303b17ab7eab9f4d7035', 'Changed Telemt ACME vhost.')
+            paths.append(TELEMT_FILES[1])
+        main = re.sub(r'(?m)#.*$', '', self.read('/etc/nginx/nginx.conf'))
+        require(main.count('include /etc/nginx/conf.d/*.conf;') == 1, 'Telemt vhosts are not included through the known HTTP contract.')
+        context['telemt'] = dict(domain=host, files={name:self.guard_value(name) for name in paths},
+                                 layout='include' if included else 'inline')
+        return stream
 
     def validate_files(self, context):
         cdn = (context.get('manifest') or {}).get('xhttp_cdn')
@@ -373,16 +439,22 @@ class Operation:
                     re.findall(r'location (?:=|\^~) (\S+) \{', route) == [cdn['path'], cdn['path']+'/'],
                     'XHTTP CDN nginx route differs from its managed snapshot.')
         domains = context['domains']; panel, reality, vision = (domains[k] for k in ('panel', 'reality', 'vision'))
-        stream = self.read(STREAM)
+        stream = self.stream_integration(context, self.read(STREAM))
         expected = ('map_hash_bucket_size 272;map $ssl_preread_server_name $sni_name {hostnames;' +
-                    (vision+' vision;' if vision else '') + reality+' xray;'+panel+' www;default xray;}' +
+                    (vision+' vision;' if vision else '') + reality+' xray;'+panel+' www;SNI_INCLUDEdefault xray;}' +
                     'upstream xray { server 127.0.0.1:8443; }upstream www { server 127.0.0.1:7443; }' +
-                    'server {proxy_protocol on;set_real_ip_from unix:;listen 443;IPV6proxy_pass $sni_name;ssl_preread on;}')
+                    'UPSTREAM_INCLUDEserver {proxy_protocol on;set_real_ip_from unix:;listen 443;IPV6proxy_pass $sni_name;ssl_preread on;}')
         normalize = lambda text: re.sub(r'\s+', '', re.sub(r'(?m)#.*$', '', text))
         if vision:
             row = context['rows'][context['inbound_roles']['vision']]
             expected += 'upstream vision { server 127.0.0.1:'+str(row['port'])+'; }'
-        require(normalize(stream) in [normalize(expected.replace('IPV6', v)) for v in ('', 'listen [::]:443;')],
+        layouts = (('', ''), ('include '+SNI_INCLUDE+';', 'include '+UPSTREAM_INCLUDE+';'))
+        if (context['telemt'] or {}).get('layout') == 'include':
+            layouts = layouts[1:]  # Files alone never prove an active include route.
+        variants = [expected.replace('SNI_INCLUDE', sni).replace('UPSTREAM_INCLUDE', upstream).replace('IPV6', ipv6)
+                    for sni, upstream in layouts
+                    for ipv6 in ('', 'listen [::]:443;')]
+        require(normalize(stream) in list(map(normalize, variants)),
                 'Unknown nginx stream layout; Vision and other routes were preserved.')
         require(list(self.path('/etc/nginx/stream-enabled').iterdir()) == [self.path(STREAM)], 'Unknown additional nginx stream files.')
         shared = self.read('/etc/nginx/snippets/includes.conf')
@@ -419,6 +491,16 @@ class Operation:
                     block = single(re.findall(r'\blocation '+re.escape(path)+r'\s*\{([^{}]*)\}', text), 'Ambiguous managed Panel location.')
                     require('proxy_pass https://127.0.0.1:'+settings['webPort']+';' in block and 'proxy_set_header Host $host;' in block,
                             'Panel path/TLS backend does not match nginx.')
+            else:
+                xver = context['streams'][context['inbound_roles']['reality']]['realitySettings'].get('xver', 0)
+                require(type(xver) is int and xver in (0, 1), 'Unknown REALITY fallback PROXY contract.')
+                require(('proxy_protocol' in single(re.findall(r'^\s*listen 127\.0\.0\.1:9443 ([^;]+);', text, re.M),
+                                                    'Unknown REALITY fallback listener.')) == bool(xver),
+                        'REALITY inbound/fallback PROXY contracts disagree.')
+                if xver:
+                    require(re.findall(r'^\s*real_ip_header\s+([^;]+);', text, re.M) == ['proxy_protocol'] and
+                            re.findall(r'^\s*set_real_ip_from\s+([^;]+);', text, re.M) == ['127.0.0.1'],
+                            'Unknown REALITY fallback PROXY trust boundary.')
             self.check('lineage', name)
         for file in ('fullchain.pem', 'privkey.pem'):
             self.read('/root/cert/'+panel+'/'+file, '/etc/letsencrypt/live/'+panel+'/'+file)
@@ -664,6 +746,8 @@ class Operation:
         require(panel != reality and old['vision'] not in (panel, reality), 'New domains conflict with each other or Vision.')
         require(panel != old['reality'] and reality != old['panel'], 'Panel/REALITY role exchange is unsupported; choose distinct new domains.')
         require((panel, reality) != (old['panel'], old['reality']), 'Domains are unchanged; no operation is necessary.')
+        require(not context.get('telemt') or context['telemt']['domain'] not in (panel, reality),
+                'New domain conflicts with the Telemt SNI route; no data changed.')
         history = (context['manifest'] or {}).get('retained_domains', {})
         require(isinstance(history, dict), 'Invalid retained domain ownership metadata.')
         effective = self.run('nginx', '-T').decode()
@@ -864,7 +948,9 @@ class Operation:
 
     @staticmethod
     def summary(context):
-        return {key: copy.deepcopy(context[key]) for key in ('domains', 'inbound_roles', 'features')}
+        result = {key: copy.deepcopy(context[key]) for key in ('domains', 'inbound_roles', 'features')}
+        result['telemt'] = copy.deepcopy(context.get('telemt'))
+        return result
 
     @staticmethod
     def same_value(column, left, right):
@@ -924,6 +1010,7 @@ class Operation:
 
     def guards(self, context):
         paths = ['/etc/systemd/system/x-ui.service', '/etc/default/x-ui']
+        paths += list((context.get('telemt') or {}).get('files', {}))
         if context['features']['vision']:
             paths += ['/etc/nginx/sites-available/vision.conf', '/etc/nginx/sites-available/vision-acme.conf',
                       '/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision']
@@ -936,6 +1023,7 @@ class Operation:
     def check_guards(self, record):
         allowed = {'/etc/systemd/system/x-ui.service', '/etc/default/x-ui', '/etc/nginx/sites-available/vision.conf',
                    '/etc/nginx/sites-available/vision-acme.conf', '/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision'}
+        allowed.update(TELEMT_FILES)
         require(record['guards'].keys() <= allowed and all(self.guard_value(path) == expected for path, expected in record['guards'].items()),
                 'Service/Vision resources changed independently; operation refused to overwrite them.')
 

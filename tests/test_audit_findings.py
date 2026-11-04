@@ -379,6 +379,7 @@ if sys.argv[1]=='cert':
             settings['subJsonEnable'] = 'true'
             before = list(requests)
             result = subprocess.run(['curl','--noproxy','*','-sS','--max-time','5',
+                                     '--haproxy-protocol',
                                      '--cacert',str(root/'cert.pem'),'--resolve',f'cover.example:{reality_port}:127.0.0.1',
                                      '-H','Authorization: Bearer fixture-api-token',
                                      f'https://cover.example:{reality_port}/panel/panel/api/inbounds/list?node=Fixture'],

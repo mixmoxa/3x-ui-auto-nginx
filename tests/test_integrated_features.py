@@ -33,6 +33,7 @@ class IntegratedFeatures(unittest.TestCase):
         self.assertIs(row['enable'],False)
         self.assertEqual((row['remark'],row['protocol'],row['listen'],row['port']),('🇫🇮 xhttp CDN','vless','127.0.0.1',12345))
         self.assertEqual(row['settings'],dict(clients=[],decryption='none',encryption='none',fallbacks=[]))
+        self.assertEqual(row['sniffing'],dict(enabled=True,destOverride=['http','tls','quic','fakedns'],routeOnly=False))
         self.assertEqual(row['streamSettings']['network'],'xhttp');self.assertEqual(row['streamSettings']['security'],'none')
         settings=row['streamSettings']['xhttpSettings']
         expected=dict(mode='packet-up',xPaddingBytes='100-1000',xPaddingObfsMode=True,xPaddingKey='_dc',xPaddingHeader='X-Cache',
@@ -42,6 +43,7 @@ class IntegratedFeatures(unittest.TestCase):
         self.assertEqual({k:settings[k] for k in expected},expected)
         self.assertIsInstance(settings['scMaxEachPostBytes'],str)
         route=cdn.nginx(12345,settings['path'])
+        self.assertEqual(route.count('access_log off;'),2)
         self.assertIn('proxy_pass http://127.0.0.1:12345;',route)
         for directive in ('proxy_buffering off;','proxy_request_buffering off;','proxy_cache off;','proxy_http_version 1.1;'):
             self.assertIn(directive,route)

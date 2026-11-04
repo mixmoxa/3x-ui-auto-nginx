@@ -2,17 +2,21 @@
 import base64
 import copy
 import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
 import os
 from pathlib import Path
 import re
 import signal
+import socket
+import ssl
 import shutil
 import sqlite3
 import subprocess
 import tempfile
 import time
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -30,15 +34,17 @@ def rendered_hook(panel, reality, source=None):
 
 
 class DomainFixture:
-    def __init__(self, root, legacy=False, optional=False):
+    def __init__(self, root, legacy=False, optional=False, historical=False):
         self.root = Path(root); self.module = helper('domains')
         self.version='3.10.2' if legacy else '3.11.0'
-        self.source=subprocess.check_output(['git','-c','safe.directory='+str(ROOT),'show','v2.1.7:x-ui-latest.sh'],cwd=ROOT,text=True) if legacy else (ROOT/'x-ui-latest.sh').read_text()
+        ref = 'v2.1.7' if legacy else 'f7f5cbbb2d00c1c0cdb2749745e2b4ff2aaf00c1'
+        self.source=subprocess.check_output(['git','-c','safe.directory='+str(ROOT),'show',ref+':x-ui-latest.sh'],cwd=ROOT,text=True) if legacy or historical else (ROOT/'x-ui-latest.sh').read_text()
         self.calls = []; self.fault = None; self.fault_used = False
         self.services = {'x-ui': 'active', 'nginx': 'active', 'mtr-backend': 'active', 'certbot.timer': 'active'}
         self.panel = 'deploy.example'; self.reality = 'cover.example'
         for name in ('etc/x-ui', 'etc/nginx/sites-available', 'etc/nginx/sites-enabled', 'etc/nginx/snippets',
-                     'etc/nginx/stream-enabled', 'etc/letsencrypt/renewal-hooks/deploy', 'root/cert/deploy.example',
+                     'etc/nginx/stream-enabled', 'etc/nginx/stream-sni.d', 'etc/nginx/stream-upstreams.d',
+                     'etc/letsencrypt/renewal-hooks/deploy', 'root/cert/deploy.example',
                      'var/lib', 'var/backups/x-ui', 'var/www/acme', 'usr/local/x-ui/bin'):
             self.p('/'+name).mkdir(parents=True, exist_ok=True)
         self.write('/etc/os-release', 'ID=ubuntu\nVERSION_ID="24.04"\n')
@@ -106,23 +112,25 @@ class DomainFixture:
         context = self.operation.discover()
         if not legacy:
             marker = dict(format=1, layout='nginx-stream-v1', installed_by='source@'+SOURCE, source_ref=SOURCE,
-                          **self.module.Operation.summary(context))
+                          **{key:context[key] for key in ('domains','inbound_roles','features')})
             self.write(self.module.MANIFEST, json.dumps(marker), 0o600)
 
     def p(self, path):
         return self.root/path.lstrip('/')
 
-    def cdn(self):
+    def cdn(self, legacy=False):
         cdn=helper('xhttp-cdn'); path='/Independent12345/cookie'; port=12345
         with self.operation.connection(False) as db:
             row=dict(db.execute("SELECT * FROM inbounds WHERE id=?",(self.operation.discover()['inbound_roles']['xhttp'],)).fetchone())
             row.update(id=99,remark='user renamed this inbound',enable=0,listen='127.0.0.1',port=port,
                        tag='inbound-12345',stream_settings=json.dumps(cdn.inbound(port,path,'🇫🇮')['streamSettings']))
+            if legacy:row['sniffing']=json.dumps(dict(enabled=True,destOverride=['http','tls'],routeOnly=False))
             db.execute('INSERT INTO inbounds ('+','.join(row)+') VALUES ('+','.join('?' for _ in row)+')',tuple(row.values()))
             host=dict(db.execute("SELECT * FROM hosts WHERE remark='xhttp'").fetchone())
             host.update(id=99,inbound_id=99,group_id='cdnfixture123456',remark='xhttp CDN',sni=self.panel,alpn='[]')
             db.execute('INSERT INTO hosts ('+','.join(host)+') VALUES ('+','.join('?' for _ in host)+')',tuple(host.values()))
         snippet=cdn.nginx(port,path)
+        if legacy:snippet=snippet.replace('    access_log off;\n','')
         self.write('/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf',snippet,0o600)
         marker=json.loads(self.p(self.module.MANIFEST).read_text())
         marker['inbound_roles']['xhttp_cdn']=99;marker['features']['xhttp_cdn']=True
@@ -132,6 +140,47 @@ class DomainFixture:
     def write(self, name, content, mode=0o644):
         path = self.p(name); path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content); path.chmod(mode)
+
+    def telemt(self, includes=False):
+        from telemt_fixtures import VHOST, ACME, HOOK
+        domain = 'telegram.example'
+        self.cert(domain)
+        from configobj import ConfigObj
+        live=self.p('/etc/letsencrypt/live/'+domain);archive=self.p('/etc/letsencrypt/archive/'+domain)
+        for stem in ('cert','chain'):
+            (archive/(stem+'1.pem')).write_bytes((archive/'fullchain1.pem').read_bytes())
+            (live/(stem+'.pem')).symlink_to('../../archive/'+domain+'/'+stem+'1.pem')
+        renewal=ConfigObj(str(self.p('/etc/letsencrypt/renewal/'+domain+'.conf')))
+        for stem in ('cert','chain'):renewal[stem]='/etc/letsencrypt/live/'+domain+'/'+stem+'.pem'
+        renewal['archive_dir']='/etc/letsencrypt/archive/'+domain
+        renewal['renewalparams']['webroot_path']='/var/lib/telemt-web-manager-acme'
+        renewal['renewalparams']['webroot_map']={domain:'/var/lib/telemt-web-manager-acme'}
+        renewal.write()
+        self.write('/etc/nginx/conf.d/telemt-web-manager.conf',VHOST.replace('telegram.example.com',domain))
+        self.write('/etc/nginx/conf.d/telemt-web-manager-acme.conf',ACME.replace('telegram.example.com',domain))
+        self.write('/etc/letsencrypt/renewal-hooks/deploy/telemt-web-manager',HOOK,0o755)
+        self.write('/var/lib/telemt/state','private fixture DATA',0o600)
+        main = self.p('/etc/nginx/nginx.conf')
+        main.write_text(main.read_text().replace('http {','http { include /etc/nginx/conf.d/*.conf;'))
+        stream = self.p(self.module.STREAM).read_text()
+        row = f'    {domain} twm_frontend; # telemt-web-manager\n'
+        upstream = '\n# telemt-web-manager\nupstream twm_frontend { server 127.0.0.1:7444; }\n'
+        if includes:
+            if 'include /etc/nginx/stream-sni.d/*.conf;' not in stream:
+                stream = stream.replace('    default', '    include /etc/nginx/stream-sni.d/*.conf;\n    default')
+                stream = stream.replace('\nserver {','\ninclude /etc/nginx/stream-upstreams.d/*.conf;\n\nserver {')
+            self.write('/etc/nginx/stream-sni.d/telemt-web-manager.conf',f'    {domain} twm_frontend;\n')
+            self.write('/etc/nginx/stream-upstreams.d/telemt-web-manager.conf','upstream twm_frontend {\n    server 127.0.0.1:7444;\n}\n')
+        else:
+            close = stream.index('}')
+            stream = stream[:close]+row+stream[close:close+1]+upstream+stream[close+1:]
+        self.write(self.module.STREAM,stream)
+        paths = ['/etc/nginx/conf.d/telemt-web-manager.conf','/etc/nginx/conf.d/telemt-web-manager-acme.conf',
+                 '/etc/letsencrypt/renewal-hooks/deploy/telemt-web-manager','/var/lib/telemt/state',
+                 '/etc/letsencrypt/renewal/'+domain+'.conf',
+                 *('/etc/letsencrypt/archive/'+domain+'/'+stem+'1.pem' for stem in ('cert','chain','fullchain','privkey'))]
+        if includes: paths += ['/etc/nginx/stream-sni.d/telemt-web-manager.conf','/etc/nginx/stream-upstreams.d/telemt-web-manager.conf']
+        return {path:self.p(path).read_bytes() for path in paths}
 
     def cert(self, name):
         archive = self.p('/etc/letsencrypt/archive/'+name); archive.mkdir(parents=True, exist_ok=True)
@@ -237,6 +286,203 @@ class Domains(unittest.TestCase):
     def fixture(self, **kwargs):
         temporary = tempfile.TemporaryDirectory(prefix='domain-operation-'); self.addCleanup(temporary.cleanup)
         return DomainFixture(temporary.name, **kwargs)
+
+    def test_legacy_telemt_change_domains_preserves_its_integration(self):
+        f=self.fixture(historical=True); owned=f.telemt(); before=f.state()
+        f.change('second.example')
+        self.assertEqual(f.operation.discover()['domains']['panel'],'second.example')
+        self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Telemt files changed')
+        stream=f.p(f.module.STREAM).read_text()
+        self.assertIn('    telegram.example twm_frontend; # telemt-web-manager\n',stream)
+        self.assertIn('upstream twm_frontend { server 127.0.0.1:7444; }',stream)
+        for name in ('clients','client_inbounds','users','client_traffics'):
+            self.assertEqual(f.state()[name],before[name])
+
+    def test_telemt_inline_include_panel_reality_both_and_verified_rollback(self):
+        for includes,mode in ((kind,mode) for kind in (False,True) for mode in ('panel','reality','both')):
+            with self.subTest(includes=includes,mode=mode):
+                f=self.fixture(optional=not includes and mode=='both',historical=not includes)
+                if includes and mode=='both': f.cdn()
+                owned=f.telemt(includes); before=f.state(); stream=f.p(f.module.STREAM).read_text()
+                f.change('new-panel.example' if mode!='reality' else None,'new-cover.example' if mode!='panel' else None)
+                context=f.operation.discover()
+                self.assertEqual(context['telemt']['domain'],'telegram.example')
+                self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Telemt files changed')
+                self.assertEqual(f.p(f.module.STREAM).read_text().replace('new-panel.example',f.panel).replace('new-cover.example',f.reality),stream)
+                for table in ('clients','client_inbounds','users','client_traffics'): self.assertEqual(f.state()[table],before[table])
+                self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
+        for includes in (False,True):
+            with self.subTest(rollback=includes):
+                f=self.fixture();owned=f.telemt(includes);before=f.state();stream=f.p(f.module.STREAM).read_bytes()
+                f.fault='verifying new stack'
+                with self.assertRaises(subprocess.CalledProcessError): f.change('new-panel.example','new-cover.example')
+                self.assertEqual(f.state(),before)
+                self.assertEqual(f.p(f.module.STREAM).read_bytes(),stream)
+                self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Telemt files changed')
+                self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
+                self.assertTrue(all(value=='active' for value in f.services.values()))
+                self.assertFalse(any('restore' in args for _,args in f.calls))
+
+    def test_telemt_conflicts_and_unknown_routes_refuse_before_backup(self):
+        for includes in (False,True):
+            cases=('panel-conflict','reality-conflict','upstream','duplicate','vhost','domain','unknown','mixed','include-position')
+            for fault in cases+(('commented-includes',) if includes else ()):
+                with self.subTest(includes=includes,fault=fault):
+                    f=self.fixture();f.telemt(includes);before=f.state()
+                    stream=f.p(f.module.STREAM)
+                    sni=f.p('/etc/nginx/stream-sni.d/telemt-web-manager.conf') if includes else stream
+                    if fault=='upstream':
+                        if includes: f.p('/etc/nginx/stream-upstreams.d/telemt-web-manager.conf').unlink()
+                        else: stream.write_text(stream.read_text().replace('server 127.0.0.1:7444;','server 127.0.0.1:7445;'))
+                    elif fault=='duplicate':
+                        row='    telegram.example twm_frontend; # telemt-web-manager\n'
+                        sni.write_text(sni.read_text()*2 if includes else sni.read_text().replace(row,row+row))
+                    elif fault=='vhost':
+                        vhost=f.p('/etc/nginx/conf.d/telemt-web-manager.conf')
+                        vhost.write_text(vhost.read_text().replace('client_max_body_size 2m','client_max_body_size 3m'))
+                    elif fault=='domain': sni.write_text(sni.read_text().replace('telegram.example','different.example'))
+                    elif fault=='unknown': stream.write_text(stream.read_text()+'\nupstream unknown { server 127.0.0.1:7445; }\n')
+                    elif fault=='mixed':
+                        if includes: stream.write_text(stream.read_text().replace('    default','    duplicate.example twm_frontend; # telemt-web-manager\n    default'))
+                        else: f.write('/etc/nginx/stream-sni.d/telemt-web-manager.conf','telegram.example twm_frontend;\n')
+                    elif fault=='include-position':
+                        directive='    include /etc/nginx/stream-sni.d/*.conf;\n'
+                        stream.write_text(stream.read_text().replace(directive,'')+'\n'+directive)
+                    elif fault=='commented-includes':
+                        text=stream.read_text()
+                        for directory in ('stream-sni.d','stream-upstreams.d'):
+                            text=text.replace('include /etc/nginx/'+directory+'/*.conf;','# include /etc/nginx/'+directory+'/*.conf;')
+                        stream.write_text(text)
+                    with self.assertRaises(f.module.Refusal):
+                        f.change('telegram.example' if fault=='panel-conflict' else 'new.example',
+                                 'telegram.example' if fault=='reality-conflict' else None)
+                    self.assertEqual(f.state(),before)
+                    self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] or args[0]=='certbot' for _,args in f.calls))
+                    self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
+        f=self.fixture();owned=f.telemt(True)
+        f.change('nested.telegram.example')
+        self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Telemt files changed')
+
+    def test_old_and_new_empty_stream_contracts_keep_reality_xver(self):
+        for historical in (False,True):
+            with self.subTest(historical=historical):
+                f=self.fixture(historical=historical)
+                f.change('new-panel.example','new-cover.example')
+                context=f.operation.discover()
+                reality=context['streams'][context['inbound_roles']['reality']]['realitySettings']
+                self.assertEqual(reality['xver'],0 if historical else 1)
+                self.assertEqual('proxy_protocol;' in f.p('/etc/nginx/sites-available/new-cover.example').read_text(),not historical)
+                self.assertIsNone(context['telemt'])
+        f=self.fixture()
+        with f.operation.connection(False) as db:
+            iid=f.operation.discover()['inbound_roles']['reality']
+            db.execute("UPDATE inbounds SET stream_settings=json_set(stream_settings,'$.realitySettings.xver',0) WHERE id=?",(iid,))
+        with self.assertRaises(f.module.Refusal): f.change('new.example')
+        self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] for _,args in f.calls))
+
+    def test_native_telemt_https_sni_proxy_chain_survives_changes_and_rollback(self):
+        from test_real_integration import stop
+        nginx=os.environ['NGINX_BIN']; observed=[]
+        class Backend(BaseHTTPRequestHandler):
+            def do_GET(self):
+                observed.append((self.headers.get('Host'),self.headers.get('X-Forwarded-For')))
+                self.send_response(200);self.send_header('Content-Length','12');self.end_headers();self.wfile.write(b'telemt-route')
+            def log_message(self,*args): pass
+        backend=ThreadingHTTPServer(('127.0.0.1',18080),Backend)
+        self.addCleanup(backend.server_close);self.addCleanup(backend.shutdown)
+        threading.Thread(target=backend.serve_forever,daemon=True).start()
+        for includes in (False,True):
+            with self.subTest(includes=includes):
+                f=self.fixture(optional=not includes,historical=not includes)
+                if includes:f.cdn()
+                owned=f.telemt(includes);before=f.state()
+                with socket.socket() as sock, socket.socket() as http_sock:
+                    sock.bind(('127.0.0.1',0));public=sock.getsockname()[1]
+                    http_sock.bind(('127.0.0.1',0));http_port=http_sock.getsockname()[1]
+                runtime=f.root/'native-nginx';runtime.mkdir();(runtime/'logs').mkdir()
+                tree=runtime/'etc/nginx';pid=runtime/'nginx.pid'
+                def translate(tree):
+                    for path in list(tree.rglob('*')):
+                        if path.is_symlink():
+                            target=os.readlink(path)
+                            if target.startswith('/etc/nginx/'):
+                                path.unlink();path.symlink_to(tree/target.removeprefix('/etc/nginx/'))
+                    for path in tree.rglob('*'):
+                        if path.is_file() and not path.is_symlink():
+                            text=path.read_text().replace('/etc/nginx/',str(tree)+'/')
+                            text=text.replace('/etc/letsencrypt/',str(f.p('/etc/letsencrypt'))+'/')
+                            text=text.replace('listen     443;',f'listen 127.0.0.1:{public};').replace('listen     [::]:443;',f'listen [::1]:{public};')
+                            text=text.replace('listen 80;',f'listen 127.0.0.1:{http_port};').replace('listen [::]:80;',f'listen [::1]:{http_port};')
+                            text=text.replace('pid /run/nginx.pid;',f'worker_processes 1; daemon off; pid {pid};')
+                            text=text.replace('error_log stderr;','error_log stderr notice;')
+                            path.write_text(text)
+                def render_runtime():
+                    if tree.exists():shutil.rmtree(tree)
+                    shutil.copytree(f.p('/etc/nginx'),tree,symlinks=True)
+                    translate(tree)
+                render_runtime()
+                config=tree/'nginx.conf'
+                log=open(runtime/'process.log','wb');self.addCleanup(log.close)
+                process=subprocess.Popen([nginx,'-p',str(runtime)+'/', '-c',str(config)],stdout=log,stderr=log,start_new_session=True)
+                self.addCleanup(stop,process)
+                deadline=time.monotonic()+5
+                while not pid.exists() and process.poll() is None and time.monotonic()<deadline:time.sleep(.02)
+                self.assertIsNone(process.poll(),'Private native nginx failed to start')
+                original=f.operation.run
+                def run(*args,**kwargs):
+                    if args[0]=='nginx':
+                        if len(args)>2:
+                            candidate=Path(args[-1]).parent
+                            # Existing candidate_nginx already rewrites its
+                            # include tree; only test TLS paths are relocated.
+                            for path in candidate.rglob('*'):
+                                if path.is_file() and not path.is_symlink():
+                                    path.write_text(path.read_text().replace('/etc/letsencrypt/',str(f.p('/etc/letsencrypt'))+'/'))
+                            return subprocess.check_output([nginx,*map(str,args[1:])],stderr=subprocess.STDOUT,timeout=15)
+                        render_runtime()
+                        validation=runtime/'validation.conf'
+                        validation.write_text(config.read_text().replace(str(pid),str(runtime/'validation.pid')))
+                        result=subprocess.check_output([nginx,args[1],'-p',str(runtime)+'/', '-c',str(validation)],stderr=subprocess.STDOUT,timeout=15)
+                        return result.replace(str(tree).encode(),b'/etc/nginx')
+                    result=original(*args,**kwargs)
+                    if list(args)==['systemctl','reload','nginx']:
+                        render_runtime()
+                        previous=re.findall(r'start worker process ([0-9]+)',(runtime/'process.log').read_text())[-1]
+                        subprocess.run([nginx,'-s','reload','-p',str(runtime)+'/', '-c',str(config)],check=True,capture_output=True,timeout=15)
+                        deadline=time.monotonic()+5
+                        while time.monotonic()<deadline:
+                            current=(runtime/'process.log').read_text()
+                            if 'worker process '+previous+' exited with code 0' in current:break
+                            time.sleep(.02)
+                        else:self.fail('Native nginx worker reload did not complete')
+                    return result
+                f.operation.run=run
+                def probe(ipv6=False):
+                    ctx=ssl.create_default_context(cafile=str(f.p('/etc/letsencrypt/live/telegram.example/fullchain.pem')))
+                    ctx.set_alpn_protocols(['http/1.1'])
+                    raw=socket.create_connection(('::1' if ipv6 else '127.0.0.1',public),timeout=5,
+                                                 source_address=None if ipv6 else ('127.0.0.2',0))
+                    with ctx.wrap_socket(raw,server_hostname='telegram.example') as tls:
+                        tls.sendall(b'GET / HTTP/1.1\r\nHost: telegram.example\r\nX-Forwarded-For: 203.0.113.90\r\nConnection: close\r\n\r\n')
+                        response=b''
+                        while chunk:=tls.recv(4096):response+=chunk
+                    self.assertIn(b'200 OK',response);self.assertTrue(response.endswith(b'telemt-route'))
+                    self.assertEqual(observed[-1],('telegram.example','::1' if ipv6 else '127.0.0.2'))
+                try:
+                    probe();probe(True)
+                    for panel,reality in (('second.example',None),(None,'second-cover.example'),('third.example','third-cover.example')):
+                        f.change(panel,reality);probe();probe(True)
+                        self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Telemt files changed')
+                        current=f.operation.discover()['domains']['panel']
+                        ctx=ssl.create_default_context(cafile=str(f.p('/etc/letsencrypt/live/'+current+'/fullchain.pem')))
+                        with ctx.wrap_socket(socket.create_connection(('127.0.0.1',public),timeout=5),server_hostname=current):pass
+                    prior=f.state();stream=f.p(f.module.STREAM).read_bytes();f.fault='verifying new stack'
+                    with self.assertRaises(subprocess.CalledProcessError):f.change('failed.example','failed-cover.example')
+                    self.assertEqual(f.state(),prior);self.assertEqual(f.p(f.module.STREAM).read_bytes(),stream)
+                    probe();probe(True)
+                    self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Telemt files changed')
+                    for table in ('clients','users','client_inbounds','client_traffics'):self.assertEqual(f.state()[table],before[table])
+                finally:stop(process)
 
     def test_cdn_initial_host_updates_but_custom_and_additional_hosts_are_preserved(self):
         for custom in (False, True):
@@ -555,10 +801,42 @@ class Domains(unittest.TestCase):
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         self.assertTrue(state()==before,'Backup v3 did not preserve the post-switch SQLite state')
 
+    def test_change_with_telemt_creates_real_independent_backup_v3(self):
+        import tarfile
+        f=self.fixture();owned=f.telemt(True)
+        backup,sync,_=self.backup_fixture(f)
+        original=f.operation.run;archives=[]
+        def run(*args,**kwargs):
+            if args[:2]==('bash','fixture-backup'):
+                if args[2]=='backup':
+                    sync();result=backup.run_tool('backup','--json')
+                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                    path=Path(json.loads(result.stdout)['archive'])
+                    saved=f.p('/var/backups/x-ui')/path.name
+                    shutil.copyfile(path,saved);saved.chmod(0o600);archives.append(saved)
+                    return json.dumps(dict(status='success',archive=str(saved))).encode()
+                self.assertEqual(args[2],'inspect')
+                result=backup.run_tool('inspect',args[3])
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                return result.stdout.encode()
+            return original(*args,**kwargs)
+        f.operation.run=run
+        f.change('new-panel.example','new-cover.example')
+        self.assertEqual(len(archives),1)
+        self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Live Telemt files changed')
+        archive=archives[0];original_archive=archive.read_bytes()
+        with tarfile.open(archive) as bundle:
+            self.assertFalse(any('telemt-web-manager' in p or 'telegram.example' in p for p in bundle.getnames()))
+        backup.clear_telemt_restore_target()
+        result=backup.run_tool('restore',archive)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertTrue(archive.read_bytes()==original_archive,'Source archive changed')
+        self.assertNotIn('twm_frontend',backup.path('/etc/nginx/stream-enabled/stream.conf').read_text())
+
     def test_cdn_backup_restore_preserves_disabled_and_user_enabled_custom_state(self):
         for enabled in (0,1):
             with self.subTest(enabled=enabled):
-                f=self.fixture();f.cdn()
+                f=self.fixture();f.cdn(legacy=not enabled)
                 with f.operation.connection(False) as db:
                     db.execute('UPDATE inbounds SET enable=? WHERE id=99',(enabled,))
                     if enabled:db.execute("UPDATE hosts SET address='edge.example',sni='cdn.example' WHERE id=99")
