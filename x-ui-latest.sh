@@ -3692,6 +3692,48 @@ ui_domain_changes() {
     if [[ $3 != "$4" ]]; then printf '  REALITY:\n'; msg_inf "    $3"; msg_inf "       -> $4"; fi
 }
 
+telegram_manager_action() (
+    # Independent companion: no stack lock, version check or service repair.
+    (( EUID == 0 )) || { msg_err "$(ui_text 'Run as root.' 'Запустите от root.')"; exit 1; }
+    local launcher=/usr/local/bin/telegram-web-proxy-manager
+    if [[ -e $launcher || -L $launcher ]]; then
+        [[ -f $launcher && ! -L $launcher && $(stat -c '%u:%g:%a' -- "$launcher") == 0:0:755 ]] || {
+            msg_err "$(ui_text 'Unsafe Telegram Manager launcher; refusing to execute.' 'Небезопасный launcher Telegram Manager; запуск отклонён.')"; exit 1;
+        }
+        "$launcher"
+        exit $?
+    fi
+    local ID='' VERSION_ID='' answer stage='' status
+    . /etc/os-release
+    if [[ $ID != ubuntu || ( $VERSION_ID != 24.04 && $VERSION_ID != 26.04 ) ]]; then
+        msg_err "$(ui_text 'Telegram Manager requires Ubuntu 24.04/26.04; Debian 13 is not supported by this companion.' 'Telegram Manager требует Ubuntu 24.04/26.04; Debian 13 пока не поддерживается этим companion-проектом.')"
+        exit 1
+    fi
+    if [[ ! -f /etc/x-ui/x-ui.db || ! -f /etc/nginx/nginx.conf || ! -f /etc/nginx/stream-enabled/stream.conf ]] ||
+       ! systemctl is-active --quiet x-ui || ! systemctl is-active --quiet nginx || ! nginx -t; then
+        msg_err "$(ui_text 'First run option 1 - Installation of 3X-UI AUTO NGINX; a working stack is required.' 'Сначала выполните пункт 1 — Установка 3X-UI AUTO NGINX; нужен работающий стек.')"
+        exit 1
+    fi
+    ui_text 'Install and open the independent Telegram Web Proxy Manager? [y/N]: ' 'Установить и открыть самостоятельный Telegram Web Proxy Manager? [y/N]: '
+    IFS= read -r answer || exit 0
+    [[ $answer == y || $answer == Y ]] || exit 0
+    umask 077
+    stage=$(mktemp -d) || exit $?
+    trap 'rm -rf -- "$stage"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM HUP
+    # Pin only the official bootstrap; it resolves current manager main itself.
+    curl --proto '=https' --tlsv1.2 -fsS --connect-timeout 10 --max-time 60 \
+        https://raw.githubusercontent.com/xPROMSx/telegram-web-proxy-manager/3e73ceac75f1b7a7008446fa14c5811a76418c42/install.sh \
+        -o "$stage/install.sh" || exit $?
+    printf '%s  %s\n' e029ea7ef3ec494752ad0cebdc257e106c2a1883be830c6ba82596ef0c8222b6 "$stage/install.sh" | sha256sum -c --status || {
+        msg_err "$(ui_text 'Telegram Manager bootstrap integrity check failed.' 'Проверка целостности bootstrap Telegram Manager не пройдена.')"; exit 1;
+    }
+    bash "$stage/install.sh"
+    status=$?
+    exit "$status"
+)
+
 manager_menu() {
     local choice status=0 reported=0 completion
     UI_INTERACTIVE=1
@@ -3699,7 +3741,7 @@ manager_menu() {
     while true; do
         reported=0
         ui_header "$(ui_text 'MAIN MENU' 'ГЛАВНОЕ МЕНЮ')"
-        ui_text '\n  1. Installation\n  2. Change Domains\n  3. Backups\n\n' '\n  1. Установка\n  2. Смена доменов\n  3. Резервные копии\n\n'
+        ui_text '\n  1. Installation\n  2. Change Domains\n  3. Backups\n  4. Telegram Web Proxy Manager\n\n' '\n  1. Установка\n  2. Смена доменов\n  3. Резервные копии\n  4. Telegram Web Proxy Manager\n\n'
         ui_back "$(ui_text '  0. Exit' '  0. Выход')"
         printf '\n'; ui_prompt
         IFS= read -r choice || return "$status"
@@ -3737,6 +3779,7 @@ manager_menu() {
                     esac
                     (( status == 0 )) || break
                 done ;;
+            4) telegram_manager_action; status=$? ;;
             *) ui_text 'Invalid selection.\n' 'Неверный выбор.\n'; continue ;;
         esac
         if (( status )); then

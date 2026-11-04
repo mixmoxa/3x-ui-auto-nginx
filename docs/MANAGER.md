@@ -15,7 +15,7 @@ and 60-column ASCII separators. Color is optional: `NO_COLOR`, `TERM=dumb` and
 redirected output remain readable without ANSI escapes. System logs stay visible.
 
 The main menu is **1 Installation / Установка**, **2 Change Domains / Смена
-доменов**, **3 Backups / Резервные копии**, **0 Exit / Выход**. With no
+доменов**, **3 Backups / Резервные копии**, **4 Telegram Web Proxy Manager**, **0 Exit / Выход**. With no
 unfinished domain operation, opening it, Back and Exit need no root access and
 perform no downloads, IP lookups or system preparation. An unfinished domain
 journal instead requires root and verified recovery before another menu action.
@@ -239,3 +239,25 @@ Marker failure makes installation nonzero while retaining installed core data.
 This description is included in Backup v3 under `/etc/x-ui`; older v3 archives
 without it remain valid. It is descriptive metadata, not proof of ownership and
 not permission to modify a restored installation without checking actual state.
+
+## Telegram Web Proxy Manager
+
+Option 4 opens the independent companion through the fixed root-owned regular
+0755 launcher `/usr/local/bin/telegram-web-proxy-manager`. Existing installations
+open without downloads, updates or active-stack requirements. Normal exit returns
+to the main menu; failures retain the external exit status.
+
+If absent, the entry point requires root, Ubuntu 24.04/26.04, the local 3X-UI
+database and Nginx configuration, active x-ui/nginx and successful `nginx -t`.
+Debian 13 remains supported for ordinary 3X-UI operations, but this companion
+cannot be bootstrapped there. A missing working stack requires option 1 first.
+Consent defaults to No; cancellation/EOF downloads nothing.
+
+Only the official bootstrap at commit
+`3e73ceac75f1b7a7008446fa14c5811a76418c42` is checksum-pinned and executed
+from a private temporary directory. It resolves current manager main itself;
+no `--version` is passed and no manager release is pinned by 3X-UI. Ordinary
+Telegram Manager updates need no 3X-UI PR while public interfaces stay compatible.
+The companion owns its installation, updates, checks, repair, uninstall, Telemt,
+TLS and recovery. No 3X-UI lock is held across this handoff; existing pending
+Change Domains recovery still runs before menu actions.

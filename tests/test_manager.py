@@ -55,6 +55,7 @@ class Manager(unittest.TestCase):
             self.assertEqual(code,0,text)
             self.assertIn('1. Installation',text)
             self.assertIn('3. Backups',text)
+            self.assertIn('4. Telegram Web Proxy Manager',text)
             self.assertNotIn('\x1b',text)
             self.assertIn('2. Change Domains',text)
         result=subprocess.run(['bash',str(ROOT/'x-ui-latest.sh')],input='1\n',text=True,capture_output=True)
@@ -381,10 +382,82 @@ entrypoint
                 else:self.assertNotIn('SWITCH|',text);self.assertIn('Cancelled.' if language=='en' else 'Отменено.',text)
 
 
+    def test_telegram_companion_menu_return_failure_and_languages(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            script=Path(temporary)/'entry.sh'
+            script.write_text('source "'+str(ROOT/'x-ui-latest.sh')+'"\n'+'''
+recover_domain_operation() { :; }
+telegram_manager_action() { [[ -t 0 && -t 1 ]] || return 90; echo COMPANION; return "${COMPANION_EXIT:-0}"; }
+entrypoint
+''')
+            for language in ('1','2'):
+                code,text=tty_run(script,(language+'\n4\n0\n').encode())
+                self.assertEqual(code,0,text);self.assertIn('4. Telegram Web Proxy Manager',text)
+                self.assertEqual(text.count('COMPANION'),1)
+                self.assertEqual(text.count('1. Installation' if language=='1' else '1. Установка'),2)
+            code,text=tty_run(script,b'1\n4\n',env={'COMPANION_EXIT':'42'})
+            self.assertEqual(code,42,text)
+
+
 class ManagerBackup(unittest.TestCase):
     def setUp(self):
         from test_personal_backup import PersonalBackup
         self.f=PersonalBackup('runTest');self.f.setUp();self.addCleanup(self.f.doCleanups)
+
+    def test_telegram_companion_safe_handoff_and_bootstrap(self):
+        root=self.f.root
+        launcher=root/'launcher'
+        osfile=root/'os-release';osfile.write_text('ID=ubuntu\nVERSION_ID=24.04\n')
+        db=root/'db';db.touch();nginx=root/'nginx.conf';nginx.touch();stream=root/'stream.conf';stream.touch()
+        marker=root/'external';network=root/'network'
+        source=(ROOT/'x-ui-latest.sh').read_text()
+        for old,new in (('/usr/local/bin/telegram-web-proxy-manager',str(launcher)),('/etc/os-release',str(osfile)),
+                        ('/etc/x-ui/x-ui.db',str(db)),('/etc/nginx/nginx.conf',str(nginx)),
+                        ('/etc/nginx/stream-enabled/stream.conf',str(stream))):
+            source=source.replace(old,new)
+        library=root/'library';library.write_text(source)
+        # Download only fixture bytes; bash handoff is intercepted, never installs.
+        setup='source "'+str(library)+'"\n'+'''
+acquire_stack_lock() { return 99; }
+systemctl() { return "${ACTIVE_EXIT:-0}"; }
+nginx() { return "${NGINX_EXIT:-0}"; }
+curl() { printf '%s\n' "$*" > "$NETWORK"; [[ ${DOWNLOAD_EXIT:-0} == 0 ]] || return "$DOWNLOAD_EXIT"; printf fixture > "${@: -1}"; }
+bash() { [[ $# == 1 && -f $1 ]] || return 91; printf bootstrap > "$MARKER"; return "${EXTERNAL_EXIT:-0}"; }
+telegram_manager_action
+'''
+        # Pin is tested separately below; a deterministic fake download exercises
+        # checksum verification and handoff without executing the official installer.
+        import hashlib
+        pin='e029ea7ef3ec494752ad0cebdc257e106c2a1883be830c6ba82596ef0c8222b6'
+        self.assertIn(pin,source)
+        self.assertIn('3e73ceac75f1b7a7008446fa14c5811a76418c42/install.sh',source)
+        source=source.replace(pin,hashlib.sha256(b'fixture').hexdigest());library.write_text(source)
+        def run(answer='y\n',**env):
+            marker.unlink(missing_ok=True);network.unlink(missing_ok=True)
+            return subprocess.run(['bash','-c',setup],input=answer,text=True,capture_output=True,
+                                  env={**os.environ,'MARKER':str(marker),'NETWORK':str(network),**env})
+        for answer in ('','\n','n\n'):
+            self.assertEqual(run(answer).returncode,0);self.assertFalse(network.exists());self.assertFalse(marker.exists())
+        self.assertEqual(run().returncode,0);self.assertEqual(marker.read_text(),'bootstrap')
+        self.assertNotIn('--version',network.read_text())
+        for env,code in (({'DOWNLOAD_EXIT':'23'},23),({'EXTERNAL_EXIT':'42'},42),({'ACTIVE_EXIT':'1'},1),({'NGINX_EXIT':'1'},1)):
+            self.assertEqual(run(**env).returncode,code)
+        library.write_text(source.replace(hashlib.sha256(b'fixture').hexdigest(),pin))
+        self.assertNotEqual(run().returncode,0);self.assertFalse(marker.exists())
+        library.write_text(source)
+        for osdata in ('ID=debian\nVERSION_ID=13\n','ID=ubuntu\nVERSION_ID=22.04\n'):
+            osfile.write_text(osdata);self.assertNotEqual(run().returncode,0);self.assertFalse(network.exists())
+        osfile.write_text('ID=ubuntu\nVERSION_ID=26.04\n')
+        db.unlink();self.assertNotEqual(run().returncode,0);self.assertFalse(network.exists())
+        launcher.write_text('#!/bin/bash\nprintf launcher > "$MARKER"\nexit "${EXTERNAL_EXIT:-0}"\n');launcher.chmod(0o755)
+        self.assertEqual(run(ACTIVE_EXIT='1').returncode,0);self.assertEqual(marker.read_text(),'launcher');self.assertFalse(network.exists())
+        self.assertEqual(run(EXTERNAL_EXIT='43').returncode,43)
+        for mode in (0o777,0o775,0o644):
+            launcher.chmod(mode);self.assertNotEqual(run().returncode,0);self.assertFalse(marker.exists())
+        launcher.chmod(0o755);os.chown(launcher,1000,1000)
+        self.assertNotEqual(run().returncode,0);self.assertFalse(marker.exists())
+        launcher.unlink();launcher.symlink_to('/bin/true')
+        self.assertNotEqual(run().returncode,0);self.assertFalse(network.exists())
 
     def test_russian_backup_restore_confirmation_status_and_partial_messages(self):
         from test_personal_backup import relocated
