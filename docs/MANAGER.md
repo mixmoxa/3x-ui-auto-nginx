@@ -242,23 +242,34 @@ not permission to modify a restored installation without checking actual state.
 
 ## Telegram Web Proxy Manager
 
-Option 4 opens the independent companion through the fixed root-owned regular
-0755 launcher `/usr/local/bin/telegram-web-proxy-manager`. Existing installations
-open without downloads, updates or active-stack requirements. Successful completion ends the 3X-UI menu session with status 0; failures retain
-the external exit status. Cancelling installation or EOF before confirmation
-returns to the main menu.
+Option 4 contacts GitHub on every launch, including when Telegram Web Proxy
+Manager is already installed. An existing launcher at the fixed path
+`/usr/local/bin/telegram-web-proxy-manager` must still be a root-owned regular
+0755 file, not a symlink. It is not executed directly by option 4.
 
-If absent, the entry point requires root, Ubuntu 24.04/26.04, the local 3X-UI
-database and Nginx configuration, active x-ui/nginx and successful `nginx -t -q` (quiet on success; errors remain visible).
-Debian 13 remains supported for ordinary 3X-UI operations, but this companion
-cannot be bootstrapped there. A missing working stack requires option 1 first.
-Consent defaults to No; cancellation/EOF downloads nothing.
+On first installation only, the entry point requires root, Ubuntu 24.04/26.04,
+the local 3X-UI database and Nginx configuration, active x-ui/nginx and successful
+`nginx -t -q`. Consent defaults to No; cancellation/EOF downloads nothing and
+returns to the main menu. Existing installations require root and launcher
+safety checks, without an additional confirmation or active-stack requirement.
 
-Only the official bootstrap at commit
-`3e73ceac75f1b7a7008446fa14c5811a76418c42` is checksum-pinned and executed
-from a private temporary directory. It resolves current manager main itself;
-no `--version` is passed and no manager release is pinned by 3X-UI. Ordinary
-Telegram Manager updates need no 3X-UI PR while public interfaces stay compatible.
-The companion owns its installation, updates, checks, repair, uninstall, Telemt,
-TLS and recovery. No 3X-UI lock is held across this handoff; existing pending
-Change Domains recovery still runs before menu actions.
+The current official bootstrap is downloaded over verified HTTPS from
+`https://raw.githubusercontent.com/xPROMSx/telegram-web-proxy-manager/main/install.sh`
+into a private temporary directory. Download must complete successfully and the
+file must be nonempty before a separate Bash process executes it with default
+arguments. This deliberately trusts the official current GitHub main branch
+instead of the previous immutable bootstrap commit and SHA-256 pin. The official
+bootstrap owns selection of a current main SHA, provenance and compatibility
+checks, pair installation, locks, recovery barriers, rollback and menu launch.
+No `--version` is passed; there is no local cache or fallback to the old launcher.
+
+If GitHub is unavailable or the bootstrap refuses/fails, option 4 reports the
+error and returns a nonzero status. Direct local use remains available through
+`telegram-web-proxy-manager`. Successful completion ends the 3X-UI menu session
+with status 0, as before. Refreshing the manager program does not automatically
+update the Telemt engine or initiate Universal Update.
+
+Ordinary Telegram Manager updates need no 3X-UI PR while public interfaces stay
+compatible. The companion owns Telemt, TLS and its data/recovery lifecycle.
+No 3X-UI lock is held across this handoff; existing pending Change Domains
+recovery still runs before menu actions.

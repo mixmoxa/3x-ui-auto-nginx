@@ -3693,47 +3693,50 @@ ui_domain_changes() {
 }
 
 telegram_manager_action() (
-    # Independent companion: no stack lock, version check or service repair.
+    # Independent companion: no stack lock or automatic stack repair.
     (( EUID == 0 )) || { msg_err "$(ui_text 'Run as root.' 'Запустите от root.')"; exit 1; }
-    local status launcher=/usr/local/bin/telegram-web-proxy-manager
+    local status stage='' launcher=/usr/local/bin/telegram-web-proxy-manager
     if [[ -e $launcher || -L $launcher ]]; then
         [[ -f $launcher && ! -L $launcher && $(stat -c '%u:%g:%a' -- "$launcher") == 0:0:755 ]] || {
             msg_err "$(ui_text 'Unsafe Telegram Manager launcher; refusing to execute.' 'Небезопасный launcher Telegram Manager; запуск отклонён.')"; exit 1;
         }
-        "$launcher"
-        status=$?
-        (( status == 0 )) && ui_complete
-        exit "$status"
+    else
+        local ID='' VERSION_ID='' answer
+        . /etc/os-release
+        if [[ $ID != ubuntu || ( $VERSION_ID != 24.04 && $VERSION_ID != 26.04 ) ]]; then
+            msg_err "$(ui_text 'Telegram Manager requires Ubuntu 24.04/26.04; Debian 13 is not supported by this companion.' 'Telegram Manager требует Ubuntu 24.04/26.04; Debian 13 пока не поддерживается этим companion-проектом.')"
+            exit 1
+        fi
+        if [[ ! -f /etc/x-ui/x-ui.db || ! -f /etc/nginx/nginx.conf || ! -f /etc/nginx/stream-enabled/stream.conf ]] ||
+           ! systemctl is-active --quiet x-ui || ! systemctl is-active --quiet nginx || ! nginx -t -q; then
+            msg_err "$(ui_text 'First run option 1 - Installation of 3X-UI AUTO NGINX; a working stack is required.' 'Сначала выполните пункт 1 — Установка 3X-UI AUTO NGINX; нужен работающий стек.')"
+            exit 1
+        fi
+        ui_text 'Would you like to proceed with installing Telegram Web Proxy Manager? [y/N]: ' 'Хотите перейти к установке Telegram Web Proxy Manager? [y/N]: '
+        IFS= read -r answer || exit 0
+        [[ $answer == y || $answer == Y ]] || exit 0
     fi
-    local ID='' VERSION_ID='' answer stage=''
-    . /etc/os-release
-    if [[ $ID != ubuntu || ( $VERSION_ID != 24.04 && $VERSION_ID != 26.04 ) ]]; then
-        msg_err "$(ui_text 'Telegram Manager requires Ubuntu 24.04/26.04; Debian 13 is not supported by this companion.' 'Telegram Manager требует Ubuntu 24.04/26.04; Debian 13 пока не поддерживается этим companion-проектом.')"
-        exit 1
-    fi
-    if [[ ! -f /etc/x-ui/x-ui.db || ! -f /etc/nginx/nginx.conf || ! -f /etc/nginx/stream-enabled/stream.conf ]] ||
-       ! systemctl is-active --quiet x-ui || ! systemctl is-active --quiet nginx || ! nginx -t -q; then
-        msg_err "$(ui_text 'First run option 1 - Installation of 3X-UI AUTO NGINX; a working stack is required.' 'Сначала выполните пункт 1 — Установка 3X-UI AUTO NGINX; нужен работающий стек.')"
-        exit 1
-    fi
-    ui_text 'Would you like to proceed with installing Telegram Web Proxy Manager? [y/N]: ' 'Хотите перейти к установке Telegram Web Proxy Manager? [y/N]: '
-    IFS= read -r answer || exit 0
-    [[ $answer == y || $answer == Y ]] || exit 0
     umask 077
     stage=$(mktemp -d) || exit $?
     trap 'rm -rf -- "$stage"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM HUP
-    # Pin only the official bootstrap; it resolves current manager main itself.
+    # Trust the official current main bootstrap; it owns pair/update validation.
+    status=0
     curl --proto '=https' --tlsv1.2 -fsS --connect-timeout 10 --max-time 60 \
-        https://raw.githubusercontent.com/xPROMSx/telegram-web-proxy-manager/3e73ceac75f1b7a7008446fa14c5811a76418c42/install.sh \
-        -o "$stage/install.sh" || exit $?
-    printf '%s  %s\n' e029ea7ef3ec494752ad0cebdc257e106c2a1883be830c6ba82596ef0c8222b6 "$stage/install.sh" | sha256sum -c --status || {
-        msg_err "$(ui_text 'Telegram Manager bootstrap integrity check failed.' 'Проверка целостности bootstrap Telegram Manager не пройдена.')"; exit 1;
+        https://raw.githubusercontent.com/xPROMSx/telegram-web-proxy-manager/main/install.sh \
+        -o "$stage/install.sh" || status=$?
+    if (( status )); then
+        msg_err "$(ui_text 'Cannot download Telegram Manager bootstrap from GitHub.' 'Не удалось загрузить bootstrap Telegram Manager с GitHub.')" >&2
+        exit "$status"
+    fi
+    [[ -s $stage/install.sh ]] || {
+        msg_err "$(ui_text 'Telegram Manager bootstrap download is empty.' 'Загружен пустой bootstrap Telegram Manager.')" >&2; exit 1;
     }
     bash "$stage/install.sh"
     status=$?
-    (( status == 0 )) && ui_complete
+    if (( status == 0 )); then ui_complete
+    else msg_err "$(ui_text 'Telegram Manager bootstrap failed (exit %d).' 'Bootstrap Telegram Manager завершился с ошибкой (код %d).' "$status")" >&2; fi
     exit "$status"
 )
 

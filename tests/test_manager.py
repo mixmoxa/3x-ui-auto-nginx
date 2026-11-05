@@ -404,6 +404,39 @@ class ManagerBackup(unittest.TestCase):
         from test_personal_backup import PersonalBackup
         self.f=PersonalBackup('runTest');self.f.setUp();self.addCleanup(self.f.doCleanups)
 
+    def test_telegram_installed_always_refreshes_bootstrap(self):
+        root=self.f.root;launcher=root/'launcher';marker=root/'handoff';network=root/'downloads'
+        launcher.write_text('#!/bin/bash\nprintf stale > "$MARKER"\n');launcher.chmod(0o755)
+        original=launcher.read_bytes()
+        library=root/'library'
+        library.write_text((ROOT/'x-ui-latest.sh').read_text().replace('/usr/local/bin/telegram-web-proxy-manager',str(launcher)))
+        script='source "'+str(library)+'"\n'+'''
+acquire_stack_lock() { return 99; }
+curl() {
+    printf '%s\n' "$*" >> "$NETWORK"
+    printf '%s' "${BODY-fixture}" > "${@: -1}"
+    return "${DOWNLOAD_EXIT:-0}"
+}
+bash() { [[ $# == 1 ]] || return 91; cat "$1" > "$MARKER"; return "${BOOTSTRAP_EXIT:-0}"; }
+telegram_manager_action
+'''
+        for body in ('current-main-1','current-main-2'):
+            result=subprocess.run(['bash','-c',script],input='',text=True,capture_output=True,
+                env={**os.environ,'MARKER':str(marker),'NETWORK':str(network),'BODY':body})
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(marker.read_text(),body)
+            self.assertEqual(launcher.read_bytes(),original)
+        self.assertEqual(len(network.read_text().splitlines()),2)
+        self.assertIn('/telegram-web-proxy-manager/main/install.sh',network.read_text())
+        for env,code in (({'DOWNLOAD_EXIT':'23'},23),({'BODY':''},1),({'BOOTSTRAP_EXIT':'42'},42)):
+            marker.unlink(missing_ok=True)
+            result=subprocess.run(['bash','-c',script],text=True,capture_output=True,
+                env={**os.environ,'MARKER':str(marker),'NETWORK':str(network),**env})
+            self.assertEqual(result.returncode,code)
+            self.assertTrue(result.stderr.strip())
+            if 'BOOTSTRAP_EXIT' not in env:self.assertFalse(marker.exists())
+            self.assertEqual(launcher.read_bytes(),original)
+
     def test_telegram_companion_safe_handoff_and_bootstrap(self):
         root=self.f.root
         launcher=root/'launcher'
@@ -428,13 +461,7 @@ curl() { printf '%s\n' "$*" > "$NETWORK"; [[ ${DOWNLOAD_EXIT:-0} == 0 ]] || retu
 bash() { [[ $# == 1 && -f $1 ]] || return 91; printf bootstrap > "$MARKER"; return "${EXTERNAL_EXIT:-0}"; }
 telegram_manager_action
 '''
-        # Pin is tested separately below; a deterministic fake download exercises
-        # checksum verification and handoff without executing the official installer.
-        import hashlib
-        pin='e029ea7ef3ec494752ad0cebdc257e106c2a1883be830c6ba82596ef0c8222b6'
-        self.assertIn(pin,source)
-        self.assertIn('3e73ceac75f1b7a7008446fa14c5811a76418c42/install.sh',source)
-        source=source.replace(pin,hashlib.sha256(b'fixture').hexdigest());library.write_text(source)
+        self.assertIn('/telegram-web-proxy-manager/main/install.sh',source)
         def run(answer='y\n',**env):
             marker.unlink(missing_ok=True);network.unlink(missing_ok=True)
             return subprocess.run(['bash','-c',setup],input=answer,text=True,capture_output=True,
@@ -463,15 +490,12 @@ telegram_manager_action
 
         for env,code in (({'DOWNLOAD_EXIT':'23'},23),({'EXTERNAL_EXIT':'42'},42),({'ACTIVE_EXIT':'1'},1),({'NGINX_EXIT':'1'},1)):
             self.assertEqual(run(**env).returncode,code)
-        library.write_text(source.replace(hashlib.sha256(b'fixture').hexdigest(),pin))
-        self.assertNotEqual(run().returncode,0);self.assertFalse(marker.exists())
-        library.write_text(source)
         for osdata in ('ID=debian\nVERSION_ID=13\n','ID=ubuntu\nVERSION_ID=22.04\n'):
             osfile.write_text(osdata);self.assertNotEqual(run().returncode,0);self.assertFalse(network.exists())
         osfile.write_text('ID=ubuntu\nVERSION_ID=26.04\n')
         db.unlink();self.assertNotEqual(run().returncode,0);self.assertFalse(network.exists())
         launcher.write_text('#!/bin/bash\nprintf launcher > "$MARKER"\nexit "${EXTERNAL_EXIT:-0}"\n');launcher.chmod(0o755)
-        self.assertEqual(run(ACTIVE_EXIT='1').returncode,0);self.assertEqual(marker.read_text(),'launcher');self.assertFalse(network.exists())
+        self.assertEqual(run(ACTIVE_EXIT='1').returncode,0);self.assertEqual(marker.read_text(),'bootstrap');self.assertTrue(network.exists())
         self.assertEqual(run(EXTERNAL_EXIT='43').returncode,43)
         for language in ('1','2'):
             text=menu((language+'\n4\n').encode())
