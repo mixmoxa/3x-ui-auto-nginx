@@ -275,9 +275,11 @@ def fresh_acceptance(ref, group='all'):
         # The second QEMU process boots exactly the same installed disk.
         command = "tr -d '-' < /proc/sys/kernel/random/boot_id > /root/pilot/first-boot-id"
         assert ssh(command, 10).returncode == 0
+        invoke('checks.disabled_cold_boot(prepare=True)', 'disabled-before-boot', 120)
         poweroff()
         phase = 'cold-boot'
         boot()
+        invoke('checks.disabled_cold_boot()', 'disabled-after-boot', 120)
         invoke('checks.installed(cold=True)', 'cold')
         phase = 'cold-transport-consumers'
         invoke('checks.transports()', 'cold-transports', 300)

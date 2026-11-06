@@ -155,10 +155,14 @@ HTTP-01 routes stay available. The complete candidate nginx include tree is
 tested before the short x-ui stop and compare-and-set SQLite updates.
 
 Panel changes update its public endpoints, TLS paths, managed Hosts (including
-the REALITY connection address), WS/gRPC/Hysteria2 metadata, AWG share address,
-Clash template, Diagnostics and optional AGH metadata. REALITY-only changes update
-its SNI/TLS vhost and `serverNames`; Panel/Hosts/subscription/AGH endpoints stay
-unchanged. Both changes share one Backup and recovery snapshot. IDs, client
+the REALITY connection address), WS/gRPC metadata, AWG share address, Clash
+template, Diagnostics and optional AGH metadata. In the fresh HTTP/3 cover layout,
+Hysteria2 instead follows REALITY: REALITY changes update its Host/SNI, certificate
+paths and static Unix vhost; Panel-only leaves them unchanged. The previous
+supported Panel-bound Hysteria2 layout retains its existing role behavior without
+migration. Both changes share one Backup and recovery snapshot. Explicitly
+disabled managed inbounds keep their flags while their domain parameters update;
+maintenance validates listeners only for enabled known roles. IDs, client
 secrets/bindings, traffic, REALITY keys/shortIds/target, user settings and Vision
 are preserved. Existing paths are retained. Clients and old subscription URLs
 may need updating; an old domain is not guaranteed to work after its DNS is

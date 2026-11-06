@@ -404,6 +404,13 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
         run('openssl','req','-x509','-newkey','ec','-pkeyopt','ec_paramgen_curve:prime256v1','-nodes','-days','1',
             '-subj','/CN=deploy.example','-addext','subjectAltName=DNS:deploy.example,IP:127.0.0.1',
             '-out',str(cert),'-keyout',str(key))
+        # Fresh Hysteria2 uses its own REALITY certificate, independently of
+        # the panel certificate exercised by the sandboxed HTTPS/API checks.
+        reality=FIXTURE['reality_domain']
+        reality_cert=Path('/etc/letsencrypt/live')/reality;reality_cert.mkdir(parents=True,exist_ok=True)
+        run('openssl','req','-x509','-newkey','ec','-pkeyopt','ec_paramgen_curve:prime256v1','-nodes','-days','1',
+            '-subj','/CN='+reality,'-addext','subjectAltName=DNS:'+reality,
+            '-out',str(reality_cert/'fullchain.pem'),'-keyout',str(reality_cert/'privkey.pem'))
         Path('/etc/x-ui').mkdir(exist_ok=True); Path('/var/log/x-ui').mkdir(exist_ok=True)
         env={**os.environ,**FIXTURE,'PANEL_TAG':baseline()['version'],'PANEL_ARCHIVE':'/opt/xui-ci/panel.tar.gz',
              'XUIDB':'/etc/x-ui/x-ui.db','config_username':'integration','config_password':'temporary-fixture-password'}

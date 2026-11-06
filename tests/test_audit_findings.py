@@ -1077,8 +1077,8 @@ class AuditRecovery(unittest.TestCase):
             includes.write('location ^~ /Session7AbC/ { grpc_pass unix:/dev/shm/uds2023.sock; }\n')
         shared = f.path('/etc/nginx/snippets/includes.conf').read_text()
         # Original v1.5.0 hook lacks the new runtime health, but its exact managed body is trusted.
-        result = subprocess.run(['bash','-eu','-c',f.script.read_text().split('cmd_restore() {')[0] +
-                                 '\nrender_certificate_hook example.com reality.example.com legacy\n'],env=f.env,capture_output=True)
+        result = subprocess.run(['bash','-eu'],input=(f.script.read_text().split('cmd_restore() {')[0] +
+                                 '\nrender_certificate_hook example.com reality.example.com legacy\n').encode(),env=f.env,capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr)
         f.write('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx',result.stdout.decode(),0o755)
         archive = f.backup(); digest = hashlib.sha256(archive.read_bytes()).hexdigest()

@@ -36,6 +36,9 @@ STATE = '/var/lib/3x-ui-auto-nginx/change-domains'
 STREAM = '/etc/nginx/stream-enabled/stream.conf'
 HTTP = '/etc/nginx/sites-available/80.conf'
 HOOK = '/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx'
+HYSTERIA = '/etc/nginx/sites-available/hysteria-cover.conf'
+HYSTERIA_ENABLED = '/etc/nginx/sites-enabled/hysteria-cover.conf'
+HYSTERIA_MASQUERADE = dict(type='proxy', url='unix:/run/3x-ui-hysteria-cover.sock', rewriteHost=False)
 CLASH = '/var/www/subpage/clash.yaml.tpl'
 DIAGNOSTICS = '/var/www/diagnostics/index.html'
 AGH = '/opt/AdGuardHome/managed.json'
@@ -102,6 +105,23 @@ def validate_schema(db):
             'Custom triggers on managed SQLite tables are unsupported.')
 
 
+def hysteria_cover(domain):
+    hostname(domain)
+    return """# Managed by 3x-ui Auto Nginx: Hysteria2 cover
+server {
+    listen unix:/run/3x-ui-hysteria-cover.sock;
+    server_name %s;
+    server_tokens off;
+    absolute_redirect off;
+    autoindex off;
+    root /var/www/html/cover-reality;
+    index index.html;
+    if ($host !~* ^%s$) { return 404; }
+    location / { error_page 404 /404.html; try_files $uri $uri/ =404; }
+}
+""" % (domain, domain.replace('.',r'\.'))
+
+
 def database_context(db, panel, reality, manifest=None):
     """Read roles by structure; names/tags alone never establish identity."""
     validate_schema(db)
@@ -139,11 +159,18 @@ def database_context(db, panel, reality, manifest=None):
     role('xhttp', lambda r, s: (r['protocol'], r['listen'], r['port']) == ('vless', '/dev/shm/uds2023.sock,0666', 0) and
          s.get('network') == 'xhttp' and s.get('security') == 'none' and s.get('xhttpSettings', {}).get('mode') == 'stream-up')
     _, hy = role('hysteria2', lambda r, s: r['protocol'] == 'hysteria' and r['listen'] in ('', '0.0.0.0') and r['port'] == 443 and s.get('network') == 'hysteria')
-    require(hy.get('tlsSettings', {}).get('serverName') == panel, 'Hysteria2 TLS domain differs from Panel.')
+    require(hy.get('hysteriaSettings', {}).get('version') == 2, 'Unknown managed Hysteria2 version.')
+    masquerade = hy.get('hysteriaSettings', {}).get('masquerade')
+    cover = masquerade is not None
+    require(not cover or masquerade == HYSTERIA_MASQUERADE, 'Unknown managed Hysteria2 masquerade.')
+    hy_domain = reality if cover else panel
+    require(hy.get('tlsSettings', {}).get('serverName') == hy_domain and
+            (not cover or hy['tlsSettings'].get('rejectUnknownSni') is True), 'Hysteria2 TLS domain/policy differs from its managed layout.')
     require(hy['tlsSettings'].get('certificates') and len(hy['tlsSettings']['certificates']) == 1, 'Ambiguous Hysteria2 TLS certificates.')
     cert = hy['tlsSettings']['certificates'][0]
-    require(cert.get('certificateFile') == '/root/cert/'+panel+'/fullchain.pem' and cert.get('keyFile') == '/root/cert/'+panel+'/privkey.pem',
-            'Hysteria2 certificate paths are not managed Panel paths.')
+    base = '/etc/letsencrypt/live/'+reality if cover else '/root/cert/'+panel
+    require(cert.get('certificateFile') == base+'/fullchain.pem' and cert.get('keyFile') == base+'/privkey.pem',
+            'Hysteria2 certificate paths differ from its managed layout.')
     vision = None
     candidates = [r for r in rows if r['protocol'] == 'vless' and streams[r['id']].get('security') == 'tls' and r['listen'] == '127.0.0.1']
     if candidates:
@@ -179,17 +206,17 @@ def database_context(db, panel, reality, manifest=None):
     for name, iid in roles.items():
         if name in ('amneziawg', 'xhttp_cdn'):
             continue
-        address = vision if name == 'vision' else panel
+        address = vision if name == 'vision' else hy_domain if name == 'hysteria2' else panel
         security = 'same' if name in ('reality', 'hysteria2', 'vision') else 'tls'
         hosts[name] = single([dict(h) for h in db.execute('SELECT * FROM hosts WHERE inbound_id=? AND address=? AND port=443 AND security=?',
                                                       (iid, address, security))], 'Missing or ambiguous managed Host: '+name)
     managed_ids = {h['id'] for h in (*hosts.values(), *cdn_hosts)}
-    require(all(h['id'] in managed_ids for h in db.execute('SELECT id FROM hosts WHERE address=?', (panel,))),
+    require(all(h['id'] in managed_ids for h in db.execute('SELECT id FROM hosts WHERE address IN (?,?)', (panel, reality if cover else panel))),
             'Additional Hosts depend on Panel; ownership is ambiguous.')
     features = dict(vision=bool(vision), amneziawg=bool(awg))
     if cdn is not None: features['xhttp_cdn'] = True
     return dict(domains=dict(panel=panel, reality=reality, vision=vision), inbound_roles=roles,
-                features=features, settings=settings, hosts=hosts, cdn_hosts=cdn_hosts,
+                features=features, settings=settings, hosts=hosts, cdn_hosts=cdn_hosts, hysteria_cover=cover,
                 rows={r['id']: r for r in rows}, streams=streams)
 
 
@@ -219,6 +246,7 @@ def database_edits(db, context, panel, reality):
             if value:
                 add('settings', key, 'value', panel)
         for name in CORE:
+            if name == 'hysteria2' and context['hysteria_cover']: continue
             host = context['hosts'][name]
             for key in ('sni', 'host_header', 'pinned_peer_cert_sha256', 'verify_peer_cert_by_name', 'ech_config_list'):
                 require(not host.get(key), 'Managed Host has a custom TLS/SNI/header override; preserved.')
@@ -236,9 +264,10 @@ def database_edits(db, context, panel, reality):
             # in full; all additional Hosts are left untouched as well.
             add('hosts', cdn['host']['id'], 'address', panel)
             add('hosts', cdn['host']['id'], 'sni', panel)
-        add('inbounds', context['inbound_roles']['hysteria2'], 'stream_settings', None,
-            [('$.tlsSettings.serverName', panel), ('$.tlsSettings.certificates[0].certificateFile', '/root/cert/'+panel+'/fullchain.pem'),
-             ('$.tlsSettings.certificates[0].keyFile', '/root/cert/'+panel+'/privkey.pem')])
+        if not context['hysteria_cover']:
+            add('inbounds', context['inbound_roles']['hysteria2'], 'stream_settings', None,
+                [('$.tlsSettings.serverName', panel), ('$.tlsSettings.certificates[0].certificateFile', '/root/cert/'+panel+'/fullchain.pem'),
+                 ('$.tlsSettings.certificates[0].keyFile', '/root/cert/'+panel+'/privkey.pem')])
         if context['features']['amneziawg']:
             add('inbounds', context['inbound_roles']['amneziawg'], 'share_addr', panel)
     if reality != old['reality']:
@@ -246,6 +275,15 @@ def database_edits(db, context, panel, reality):
         require(not host.get('sni') and host.get('snis') in (None, '', '[]') and not host.get('override_sni_from_address') and not host.get('keep_sni_blank'),
                 'REALITY Host has a custom SNI override; preserved.')
         add('inbounds', context['inbound_roles']['reality'], 'stream_settings', None, [('$.realitySettings.serverNames', [reality])])
+        if context['hysteria_cover']:
+            host = context['hosts']['hysteria2']
+            require(not any(host.get(key) for key in ('sni','host_header','pinned_peer_cert_sha256','verify_peer_cert_by_name','ech_config_list')) and
+                    host.get('snis') in (None,'','[]') and not host.get('override_sni_from_address') and not host.get('keep_sni_blank'),
+                    'Managed Hysteria Host has a custom TLS override; preserved.')
+            add('hosts', host['id'], 'address', reality)
+            add('inbounds', context['inbound_roles']['hysteria2'], 'stream_settings', None,
+                [('$.tlsSettings.serverName', reality), ('$.tlsSettings.certificates[0].certificateFile', '/etc/letsencrypt/live/'+reality+'/fullchain.pem'),
+                 ('$.tlsSettings.certificates[0].keyFile', '/etc/letsencrypt/live/'+reality+'/privkey.pem')])
     return edits
 
 
@@ -451,6 +489,13 @@ class Operation:
         layouts = (('', ''), ('include '+SNI_INCLUDE+';', 'include '+UPSTREAM_INCLUDE+';'))
         if (context['telemt'] or {}).get('layout') == 'include':
             layouts = layouts[1:]  # Files alone never prove an active include route.
+        if context['hysteria_cover']:
+            require(context['streams'][context['inbound_roles']['reality']]['realitySettings'].get('xver') == 1, 'Backup upstream requires REALITY PROXY v1.')
+            expected = expected.replace('upstream xray { server 127.0.0.1:8443; }', 'upstream xray { server 127.0.0.1:8443 max_fails=0; server 127.0.0.1:9443 backup; }')
+            require(self.read(HYSTERIA) == hysteria_cover(reality), 'Unknown Hysteria2 static backend.')
+            self.read(HYSTERIA_ENABLED, HYSTERIA)
+        else:
+            require(self.object(HYSTERIA)['kind'] == self.object(HYSTERIA_ENABLED)['kind'] == 'absent', 'Unexpected Hysteria2 static backend.')
         variants = [expected.replace('SNI_INCLUDE', sni).replace('UPSTREAM_INCLUDE', upstream).replace('IPV6', ipv6)
                     for sni, upstream in layouts
                     for ipv6 in ('', 'listen [::]:443;')]
@@ -705,13 +750,13 @@ class Operation:
 
     def healthy(self, context, ignore_manifest=False):
         panel, reality = (context['domains'][k] for k in ('panel', 'reality'))
-        self.discover(context, ignore_manifest)
+        current = self.discover(context, ignore_manifest)
         self.check('health', panel, reality)
         if context['features']['adguard']:
             self.check('adguard')
         if context['features']['amneziawg']:
             self.check('amneziawg')
-        self.https_checks(context)
+        self.https_checks(current)
 
     def service_states(self, context):
         units = ['x-ui', 'nginx', 'mtr-backend', 'certbot.timer']
@@ -746,7 +791,13 @@ class Operation:
         cert = '/etc/letsencrypt/live/'+panel+'/fullchain.pem'
         with self.connection(True) as db:
             settings = dict(db.execute('SELECT key,value FROM settings'))
-            clients = db.execute("SELECT DISTINCT sub_id FROM clients WHERE enable=1 AND sub_id<>'' ORDER BY id LIMIT 1").fetchall()
+            def active_clients(protocols):
+                query = ("SELECT DISTINCT c.sub_id FROM clients c JOIN client_inbounds ci ON ci.client_id=c.id "
+                         "JOIN inbounds i ON i.id=ci.inbound_id WHERE c.enable=1 AND i.enable=1 AND c.sub_id<>'' "
+                         "AND i.protocol IN ("+','.join('?' for _ in protocols)+") ORDER BY c.id LIMIT 1")
+                return db.execute(query, protocols).fetchall()
+            clients = active_clients(('vless','trojan','hysteria','amneziawg'))
+            json_clients = active_clients(('vless','trojan','hysteria'))
         pid = self.run('systemctl', 'show', 'x-ui', '-p', 'MainPID', '--value').decode().strip()
         listeners = self.run('ss', '-H', '-lntp').decode().splitlines()
         for key in ('webPort', 'subPort'):
@@ -754,21 +805,27 @@ class Operation:
                       for owner in re.findall(r'pid=(\d+)', line)}
             require(owners == {pid}, 'Panel/subscription HTTPS listeners are not owned by the active panel.')
         require(self.request(panel, settings['webBasePath'], cert)[0] in (200, 302), 'Panel HTTPS is unavailable.')
-        require(self.request(reality, '/', '/etc/letsencrypt/live/'+reality+'/fullchain.pem')[0] == 200,
-                'REALITY TLS camouflage endpoint is unavailable.')
+        if context['hysteria_cover'] or context['rows'][context['inbound_roles']['reality']]['enable']:
+            require(self.request(reality, '/', '/etc/letsencrypt/live/'+reality+'/fullchain.pem')[0] == 200,
+                    'REALITY TLS camouflage endpoint is unavailable.')
         vision = context['domains']['vision']
         if vision:
             require(self.request(vision, '/', '/etc/letsencrypt/live/'+vision+'/fullchain.pem')[0] == 200, 'Existing Vision TLS fallback is unavailable.')
         for key in ('subURI', 'subJsonURI'):
             url = urlsplit(settings[key])
             require(url.hostname == panel, 'Subscription URL domain is inconsistent.')
-            path = url.path+(quote(clients[0][0], safe='') if clients else 'xui-domains-health-invalid-id')
+            selected = json_clients if key == 'subJsonURI' else clients
+            path = url.path+(quote(selected[0][0], safe='') if selected else 'xui-domains-health-invalid-id')
             code, body = self.request(panel, path, cert, headers={'User-Agent': 'x-ui-domain-health', 'Accept': 'application/json'})
             enabled = settings.get('subEnable' if key == 'subURI' else 'subJsonEnable', 'true') == 'true'
-            if not clients or not enabled:
+            if not selected or not enabled:
                 require(code in (400, 404), 'Subscription backend did not reject an unknown client.')
             elif key == 'subJsonURI':
-                require(code == 200 and isinstance(json.loads(body), list), 'JSON subscription validation failed.')
+                configs = json.loads(body) if code == 200 else None
+                if isinstance(configs, dict): configs = [configs]
+                require(isinstance(configs, list) and configs and
+                        all(isinstance(item, dict) and isinstance(item.get('outbounds'), list) and item['outbounds'] for item in configs),
+                        'JSON subscription validation failed.')
             else:
                 require(code == 200, 'RAW subscription validation failed.')
                 base64.b64decode(b''.join(body.split()), validate=True)
@@ -854,6 +911,8 @@ class Operation:
                 add('/etc/nginx/sites-enabled/'+value, dict(kind='link', uid=0, gid=0, mode=0o777, mtime=time.time_ns(), data=new))
                 add('/etc/nginx/sites-enabled/'+previous, None)
         add(STREAM, stream)
+        if context['hysteria_cover']:
+            add(HYSTERIA, hysteria_cover(reality))
         http = self.read(HTTP)
         names = self.http_names(http)
         allowed = {old['panel'], old['reality'], *((context['manifest'] or {}).get('retained_domains', {}))}
@@ -1071,7 +1130,7 @@ class Operation:
 
     def conflict_check(self, record):
         domains = record['old']['domains']; new = record['new']['domains']
-        allowed = {STREAM, HTTP, HOOK, CLASH, DIAGNOSTICS, AGH, MANIFEST}
+        allowed = {STREAM, HTTP, HOOK, CLASH, DIAGNOSTICS, AGH, MANIFEST, HYSTERIA}
         for domain in {domains['panel'], domains['reality'], new['panel'], new['reality']}:
             hostname(domain)
             allowed |= {'/etc/nginx/sites-available/'+domain, '/etc/nginx/sites-enabled/'+domain}

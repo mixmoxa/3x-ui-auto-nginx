@@ -153,6 +153,22 @@ install() { local -a args=(); while (($#)); do case \"$1\" in -o|-g) shift 2;; *
 
 
 class InstallerCompatibility(unittest.TestCase):
+    def test_fresh_installation_secret_lengths_and_unchanged_fields(self):
+        result=shell(('gen_random_string','initialize_installation'),r'''
+initialize_installation
+for name in sub_path json_path panel_path ws_path trojan_path xhttp_path config_username config_password diag_token; do
+    value=${!name}
+    [[ $value =~ ^[a-zA-Z0-9]+$ ]] || exit 1
+    printf '%s %s\n' "$name" "${#value}"
+done
+[[ $diag_path =~ ^/net-[a-zA-Z0-9]+/$ ]] || exit 1
+printf 'diag_path %s\n' "${#diag_path}"
+''')
+        self.assertEqual(result.returncode,0,'Cryptographic initialization failed')
+        lengths={name:int(length) for name,length in (line.split() for line in result.stdout.splitlines())}
+        self.assertEqual(lengths,dict(sub_path=10,json_path=10,panel_path=16,ws_path=10,trojan_path=10,
+                                     xhttp_path=16,config_username=10,config_password=20,diag_token=16,diag_path=22))
+
     def test_real_nginx_http_maps_with_small_cacheline_and_existing_policy(self):
         nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
         self.assertTrue(nginx,'Real nginx required')

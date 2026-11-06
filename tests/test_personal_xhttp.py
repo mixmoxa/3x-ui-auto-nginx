@@ -40,6 +40,20 @@ FIXTURE = {
 }
 
 
+def legacy_hysteria_source(source=SOURCE):
+    """Deterministic prior Panel profile for legacy v3 fixtures, without Git history."""
+    start=source.index("    '1','0','0','0','${emoji_flag} hysteria2'")
+    end=source.index('\nEOF',start)
+    block=source[start:end]
+    block=re.sub(r',\n    "masquerade": \{[^\n]+\}', '', block)
+    block=block.replace('"serverName": "${reality_domain}",\n    "rejectUnknownSni": true','"serverName": "${domain}"')
+    block=block.replace('/etc/letsencrypt/live/${reality_domain}/','/root/cert/${domain}/')
+    block=block.replace("0, 'hysteria2', '${reality_domain}', 443", "0, 'hysteria2', '${domain}', 443")
+    source=source[:start]+block+source[end:]
+    return source.replace('upstream xray {\n    server 127.0.0.1:8443 max_fails=0;\n    server 127.0.0.1:9443 backup;\n}',
+                          'upstream xray { server 127.0.0.1:8443; }')
+
+
 def template(target, source=SOURCE):
     """Extract one original heredoc; never execute its surrounding function."""
     matches = re.findall(r"^\s*" + re.escape(target) + r" <<EOF\n(.*?)^EOF$", source, re.M | re.S)
@@ -599,18 +613,18 @@ sleep() { :; }
         # Exact profile excludes auth/useFile/fingerprint, FinalMask and all custom QUIC/mask/hopping tuning.
         self.assertEqual(json.loads(row["stream_settings"]), {
             "network": "hysteria", "security": "tls",
-            "hysteriaSettings": {"version": 2, "udpIdleTimeout": 60},
+            "hysteriaSettings": {"version": 2, "udpIdleTimeout": 60, "masquerade": {"type":"proxy","url":"unix:/run/3x-ui-hysteria-cover.sock","rewriteHost":False}},
             "tlsSettings": {
-                "serverName": "deploy.example", "alpn": ["h3"],
+                "serverName": "cover.example", "rejectUnknownSni": True, "alpn": ["h3"],
                 "certificates": [{
-                    "certificateFile": "/root/cert/deploy.example/fullchain.pem",
-                    "keyFile": "/root/cert/deploy.example/privkey.pem",
+                    "certificateFile": "/etc/letsencrypt/live/cover.example/fullchain.pem",
+                    "keyFile": "/etc/letsencrypt/live/cover.example/privkey.pem",
                     "ocspStapling": 0, "oneTimeLoading": False,
                     "usage": "encipherment", "buildChain": False,
                 }],
             },
         })
-        self.assertNotIn(FIXTURE["reality_domain"], row["stream_settings"])
+        self.assertNotIn("/root/cert/deploy.example/", row["stream_settings"])
 
     def test_hysteria2_host_with_and_without_group_id(self):
         for grouped in (False, True):
@@ -621,7 +635,7 @@ sleep() { :; }
                 self.assertEqual(len(matched), 1)
                 host = matched[0]
                 self.assertEqual({key: host[key] for key in ("remark", "address", "port", "security", "is_disabled")}, {
-                    "remark": "hysteria2", "address": "deploy.example", "port": 443,
+                    "remark": "hysteria2", "address": "cover.example", "port": 443,
                     "security": "same", "is_disabled": 0,
                 })
                 self.assertEqual(json.loads(host["alpn"]), [])
@@ -651,8 +665,8 @@ sleep() { :; }
         })
 
     def test_nginx_prefix_and_headers(self):
-        self.assertIn("xhttp_path=$(gen_random_string 10)", SOURCE)
-        for path in ("Session7AbC", "1234567890"):
+        self.assertIn("xhttp_path=$(gen_random_string 16)", SOURCE)
+        for path in ("Session7AbC", "1234567890", "NewSession123456"):
             with self.subTest(path=path):
                 shared = render(SHARED, xhttp_path=path)
                 location = re.search(r"location \^~ /" + path + r"/ \{([^{}]*)\}", shared)

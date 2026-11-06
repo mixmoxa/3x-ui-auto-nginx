@@ -263,13 +263,13 @@ make_port() {
 initialize_installation() {
     sub_path=$(gen_random_string 10)
     json_path=$(gen_random_string 10)
-    panel_path=$(gen_random_string 10)
+    panel_path=$(gen_random_string 16)
     ws_path=$(gen_random_string 10)
     trojan_path=$(gen_random_string 10)
-    xhttp_path=$(gen_random_string 10)
+    xhttp_path=$(gen_random_string 16)
     config_username=$(gen_random_string 10)
-    config_password=$(gen_random_string 10)
-    diag_path="/net-$(gen_random_string 12)/"
+    config_password=$(gen_random_string 20)
+    diag_path="/net-$(gen_random_string 16)/"
     diag_token=$(gen_random_string 16)
 }
 
@@ -806,7 +806,10 @@ map \$ssl_preread_server_name \$sni_name {
     default              xray;
 }
 
-upstream xray { server 127.0.0.1:8443; }
+upstream xray {
+    server 127.0.0.1:8443 max_fails=0;
+    server 127.0.0.1:9443 backup;
+}
 upstream www  { server 127.0.0.1:7443; }
 
 include /etc/nginx/stream-upstreams.d/*.conf;
@@ -1200,6 +1203,25 @@ server {
 }
 EOF
     [[ $? -eq 0 ]] || return 1
+
+    # Static-only local HTTP/3 cover backend; no additional public listener.
+    install -o root -g root -m 0600 /dev/null /etc/nginx/sites-available/hysteria-cover.conf || return 1
+    cat > /etc/nginx/sites-available/hysteria-cover.conf <<EOF
+# Managed by 3x-ui Auto Nginx: Hysteria2 cover
+server {
+    listen unix:/run/3x-ui-hysteria-cover.sock;
+    server_name ${reality_domain};
+    server_tokens off;
+    absolute_redirect off;
+    autoindex off;
+    root /var/www/html/cover-reality;
+    index index.html;
+    if (\$host !~* ^${reality_domain//./\\.}\$) { return 404; }
+    location / { error_page 404 /404.html; try_files \$uri \$uri/ =404; }
+}
+EOF
+    [[ $? -eq 0 ]] || return 1
+    ln -sf /etc/nginx/sites-available/hysteria-cover.conf /etc/nginx/sites-enabled/hysteria-cover.conf || return 1
 
     # Activate configs
     if [[ -f "/etc/nginx/sites-available/${domain}" ]]; then
@@ -1681,14 +1703,16 @@ VALUES (
   "security": "tls",
   "hysteriaSettings": {
     "version": 2,
-    "udpIdleTimeout": 60
+    "udpIdleTimeout": 60,
+    "masquerade": {"type":"proxy","url":"unix:/run/3x-ui-hysteria-cover.sock","rewriteHost":false}
   },
   "tlsSettings": {
-    "serverName": "${domain}",
+    "serverName": "${reality_domain}",
+    "rejectUnknownSni": true,
     "alpn": ["h3"],
     "certificates": [{
-      "certificateFile": "/root/cert/${domain}/fullchain.pem",
-      "keyFile": "/root/cert/${domain}/privkey.pem",
+      "certificateFile": "/etc/letsencrypt/live/${reality_domain}/fullchain.pem",
+      "keyFile": "/etc/letsencrypt/live/${reality_domain}/privkey.pem",
       "ocspStapling": 0,
       "oneTimeLoading": false,
       "usage": "encipherment",
@@ -1710,7 +1734,7 @@ VALUES
     ((SELECT id FROM inbounds WHERE tag='inbound-${ws_port}'),     ${gid_ws}      0, 'ws',      '${domain}', 443, 'tls',  'firefox', '["http/1.1"]'),
     ((SELECT id FROM inbounds WHERE tag='inbound-/dev/shm/uds2023.sock,0666:0|'), ${gid_xhttp} 0, 'xhttp', '${domain}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
     ((SELECT id FROM inbounds WHERE tag='inbound-${trojan_port}'), ${gid_trojan}  0, 'trojan',  '${domain}', 443, 'tls',  'firefox', '["h2","http/1.1"]'),
-    ((SELECT id FROM inbounds WHERE tag='inbound-443-udp'),        ${gid_hysteria} 0, 'hysteria2', '${domain}', 443, 'same', '', '[]');
+    ((SELECT id FROM inbounds WHERE tag='inbound-443-udp'),        ${gid_hysteria} 0, 'hysteria2', '${reality_domain}', 443, 'same', '', '[]');
 EOF
     [[ $? -eq 0 ]] || return 1
 
@@ -2178,6 +2202,77 @@ PY
     return 1
 }
 
+# Maintenance accepts explicit Disable of the three known local roles. Keep the
+# strict function above byte-for-byte: historical certificate hooks embed it.
+check_configured_xray_runtime() {
+    local attempt proc_root=${1:-/proc}
+    for attempt in {1..10}; do
+        if systemctl is-active --quiet x-ui && python3 - "$proc_root" "$XUIDB" <<'PY'
+import json, os, pathlib, re, sqlite3, subprocess, sys
+try:
+    with sqlite3.connect(pathlib.Path(sys.argv[2]).as_uri()+'?mode=ro', uri=True) as db:
+        rows = db.execute('SELECT protocol,listen,port,stream_settings,enable,node_id FROM inbounds').fetchall()
+        settings = dict(db.execute('SELECT key,value FROM settings'))
+    # Native AmneziaWG has no Xray stream and stores an empty string.
+    parsed = [(r, json.loads(r[3] or '{}')) for r in rows]
+    def role(predicate):
+        found = [(r,s) for r,s in parsed if predicate(r,s)]
+        if len(found) != 1 or found[0][0][4] not in (0,1) or found[0][0][5] not in (None,0): raise ValueError('Unknown role')
+        return found[0]
+    real, rs = role(lambda r,s: r[:3] == ('vless','127.0.0.1',8443) and s.get('security') == 'reality')
+    if rs.get('realitySettings',{}).get('target') != '127.0.0.1:9443' or rs['realitySettings'].get('xver') not in (0,1): raise ValueError('Unknown target')
+    xhttp, xs = role(lambda r,s: r[:3] == ('vless','/dev/shm/uds2023.sock,0666',0) and s.get('network') == 'xhttp' and
+                     s.get('security') == 'none' and s.get('xhttpSettings',{}).get('mode') == 'stream-up')
+    hy, hs = role(lambda r,s: r[0] == 'hysteria' and r[1] in ('','0.0.0.0') and r[2] == 443 and
+                  s.get('network') == 'hysteria' and s.get('security') == 'tls')
+    panel = re.fullmatch(r'/root/cert/([^/]+)/fullchain.pem', settings.get('webCertFile',''))
+    reality = rs.get('realitySettings',{}).get('serverNames',[])
+    if not panel or len(reality) != 1: raise ValueError('Unknown domains')
+    if hs.get('hysteriaSettings',{}).get('version') != 2: raise ValueError('Unknown Hysteria version')
+    masq = hs.get('hysteriaSettings',{}).get('masquerade')
+    if masq is None:
+        name, base = panel[1], '/root/cert/'+panel[1]
+    else:
+        if masq != dict(type='proxy',url='unix:/run/3x-ui-hysteria-cover.sock',rewriteHost=False): raise ValueError('Unknown cover')
+        name, base = reality[0], '/etc/letsencrypt/live/'+reality[0]
+        if hs['tlsSettings'].get('rejectUnknownSni') is not True: raise ValueError('Unknown SNI policy')
+    tls = hs['tlsSettings']; certs = tls.get('certificates',[])
+    if tls.get('serverName') != name or len(certs) != 1 or certs[0].get('certificateFile') != base+'/fullchain.pem' or certs[0].get('keyFile') != base+'/privkey.pem':
+        raise ValueError('Unknown TLS')
+    network = subprocess.check_output(['ss','-H','-lntup'],text=True)
+    unix = subprocess.check_output(['ss','-H','-lxnp'],text=True)
+    expected = []
+    for enabled, protocol, state, address, listing in (
+        (real[4],'tcp','LISTEN','127.0.0.1:8443',network),
+        (hy[4],'udp','UNCONN',None,network),
+        (xhttp[4],'u_str','LISTEN','/dev/shm/uds2023.sock',unix),
+    ):
+        if not enabled: continue
+        owners = set()
+        for line in listing.splitlines():
+            fields = line.split()
+            if len(fields) < 6 or fields[:2] != [protocol,state]: continue
+            if (address is not None and fields[4] != address) or (address is None and fields[4] not in ('*:443','0.0.0.0:443','[::]:443',':::443')): continue
+            owners.update(int(pid) for pid in re.findall(r'pid=(\d+)',line))
+        expected.append(owners)
+    proc = pathlib.Path(sys.argv[1]); managed = pathlib.Path('/usr/local/x-ui/bin').resolve()
+    candidates = set.intersection(*expected) if expected else {int(p.name) for p in proc.iterdir() if p.name.isdigit()}
+    for pid in candidates:
+        try:
+            executable = pathlib.Path(os.readlink(proc/str(pid)/'exe'))
+            if executable.parent == managed and re.fullmatch(r'xray-linux-[A-Za-z0-9_-]+',executable.name) and executable.is_file(): sys.exit(0)
+        except OSError: pass
+except (OSError, ValueError, KeyError, TypeError, AttributeError, sqlite3.Error, subprocess.CalledProcessError):
+    pass
+sys.exit(1)
+PY
+        then return 0; fi
+        sleep 0.5
+    done
+    printf '[FAIL] Configured local transport roles/listeners or Xray ownership are invalid.\n' >&2
+    return 1
+}
+
 check_installation() {
     local service
     [[ "$(sqlite3 "$XUIDB" "SELECT value FROM settings WHERE key='webListen';")" == 127.0.0.1 ]] || {
@@ -2188,7 +2283,11 @@ check_installation() {
     done
     check_certificate_renewal "$domain" "$reality_domain" || return 1
     nginx -t || return 1
-    check_xray_runtime
+    case "${1:-fresh}" in
+        fresh) check_xray_runtime ;;
+        maintenance) check_configured_xray_runtime ;;
+        *) return 1 ;;
+    esac
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3270,7 +3369,7 @@ with sqlite3.connect('file:'+path+'?mode=ro',uri=True) as db:
     for role,proto,network in (('ws','vless','ws'),('grpc','trojan','grpc')):
         single(role,lambda r,s,proto=proto,network=network:r[1]==proto and r[2]=='127.0.0.1' and s.get('network')==network and s.get('security')=='none')
     single('xhttp',lambda r,s:r[1:4]==('vless','/dev/shm/uds2023.sock,0666',0) and s.get('network')=='xhttp' and s.get('xhttpSettings',{}).get('mode')=='stream-up')
-    single('hysteria2',lambda r,s:r[1]=='hysteria' and r[3]==443 and s.get('tlsSettings',{}).get('serverName')==panel)
+    single('hysteria2',lambda r,s:r[1]=='hysteria' and r[3]==443 and s.get('tlsSettings',{}).get('serverName')==reality and s.get('hysteriaSettings',{}).get('masquerade')=={'type':'proxy','url':'unix:/run/3x-ui-hysteria-cover.sock','rewriteHost':False})
     if vision_result=='configured':
         stream=single('vision',lambda r,s:r[1]=='vless' and r[2]=='127.0.0.1' and s.get('security')=='tls')
         vision=stream['tlsSettings']['serverName']
@@ -3287,7 +3386,7 @@ with sqlite3.connect('file:'+path+'?mode=ro',uri=True) as db:
                  snippet=pathlib.Path('/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf').read_text())
     for role,iid in roles.items():
         if role!='amneziawg' and not db.execute('SELECT 1 FROM hosts WHERE inbound_id=? AND address=? AND port=443',
-                (iid,vision if role=='vision' else panel)).fetchone(): raise ValueError('Missing Host relationship: '+role)
+                (iid,vision if role=='vision' else reality if role=='hysteria2' else panel)).fetchone(): raise ValueError('Missing Host relationship: '+role)
 if agh_result=='installed':
     if json.loads(pathlib.Path('/opt/AdGuardHome/managed.json').read_text()).get('domain')!=panel:
         raise ValueError('AGH domain relationship differs')
@@ -3603,7 +3702,7 @@ prepare_domains_tools() {
         cat "$DOMAINS_STAGE/adguard.sh"
         local name
         for name in check_certificate_identity check_webroot_lineage check_no_legacy_certbot_cron check_acme_http \
-                    check_certificate_renewal render_certificate_hook check_xray_runtime check_installation check_awg_reinstall_owner ui_text msg_err; do
+                    check_certificate_renewal render_certificate_hook check_xray_runtime check_configured_xray_runtime check_installation check_awg_reinstall_owner ui_text msg_err; do
             declare -f "$name" || return 1
         done
         cat <<'DOMAIN_CHECKS'
@@ -3616,7 +3715,7 @@ case "$1" in
             if cmp -s /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx <(render_certificate_hook "$2" "$3" "$variant"); then matched=y; break; fi
         done
         [[ "$matched" == y ]] ;;
-    health) domain=$2 reality_domain=$3; check_installation ;;
+    health) domain=$2 reality_domain=$3; check_installation maintenance ;;
     adguard) agh_health ;;
     amneziawg) check_awg_reinstall_owner ;;
     *) exit 2 ;;

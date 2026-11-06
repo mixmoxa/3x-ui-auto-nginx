@@ -47,6 +47,7 @@ def restore_content():
 
 
 def restore_source():
+    core_enable(False,names=('reality','xhttp'))
     Path('/etc/x-ui/pr2-persist').write_text('PR2-lite persistent data\n')
     result = subprocess.run(['bash','/usr/local/bin/x-ui-backup','backup','--json'],
                             capture_output=True, timeout=150)
@@ -66,6 +67,9 @@ def restore_target():
     fixture.unlink()
     env = {**os.environ, **json.loads((ROOT/'environment.json').read_text()),
            'CURL_CA_BUNDLE':'/etc/ssl/certs/ca-certificates.crt'}
+    context=ssl.create_default_context(cafile=str(ROOT/'fixture.crt'))
+    with urllib.request.urlopen('https://10.0.2.2:15000/roots/0',context=context,timeout=10) as response:
+        Path('/usr/local/share/ca-certificates/pilot-pebble.crt').write_bytes(response.read())
     subprocess.run(['update-ca-certificates'], check=True, capture_output=True, timeout=120)
     # Real socket activation, including a nonstandard port, with both forwarded
     # SSH endpoints checked by the host after UFW and after a fresh QEMU boot.
@@ -115,9 +119,13 @@ def restore_verified(cold=False):
     before = {str(p):p.read_bytes() for p in Path('/etc/ufw').rglob('*') if p.is_file()}
     assert json.loads(run('/usr/bin/python3','-I',str(ROOT/'current-security.py'),'--enable-ufw'))['status'] == 'preserved'
     assert before == {str(p):p.read_bytes() for p in Path('/etc/ufw').rglob('*') if p.is_file()}
+    assert core_flags()==dict(reality=False,hysteria2=True,xhttp=False)
+    http3_cover()
+    domain='reality.example.test'
+    assert run('curl','-q','-fsS','--noproxy','*','--resolve',domain+':443:127.0.0.1','https://'+domain+'/')==Path('/var/www/html/cover-reality/index.html').read_text()
     if cold:
         assert Path('/proc/sys/kernel/random/boot_id').read_text() != (ROOT/'restore-boot-id').read_text()
-    return {'services_active':True, 'ufw_active':True, 'restored_content_preserved':True, 'boot_verified':True}
+    return {'disabled_roles_and_TCP_HTTP3':True,'services_active':True, 'ufw_active':True, 'restored_content_preserved':True, 'boot_verified':True}
 
 def load(name):
     spec = importlib.util.spec_from_file_location(name, ROOT / (name + '.py'))
@@ -267,8 +275,86 @@ def installed(cold=False):
     assert Path('/usr/local/bin/x-ui-backup').is_file();checks['backup_tool_present']=True
     return checks
 
+def core_flags():
+    roles=json.loads(Path('/etc/x-ui/auto-nginx-managed.json').read_text())['inbound_roles']
+    with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:
+        return {name:bool(db.execute('SELECT enable FROM inbounds WHERE id=?',(roles[name],)).fetchone()[0])
+                for name in ('reality','hysteria2','xhttp')}
+
+
+def core_enable(enabled,panel_domain='panel.example.test',names=('reality','hysteria2','xhttp')):
+    """Only the official API changes flags, including after an actual cold boot."""
+    log=re.sub(r'\x1b\[[0-9;]*m','',(ROOT/'installer.raw.log').read_text())
+    username=re.search(r'^ Username: (\S+)$',log,re.M)[1];password=re.search(r'^ Password: (\S+)$',log,re.M)[1]
+    roles=json.loads(Path('/etc/x-ui/auto-nginx-managed.json').read_text())['inbound_roles']
+    with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:
+        settings=dict(db.execute('SELECT key,value FROM settings'))
+    with tempfile.TemporaryDirectory(prefix='enable-core-') as directory:
+        api=load('session').Panel('https://'+panel_domain+settings['webBasePath'],username,password,Path(directory),
+            ['--resolve',panel_domain+':443:127.0.0.1'])
+        before=core_flags()
+        for name,value in before.items():
+            if name in names and value!=enabled:api.request('panel/api/inbounds/setEnable/'+str(roles[name]),{'enable':enabled})
+    expected={name:enabled if name in names else value for name,value in before.items()}
+    assert core_flags()==expected
+    deadline=time.monotonic()+15
+    while True:
+        tcp=run('ss','-H','-lnt');udp=run('ss','-H','-lnu');unix=run('ss','-H','-lxnp')
+        present=('127.0.0.1:8443' in tcp,bool(re.search(r'(?:\*|0\.0\.0\.0|\[::\]|:::):443\s',udp)),
+                 '/dev/shm/uds2023.sock' in unix)
+        if present==tuple(expected[name] for name in ('reality','hysteria2','xhttp')):break
+        assert time.monotonic()<deadline,'Native enable/listener convergence failed'
+        time.sleep(.1)
+    return {'native_flags_and_listeners':True}
+
+
+def disabled_cold_boot(prepare=False):
+    if prepare:
+        core_enable(False)
+        with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:
+            saved={table:db.execute('SELECT * FROM '+table+' ORDER BY rowid').fetchall() for table in ('clients','client_inbounds','hosts')}
+        (ROOT/'disabled-cold.private.json').write_text(json.dumps(saved))
+    else:
+        deadline=time.monotonic()+90
+        while subprocess.run(['systemctl','is-active','--quiet','x-ui','nginx'],capture_output=True).returncode:
+            assert time.monotonic()<deadline,'Disabled-role boot services failed'
+            time.sleep(.5)
+        assert core_flags()==dict(reality=False,hysteria2=False,xhttp=False)
+        with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:
+            current={table:db.execute('SELECT * FROM '+table+' ORDER BY rowid').fetchall() for table in ('clients','client_inbounds','hosts')}
+        assert json.loads(json.dumps(current))==json.loads((ROOT/'disabled-cold.private.json').read_text())
+    assert '127.0.0.1:8443' not in run('ss','-H','-lnt')
+    assert not re.search(r'(?:\*|0\.0\.0\.0|\[::\]|:::):443\s',run('ss','-H','-lnu'))
+    assert '/dev/shm/uds2023.sock' not in run('ss','-H','-lxnp')
+    domain='reality.example.test'
+    assert run('curl','-q','-fsS','--noproxy','*','--resolve',domain+':443:127.0.0.1','https://'+domain+'/')==Path('/var/www/html/cover-reality/index.html').read_text()
+    result=subprocess.run(['bash','-c','source "$1"; domain=panel.example.test; reality_domain=reality.example.test; check_installation maintenance','fixture',str(ROOT/'x-ui-latest.sh')],capture_output=True,timeout=90)
+    assert result.returncode==0,'Maintenance rejected disabled roles'
+    if not prepare:core_enable(True)
+    result={'disabled_roles_preserved':True,'TCP_cover_without_REALITY':True}
+    if not prepare:result['native_Enable_after_boot']=True
+    return result
+
+
+def http3_cover():
+    import asyncio
+    from http3 import request
+    state=json.loads(Path('/etc/x-ui/auto-nginx-managed.json').read_text())
+    domain=state['domains']['reality'];site=Path('/var/www/html/cover-reality')
+    ca='/usr/local/share/ca-certificates/pilot-pebble.crt'
+    headers,body,_=asyncio.run(request('127.0.0.1',443,domain,ca))
+    assert headers[b':status']==b'200' and body==(site/'index.html').read_bytes()
+    assert 'unix:/run/3x-ui-hysteria-cover.sock' in Path('/usr/local/x-ui/bin/config.json').read_text()
+    assert stat.S_ISSOCK(Path('/run/3x-ui-hysteria-cover.sock').stat().st_mode)
+    assert Path('/run/3x-ui-hysteria-cover.sock').stat().st_mode&0o777==0o666
+    for path in ('/panel/','/diagnostics/','/assets/','/.env'):
+        headers,_,_=asyncio.run(request('127.0.0.1',443,domain,ca,path))
+        assert headers[b':status']==b'404' and b'set-cookie' not in headers
+
+
 def transports(vision=True, panel_domain='panel.example.test', positive_only=False):
     root=ROOT; results={}
+    http3_cover()
     binary=next(Path("/usr/local/x-ui/bin").glob("xray-linux-amd64"))
     rule=["iptables","-t","nat","-A","OUTPUT","-d","8.8.8.9","-p","tcp","--dport","18081","-j","DNAT","--to-destination","10.0.2.2:18081"]
     subprocess.run(rule,check=True,timeout=10)
@@ -299,7 +385,7 @@ def transports(vision=True, panel_domain='panel.example.test', positive_only=Fal
                         tls['allowInsecure']=False
                         destination=out['settings']
                         destination=destination['vnext'][0] if 'vnext' in destination else destination['servers'][0] if 'servers' in destination else destination
-                        expected_sni='vision.example.test' if name=='Vision' else panel_domain
+                        expected_sni='vision.example.test' if name=='Vision' else json.loads(Path('/etc/x-ui/auto-nginx-managed.json').read_text())['domains']['reality'] if name=='Hysteria2' else panel_domain
                         assert (tls.get('serverName') or destination['address'])==expected_sni
                         tls['serverName']=expected_sni
                         ca=Path('/usr/local/share/ca-certificates/pilot-pebble.crt')
@@ -452,6 +538,7 @@ def search_domain_regression():
 
 
 def renewal():
+    core_enable(False,names=('reality',))
     certificates = [Path('/etc/letsencrypt/live')/domain/'fullchain.pem' for domain in
                     ('panel.example.test','reality.example.test','vision.example.test')]
     before = [run('openssl','x509','-in',str(cert),'-noout','-serial') for cert in certificates]
@@ -461,7 +548,10 @@ def renewal():
     assert result.returncode == 0, 'Installed Certbot renewal/deploy hooks failed'
     after = [run('openssl','x509','-in',str(cert),'-noout','-serial') for cert in certificates]
     assert all(a != b for a,b in zip(before,after)), 'Renewal did not replace every managed certificate'
-    return {'three_real_renewals':True, **installed()}
+    assert core_flags()==dict(reality=False,hysteria2=True,xhttp=True)
+    http3_cover()
+    core_enable(True,names=('reality',))
+    return {'three_real_renewals':True,'REALITY_OFF_Hysteria2_ON_preserved':True, **installed()}
 
 
 def manager_backup():
@@ -532,6 +622,8 @@ def change_domains():
     original_hashes=hashes();agh=adguard_state();before=database();result={}
     (ROOT/'before-domains-files.json').write_text(json.dumps(dict(files=original_hashes,adguard=agh)))
     panel,reality='panel.example.test','reality.example.test'
+    core_enable(False)
+    before=database()
     for choice,new_panel,new_reality in (('1','panel-next.example.test',reality),
                                          ('2','panel-next.example.test','reality-next.example.test'),
                                          ('3','panel-final.example.test','reality-final.example.test')):
@@ -574,7 +666,9 @@ def change_domains():
             for key in previous:
                 if key in ('address','sni') and previous['inbound_id']==roles['xhttp_cdn']:
                     assert current[key]==new_panel
-                elif key=='address' and previous['inbound_id'] in [roles[n] for n in ('reality','ws','grpc','xhttp','hysteria2')]:
+                elif key=='address' and previous['inbound_id']==roles['hysteria2']:
+                    assert current[key]==new_reality
+                elif key=='address' and previous['inbound_id'] in [roles[n] for n in ('reality','ws','grpc','xhttp')]:
                     assert current[key]==new_panel
                 else:assert previous[key]==current[key],'Host ID, metadata or v3.11 field changed'
         for previous,current in zip(before['inbounds'],after['inbounds']):
@@ -593,10 +687,10 @@ def change_domains():
                         assert new_stream['grpcSettings']['authority']==new_panel
                         old_stream['grpcSettings'].pop('authority');new_stream['grpcSettings'].pop('authority')
                     elif previous['id']==roles['hysteria2']:
-                        assert new_stream['tlsSettings']['serverName']==new_panel
+                        assert new_stream['tlsSettings']['serverName']==new_reality
                         for item in new_stream['tlsSettings']['certificates']:
-                            assert item['certificateFile']=='/root/cert/'+new_panel+'/fullchain.pem'
-                            assert item['keyFile']=='/root/cert/'+new_panel+'/privkey.pem'
+                            assert item['certificateFile']=='/etc/letsencrypt/live/'+new_reality+'/fullchain.pem'
+                            assert item['keyFile']=='/etc/letsencrypt/live/'+new_reality+'/privkey.pem'
                         for stream in (old_stream,new_stream):
                             stream['tlsSettings'].pop('serverName')
                             for item in stream['tlsSettings']['certificates']:
@@ -610,6 +704,7 @@ def change_domains():
         assert marker['inbound_roles']==roles and not Path('/var/lib/3x-ui-auto-nginx/change-domains/journal.json').exists()
         assert hashes()==original_hashes and adguard_state()==agh,'Vision, binaries, SSH/firewall or AGH state changed'
         assert json.loads(Path('/opt/AdGuardHome/managed.json').read_text())['domain']==new_panel
+        if choice=='1':core_enable(True,panel_domain=new_panel)
         transports(panel_domain=new_panel,positive_only=True)
         panel,reality=new_panel,new_reality;before=database();result['domains_'+choice]=True
     return {**result,'full_Backup_before_each_switch':True,'client_Host_Vision_AGH_preservation':True,
@@ -668,6 +763,8 @@ def restore_before_domains():
     assert adguard_state()==evidence['adguard']
     assert json.loads(Path('/opt/AdGuardHome/managed.json').read_text())['domain']=='panel.example.test'
     assert hashlib.sha256(archive.read_bytes()).hexdigest()==digest
+    assert core_flags()==dict(reality=False,hysteria2=False,xhttp=False)
+    core_enable(True)
     mtr_packages();installed();transports(positive_only=True);amneziawg()
     return dict(original_Backup_restored_after_Both=True,original_SQLite_clients_keys_Vision_AGH=True,
                 native_services_and_consumers=True,mtr_tiny_preserved=True,source_archive_unchanged=True)

@@ -337,8 +337,8 @@ class PersonalBackup(unittest.TestCase):
             conn.execute('CREATE TABLE clients (uuid TEXT)')
             conn.execute("INSERT INTO clients VALUES ('fixture-secret-not-for-output')")
             # Real installer-derived managed transport/Host state, as restored on a v1.6 host.
-            from test_personal_xhttp import seed
-            inbounds, hosts = seed(domain='example.com', reality_domain='reality.example.com')
+            from test_personal_xhttp import seed, legacy_hysteria_source
+            inbounds, hosts = seed(source=legacy_hysteria_source(),domain='example.com', reality_domain='reality.example.com')
             for table, records in (('inbounds', list(inbounds.values())), ('hosts', hosts)):
                 keys = list(records[0])
                 conn.execute('CREATE TABLE '+table+' ('+','.join(keys)+')')
@@ -423,8 +423,8 @@ class PersonalBackup(unittest.TestCase):
 
     def seed_telemt(self, includes=False):
         from telemt_fixtures import VHOST, ACME, HOOK
-        from test_personal_xhttp import render
-        stream = render('cat > /etc/nginx/stream-enabled/stream.conf',
+        from test_personal_xhttp import render, legacy_hysteria_source
+        stream = render('cat > /etc/nginx/stream-enabled/stream.conf',source=legacy_hysteria_source(),
                         domain='example.com', reality_domain='reality.example.com')
         row = '    telegram.example.com twm_frontend; # telemt-web-manager\n'
         upstream = '\n# telemt-web-manager\nupstream twm_frontend { server 127.0.0.1:7444; }\n'
@@ -562,8 +562,8 @@ class PersonalBackup(unittest.TestCase):
                         f.seed_vision()
                         # seed_vision owns stream.conf in its older fixture: put
                         # the actual combined stream back with Vision's row.
-                        from test_personal_xhttp import render
-                        stream = render('cat > /etc/nginx/stream-enabled/stream.conf',
+                        from test_personal_xhttp import render, legacy_hysteria_source
+                        stream = render('cat > /etc/nginx/stream-enabled/stream.conf',source=legacy_hysteria_source(),
                                         domain='example.com', reality_domain='reality.example.com')
                         stream = stream.replace('    hostnames;','    hostnames;\n    vision.example.com vision;')
                         stream += '\nupstream vision { server 127.0.0.1:12000; }\n'
@@ -1494,6 +1494,54 @@ class PersonalBackup(unittest.TestCase):
                 with sqlite3.connect(copied) as db:
                     self.assertEqual(db.execute('PRAGMA quick_check').fetchone()[0],'ok')
                     self.assertEqual(db.execute('SELECT id,enable,settings,stream_settings FROM inbounds ORDER BY id').fetchall(),expected)
+
+    def test_hysteria_cover_restore_and_unknown_backend_refusal(self):
+        from test_personal_xhttp import seed, render
+        f=self
+        rows,hosts=seed(domain='example.com',reality_domain='reality.example.com')
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            for row in rows.values():
+                db.execute('UPDATE inbounds SET listen=?,port=?,stream_settings=?,enable=0 WHERE id=?',
+                    (relocated(row['listen'],f.root),int(row['port']),relocated(row['stream_settings'],f.root),row['id']))
+            for host in hosts:db.execute('UPDATE hosts SET address=? WHERE id=?',(host['address'],host['id']))
+        f.write('/etc/nginx/stream-enabled/stream.conf',relocated(render('cat > /etc/nginx/stream-enabled/stream.conf',domain='example.com',reality_domain='reality.example.com'),f.root))
+        backend='/etc/nginx/sites-available/hysteria-cover.conf'
+        enabled='/etc/nginx/sites-enabled/hysteria-cover.conf'
+        text=relocated(render('cat > /etc/nginx/sites-available/hysteria-cover.conf',domain='example.com',reality_domain='reality.example.com'),f.root)
+        f.write(backend,text,0o600);f.path(enabled).parent.mkdir(parents=True,exist_ok=True)
+        f.path(enabled).symlink_to(f.path(backend))
+        f.write('/var/www/html/cover-reality/index.html','independent cover\n')
+        f.write('/etc/x-ui/cover-sites.json','{"reality":{"template":"B1"}}\n',0o600)
+        archive=f.backup();original=archive.read_bytes()
+        # Staged validation must use the archive DB, never target/live state.
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            db.execute("UPDATE inbounds SET stream_settings=json_set(stream_settings,'$.hysteriaSettings.masquerade.url','unix:/wrong.sock') WHERE protocol='hysteria'")
+        result=f.run_tool('restore',archive)
+        self.assertEqual(result.returncode,0,result.stderr)
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            self.assertTrue(all(value==0 for value, in db.execute('SELECT enable FROM inbounds')))
+        self.assertEqual(f.path(backend).read_text(),text)
+        self.assertEqual(f.path('/var/www/html/cover-reality/index.html').read_text(),'independent cover\n')
+        self.assertEqual(archive.read_bytes(),original)
+        f.write('/etc/x-ui/target-marker','preserved')
+        failed=f.run_tool('restore',archive,FAIL_HEALTH_SERVICE='mtr-backend',FAIL_ONCE='1')
+        self.assertNotEqual(failed.returncode,0)
+        self.assertIn('Previous managed state/service states restored and checked',failed.stderr)
+        self.assertEqual(f.path('/etc/x-ui/target-marker').read_text(),'preserved')
+        self.assertEqual(f.path(backend).read_text(),text)
+        # Tampered new objects are rejected before stopping the target services.
+        for label,changed in (('root',text.replace('/cover-reality','/cover-panel')),
+                              ('proxy',text.replace('try_files $uri $uri/ =404;','proxy_pass http://127.0.0.1:10002;'))):
+            with self.subTest(fault=label):
+                f.write(backend,changed,0o600)
+                existing=set(f.path('/var/backups/x-ui').glob('*.tar.gz'));f.backup()
+                bad=next(iter(set(f.path('/var/backups/x-ui').glob('*.tar.gz'))-existing))
+                (f.root/'commands').write_text('')
+                result=f.run_tool('restore',bad)
+                self.assertNotEqual(result.returncode,0)
+                self.assertFalse(any(c[:2]==['systemctl','stop'] for c in f.commands()))
+                self.assertEqual(f.path(backend).read_text(),changed)
+                f.write(backend,text,0o600)
 
     def test_restore_and_rollback_preserve_disabled_transports_without_network(self):
         f=self; f.seed_vision()

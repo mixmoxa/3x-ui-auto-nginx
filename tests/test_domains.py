@@ -72,6 +72,9 @@ class DomainFixture:
         # The actual map file is a dependency of the actual panel vhost.
         self.write('/etc/nginx/sites-available/00-maps.conf', render('cat > /etc/nginx/sites-available/00-maps.conf'))
         self.p('/etc/nginx/sites-enabled/00-maps.conf').symlink_to('/etc/nginx/sites-available/00-maps.conf')
+        if 'cat > /etc/nginx/sites-available/hysteria-cover.conf' in self.source:
+            self.write(self.module.HYSTERIA, render('cat > /etc/nginx/sites-available/hysteria-cover.conf',self.source),0o600)
+            self.p(self.module.HYSTERIA_ENABLED).symlink_to(self.module.HYSTERIA)
         self.p('/etc/nginx/snippets/x-ui-auto-optional').mkdir()
         self.write(self.module.CLASH, (ROOT/'assets/clash/clash.yaml').read_text().replace('${DOMAIN}', self.panel).replace('${SUB_PATH}', 'subscription'))
         self.write(self.module.DIAGNOSTICS, (ROOT/'assets/diagnostics/index.html').read_text().replace('__SERVER_DOMAIN__', self.panel))
@@ -283,6 +286,65 @@ class DomainFixture:
 
 
 class Domains(unittest.TestCase):
+    def test_hysteria_static_backend_unknown_objects_refuse_before_backup(self):
+        for fault in ('root','proxy','host','backup','primary','link'):
+            with self.subTest(fault=fault):
+                f=self.fixture();path=f.p(f.module.HYSTERIA)
+                if fault in ('backup','primary'):
+                    path=f.p(f.module.STREAM);text=path.read_text()
+                    text=text.replace('9443 backup','7443 backup') if fault=='backup' else text.replace(' max_fails=0','')
+                elif fault=='link':
+                    path=f.p(f.module.HYSTERIA_ENABLED);path.unlink();path.symlink_to('/etc/nginx/sites-available/'+f.panel);text=None
+                else:
+                    text=path.read_text()
+                    if fault=='root':text=text.replace('/cover-reality','/cover-panel')
+                    elif fault=='proxy':text=text.replace('try_files $uri $uri/ =404;','proxy_pass http://127.0.0.1:10002;')
+                    else:text=text.replace('^cover\\.example$','^.+$')
+                if text is not None:path.write_text(text)
+                before=f.state()
+                with self.assertRaises(f.module.Refusal):f.change('new.example')
+                self.assertEqual(f.state(),before)
+                self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] or args[0]=='certbot' for _,args in f.calls))
+                self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
+
+    def test_scoped_domain_edits_preserve_disabled_core_roles(self):
+        # Scoped edits preserve Disable; native listener health is independently
+        # covered by the real integration suite.
+        for reality_enabled, hy_enabled in ((0,1),(1,0),(0,0)):
+            for panel, reality in (('new-panel.example',None),(None,'new-cover.example'),
+                                   ('new-panel.example','new-cover.example')):
+                with self.subTest(enabled=(reality_enabled,hy_enabled),panel=bool(panel),reality=bool(reality)):
+                    f=self.fixture(); context=f.operation.discover()
+                    roles=context['inbound_roles']
+                    with f.operation.connection(False) as db:
+                        db.execute('UPDATE inbounds SET enable=? WHERE id=?',(reality_enabled,roles['reality']))
+                        db.execute('UPDATE inbounds SET enable=? WHERE id=?',(hy_enabled,roles['hysteria2']))
+                    before=f.state();context=f.operation.discover()
+                    previous_hy=context['streams'][roles['hysteria2']]
+                    original_backend=f.p(f.module.HYSTERIA).read_bytes()
+                    with f.operation.connection(True) as db:
+                        edits=f.module.database_edits(db,context,panel or f.panel,reality or f.reality)
+                    self.assertFalse(any(edit['column']=='enable' for edit in edits))
+                    f.operation.database_update({'database':edits},True)
+                    after=f.state()
+                    with f.operation.connection(True) as db:
+                        flags=dict(db.execute('SELECT id,enable FROM inbounds'))
+                    self.assertEqual((flags[roles['reality']],flags[roles['hysteria2']]),(reality_enabled,hy_enabled))
+                    with f.operation.connection(True) as db:
+                        updated=f.module.database_context(db,panel or f.panel,reality or f.reality)
+                    self.assertEqual(updated['streams'][roles['hysteria2']]['tlsSettings']['serverName'],reality or f.reality)
+                    self.assertEqual(updated['hosts']['hysteria2']['address'],reality or f.reality)
+                    if not reality:
+                        self.assertEqual(updated['streams'][roles['hysteria2']],previous_hy)
+                        self.assertEqual(f.p(f.module.HYSTERIA).read_bytes(),original_backend)
+                    for table in ('users','clients','client_inbounds','client_traffics'):
+                        self.assertEqual(before[table],after[table])
+        for role in ('reality','hysteria2'):
+            f=self.fixture();iid=f.operation.discover()['inbound_roles'][role]
+            with f.operation.connection(False) as db:
+                db.execute('DELETE FROM inbounds WHERE id=?',(iid,))
+            with self.assertRaises(f.module.Refusal):f.operation.discover()
+
     def test_http_guard_formats_preserve_panel_reality_both_sequence_and_rollback(self):
         for historical in (False,True):
             with self.subTest(historical=historical):
@@ -481,6 +543,7 @@ class Domains(unittest.TestCase):
                             text=text.replace('listen 80;',f'listen 127.0.0.1:{http_port};').replace('listen [::]:80;',f'listen [::1]:{http_port};')
                             text=text.replace('pid /run/nginx.pid;',f'worker_processes 1; daemon off; pid {pid};')
                             text=text.replace('error_log stderr;','error_log stderr notice;')
+                            text=text.replace('/run/3x-ui-hysteria-cover.sock',str(runtime/'hysteria-cover.sock'))
                             path.write_text(text)
                 def render_runtime():
                     if tree.exists():shutil.rmtree(tree)

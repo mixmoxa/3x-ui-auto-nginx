@@ -352,10 +352,12 @@ class CIScope(unittest.TestCase):
                     ssh=lambda *args,**kwargs:SimpleNamespace(returncode=0,stdout=b'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n'))
                 exec(compile(ast.Module(body=[function],type_ignores=[]),'acceptance.py','exec'),env)
                 env['fresh_acceptance']('a'*40,group)
+                positive_phases=[positive[0],*positive[:6],'installed-renewal-hooks','cold-boot',*positive[6:]]
                 self.assertEqual([phase for kind,phase in events if kind=='phase'],
-                                 [expected[0]]+expected if group!='negative' else expected)
+                                 (positive_phases if group!='negative' else [])+(negative if group!='positive' else []))
                 positive_calls=['positive','checks.installed()','checks.manager_backup()','checks.transports()',
                     'checks.amneziawg()','checks.search_domain_regression()','checks.renewal()',
+                    'checks.disabled_cold_boot(prepare=True)','checks.disabled_cold_boot()',
                     'checks.installed(cold=True)','checks.transports()','checks.change_domains()',
                     'checks.restore_before_domains()']
                 negative_calls=['dependency','dot-outage','checks.transports(vision=False)']

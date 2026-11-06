@@ -1812,6 +1812,57 @@ def staged(path, tls_reference=False):
             if not p.is_file(): raise ValueError('Missing staged file: ' + str(path))
             return p
     raise ValueError('Staged link cycle')
+# The new cover layout is one exact contract. Legacy archives without these
+# objects retain their existing validation; never execute a helper from staging.
+cover_site = root / (nginx+'/sites-available/hysteria-cover.conf').lstrip('/')
+cover_enabled = root / (nginx+'/sites-enabled/hysteria-cover.conf').lstrip('/')
+stream_path = root / (nginx+'/stream-enabled/stream.conf').lstrip('/')
+stream_text = staged(nginx+'/stream-enabled/stream.conf').read_text() if os.path.lexists(stream_path) else ''
+xray_blocks = re.findall(r'\bupstream\s+xray\s*\{([^{}]*)\}', stream_text)
+cover_rows = []
+with sqlite3.connect(staged(dbpath).as_uri()+'?mode=ro',uri=True) as cover_db:
+    node = 'node_id' if any(r[1] == 'node_id' for r in cover_db.execute('PRAGMA table_info(inbounds)')) else 'NULL'
+    for row in cover_db.execute("SELECT listen,port,stream_settings,"+node+" FROM inbounds WHERE protocol='hysteria'"):
+        stream_settings = json.loads(row[2])
+        if str(row[1]) == '443': cover_rows.append((row,stream_settings))
+new_cover = (cover_site.exists() or cover_site.is_symlink() or cover_enabled.exists() or cover_enabled.is_symlink() or
+             any('backup' in block for block in xray_blocks) or
+             any(s.get('hysteriaSettings',{}).get('masquerade') is not None for r,s in cover_rows))
+if new_cover:
+    if len(cover_rows) != 1 or len(xray_blocks) != 1: raise ValueError('Ambiguous staged Hysteria cover')
+    row, hs = cover_rows[0]; tls = hs.get('tlsSettings',{})
+    if (row[0] not in ('','0.0.0.0') or row[3] not in (None,0) or hs.get('hysteriaSettings',{}).get('version') != 2 or hs.get('network') != 'hysteria' or hs.get('security') != 'tls' or
+            hs.get('hysteriaSettings',{}).get('masquerade') != dict(type='proxy',url='unix:/run/3x-ui-hysteria-cover.sock',rewriteHost=False) or
+            tls.get('serverName') != reality or tls.get('rejectUnknownSni') is not True or len(tls.get('certificates',[])) != 1):
+        raise ValueError('Unknown staged Hysteria cover/TLS policy')
+    cert = tls['certificates'][0]
+    if cert.get('certificateFile') != letsencrypt+'/live/'+reality+'/fullchain.pem' or cert.get('keyFile') != letsencrypt+'/live/'+reality+'/privkey.pem':
+        raise ValueError('Unowned Hysteria REALITY certificate')
+    for key in ('certificateFile','keyFile'): staged(cert[key],tls_reference=True)
+    if ''.join(xray_blocks[0].split()) != 'server127.0.0.1:8443max_fails=0;server127.0.0.1:9443backup;':
+        raise ValueError('Unknown staged REALITY backup upstream')
+    expected_cover = '''# Managed by 3x-ui Auto Nginx: Hysteria2 cover
+server {
+    listen unix:/run/3x-ui-hysteria-cover.sock;
+    server_name %s;
+    server_tokens off;
+    absolute_redirect off;
+    autoindex off;
+    root /var/www/html/cover-reality;
+    index index.html;
+    if ($host !~* ^%s$) { return 404; }
+    location / { error_page 404 /404.html; try_files $uri $uri/ =404; }
+}
+''' % (reality,reality.replace('.',r'\.'))
+    if staged(nginx+'/sites-available/hysteria-cover.conf').read_text() != expected_cover:
+        raise ValueError('Unknown staged Hysteria static backend')
+    if not cover_enabled.is_symlink() or os.readlink(cover_enabled) != nginx+'/sites-available/hysteria-cover.conf':
+        raise ValueError('Unknown staged Hysteria activation link')
+    with sqlite3.connect(staged(dbpath).as_uri()+'?mode=ro',uri=True) as cover_db:
+        reals = [json.loads(value) for value, in cover_db.execute("SELECT stream_settings FROM inbounds WHERE protocol='vless' AND listen='127.0.0.1' AND port=8443")]
+    if len(reals) != 1 or reals[0].get('realitySettings',{}).get('xver') != 1:
+        raise ValueError('REALITY backup requires its known PROXY v1 fallback')
+
 for domain in (panel, reality, *([vision] if vision else [])):
     if not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?', domain):
         raise ValueError('Invalid saved domain')

@@ -345,11 +345,12 @@ class RealIntegration(unittest.TestCase):
                 elif name=='hysteria2':
                     self.assertEqual((listen,number),('',443))
                     listen='127.0.0.1'; number=self.hysteria_port
-                    self.assertEqual(stream['tlsSettings']['serverName'],'deploy.example')
+                    self.assertEqual(stream['tlsSettings']['serverName'],'cover.example')
                     self.assertEqual(stream['tlsSettings']['alpn'],['h3'])
-                    self.assertEqual(stream['tlsSettings']['certificates'][0]['certificateFile'], '/root/cert/deploy.example/fullchain.pem')
-                    self.assertEqual(stream['tlsSettings']['certificates'][0]['keyFile'], '/root/cert/deploy.example/privkey.pem')
+                    self.assertEqual(stream['tlsSettings']['certificates'][0]['certificateFile'], '/etc/letsencrypt/live/cover.example/fullchain.pem')
+                    self.assertEqual(stream['tlsSettings']['certificates'][0]['keyFile'], '/etc/letsencrypt/live/cover.example/privkey.pem')
                     stream['tlsSettings']['certificates'][0].update(certificateFile=str(self.cert),keyFile=str(self.key))
+                    stream['hysteriaSettings']['masquerade']['url']='unix:'+str(self.root/'hysteria-cover.sock')
                 else:
                     self.assertEqual(listen,'127.0.0.1'); number=self.backends[name]
                 if name=='reality':
@@ -435,6 +436,7 @@ class RealIntegration(unittest.TestCase):
         for directory in ('stream-sni.d','stream-upstreams.d'):
             (self.root/directory).mkdir(exist_ok=True)
             stream = stream.replace('/etc/nginx/'+directory+'/',str(self.root/directory)+'/')
+        stream = stream.replace('127.0.0.1:9443',f"127.0.0.1:{self.backends['cover']}")
         stream = stream.replace('127.0.0.1:8443',f"127.0.0.1:{self.backends['reality']}").replace(
             '127.0.0.1:7443',f"127.0.0.1:{self.backends['tls']}")
         stream = stream.replace('listen     443;',f'listen 127.0.0.1:{self.public};').replace('listen     [::]:443;','')
@@ -445,6 +447,8 @@ class RealIntegration(unittest.TestCase):
             self.vision_site = f'include {enabled.parent}/*.conf;'
         elif hasattr(self, 'vision_module'):
             stream = self.vision_module.stream_config(stream, 'vision.example', self.vision_port)
+        hy_cover=render('cat > /etc/nginx/sites-available/hysteria-cover.conf')
+        hy_cover=hy_cover.replace('/run/3x-ui-hysteria-cover.sock',str(self.root/'hysteria-cover.sock')).replace('/var/www',str(self.root/'www'))
         temp = '\n'.join(f'{kind}_temp_path {self.root}/{kind};' for kind in ('client_body','proxy','fastcgi','uwsgi','scgi'))
         maps = render('cat > /etc/nginx/sites-available/00-maps.conf')
         cover = render('cat > "/etc/nginx/sites-available/${reality_domain}"',
@@ -464,7 +468,7 @@ class RealIntegration(unittest.TestCase):
 worker_processes 1; daemon off; pid {self.root}/nginx.pid; error_log {self.root}/nginx-error.log;
 events {{ worker_connections 256; }}
 stream {{ {stream} }}
-http {{ include /etc/nginx/mime.types; log_format reality_probe '$remote_addr|$proxy_protocol_addr'; access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {main} {cover} {getattr(self, 'vision_site', '')} {getattr(self, 'http_site', '')} }}
+http {{ include /etc/nginx/mime.types; log_format reality_probe '$remote_addr|$proxy_protocol_addr'; access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {main} {cover} {hy_cover} {getattr(self, 'vision_site', '')} {getattr(self, 'http_site', '')} }}
 '''
         path = self.root/'nginx.conf';path.write_text(config)
         result = subprocess.run([self.nginx,'-t','-p',str(self.root)+'/', '-c',path],text=True,capture_output=True,timeout=15)
@@ -478,11 +482,12 @@ http {{ include /etc/nginx/mime.types; log_format reality_probe '$remote_addr|$p
         outbound = next(o for o in config['outbounds'] if o['protocol'] in ('vless','trojan','hysteria'))
         settings,stream = outbound['settings'],outbound['streamSettings']
         dest = settings['servers'][0] if 'servers' in settings else settings
-        self.assertEqual((dest['address'],dest['port']),('deploy.example',443))
+        public_domain='cover.example' if name=='hysteria2' else 'deploy.example'
+        self.assertEqual((dest['address'],dest['port']),(public_domain,443))
         dest.update(address='127.0.0.1',port=self.hysteria_port if name=='hysteria2' else self.public)
         if stream['security']=='tls':
-            self.assertEqual(stream['tlsSettings'].get('serverName') or 'deploy.example','deploy.example')
-            stream['tlsSettings']['serverName']='deploy.example'
+            self.assertEqual(stream['tlsSettings'].get('serverName') or public_domain,public_domain)
+            stream['tlsSettings']['serverName']=public_domain
             stream['tlsSettings']['allowInsecure']=False
             stream['tlsSettings']['certificates']=[{'certificateFile':str(self.cert),'usage':'verify'}]
         if negative:
@@ -920,6 +925,44 @@ EOF
         self.assertEqual(code,400)  # Real backend still rejects the local/private MTR destination.
         self.assertTrue('error' in json.loads(body),'Expected bounded MTR validation response')
         self.passed.append('Diagnostics: anonymous deny / real panel SSO / LibreSpeed and MTR boundaries')
+
+    def test_fresh_secret_lengths_native_panel_bootstrap_and_login(self):
+        from test_integrated_features import helper
+        fresh=self.root/'fresh-db';fresh.mkdir()
+        credentials=self.root/'fresh-secrets.json'
+        initial=installer_function('_panel_initial_config').replace('/usr/local/x-ui/x-ui',shlex.quote(str(self.xui)))
+        script='\n'.join(installer_function(name) for name in ('gen_random_string','initialize_installation'))
+        script+='\n'+initial+'''
+umask 077
+initialize_installation
+_panel_initial_config >/dev/null
+export config_username config_password panel_path xhttp_path diag_path
+python3 - <<'PYFRESHSECRETS'
+import json, os
+from pathlib import Path
+Path(os.environ['FRESH_CREDENTIALS']).write_text(json.dumps({name:os.environ[name] for name in
+    ('config_username','config_password','panel_path','xhttp_path','diag_path')}))
+PYFRESHSECRETS
+'''
+        env={**os.environ,'XUI_DB_FOLDER':str(fresh),'XUI_BIN_FOLDER':str(self.root/'bin'),
+             'XUI_LOG_FOLDER':str(self.root/'logs'),'XUIDB':str(fresh/'x-ui.db'),
+             'panel_port':str(self.backends['panel']),'FRESH_CREDENTIALS':str(credentials)}
+        result=subprocess.run(['bash','-eu','-c','msg_err() { :; };\n'+script],env=env,capture_output=True,timeout=30)
+        self.assertEqual(result.returncode,0,'Native bootstrap rejected fresh secret sizes')
+        values=json.loads(credentials.read_text())
+        self.assertEqual({name:len(value) for name,value in values.items()},
+                         dict(config_username=10,config_password=20,panel_path=16,xhttp_path=16,diag_path=22))
+        with sqlite3.connect(fresh/'x-ui.db') as db:
+            path=db.execute("SELECT value FROM settings WHERE key='webBasePath'").fetchone()[0]
+            self.assertTrue(path=='/'+values['panel_path']+'/','Native panel changed the generated path')
+            for key,value in (('webCertFile',str(self.cert)),('webKeyFile',str(self.key)),('subEnable','false')):
+                db.execute('DELETE FROM settings WHERE key=?',(key,));db.execute('INSERT INTO settings(key,value) VALUES(?,?)',(key,value))
+        panel=self.launch([self.xui],'fresh-secret-panel',env);self.ready(panel,('127.0.0.1',self.backends['panel']))
+        api=helper('amneziawg').Panel(f'https://deploy.example:{self.backends["panel"]}'+path,
+            values['config_username'],values['config_password'],self.root,
+            ['--cacert',str(self.cert),'--resolve',f'deploy.example:{self.backends["panel"]}:127.0.0.1'])
+        api.request('panel/api/inbounds/list')
+        self.passed.append('Fresh secrets: native 16-character panel path / 20-character password / real login')
 
     def test_single_bootstrap_real_login_and_logout(self):
         from test_integrated_features import helper
@@ -1662,6 +1705,11 @@ rules:
 
     def test_grpc_fragmented_full(self): self.grpc_fragmented(False,100)
     def test_grpc_fragmented_direct(self): self.grpc_fragmented(True,50)
+    def test_managed_hysteria_http3_and_disabled_roles(self):
+        from hysteria_cover_probe import run_profile
+        run_profile(self)
+        self.passed.append('Hysteria cover / eight enable combinations / native renewal')
+
     def test_hysteria2(self):
         self.transport('hysteria2')
         self.assertIn(f'dialing to udp:127.0.0.1:{self.hysteria_port}',
@@ -1676,7 +1724,7 @@ rules:
         self.assertEqual(len(links),5)
         for link in links:
             self.assertIn(link.scheme,('vless','trojan','hysteria2'))
-            self.assertEqual((link.hostname,link.port),('deploy.example',443))
+            self.assertEqual((link.hostname,link.port),('cover.example' if link.scheme in ('hysteria2','hy2') else 'deploy.example',443))
             self.assertTrue(link.username == (self.uuid if link.scheme=='vless' else self.auth), 'public credential mismatch')
             query=parse_qs(link.query)
             if link.scheme == 'vless': self.assertEqual(query.get('encryption'),['none'])
@@ -1690,7 +1738,7 @@ rules:
             outbound=next(o for o in config['outbounds'] if o['protocol'] in ('vless','trojan','hysteria'))
             settings=outbound['settings'];stream=outbound['streamSettings']
             endpoint=settings['servers'][0] if 'servers' in settings else settings
-            self.assertEqual((endpoint['address'],endpoint['port']),('deploy.example',443))
+            self.assertEqual((endpoint['address'],endpoint['port']),('cover.example' if name=='hysteria2' else 'deploy.example',443))
             if outbound['protocol']=='vless':
                 self.assertTrue(settings['id']==self.uuid,'JSON UUID mismatch')
                 self.assertEqual(settings['encryption'],'none')
@@ -1702,7 +1750,7 @@ rules:
                 self.assertEqual(reality['fingerprint'],'firefox')
                 self.assertEqual(settings['flow'],'xtls-rprx-vision')
             else:
-                self.assertEqual(stream['tlsSettings'].get('serverName') or endpoint['address'],'deploy.example')
+                self.assertEqual(stream['tlsSettings'].get('serverName') or endpoint['address'],'cover.example' if name=='hysteria2' else 'deploy.example')
                 if name=='ws':
                     self.assertEqual(stream['network'],'ws')
                     self.assertEqual(stream['wsSettings']['path'],'/10003/websocket')
@@ -1790,7 +1838,8 @@ print('PARTIAL Telemt integration: real nginx staged Restore and v1.1.5 install 
         code = r'''from pathlib import Path
 import hashlib, json, shutil, sqlite3, sys, unittest
 sys.path.insert(0,sys.argv[1])
-from test_personal_backup import PersonalBackup
+from test_personal_backup import PersonalBackup,relocated
+from test_personal_xhttp import seed,render
 case=unittest.TestCase()
 f=PersonalBackup('runTest'); f.setUp()
 try:
@@ -1811,10 +1860,21 @@ try:
                 for key,file in (('certificateFile','fullchain.pem'),('keyFile','privkey.pem')):
                     if pair.get(key): pair[key] = str(f.path('/root/cert/example.com/'+file))
             db.execute('UPDATE inbounds SET stream_settings=? WHERE id=?',(json.dumps(stream),iid))
+        canonical,_=seed(domain='example.com',reality_domain='reality.example.com')
+        for name in ('reality','hysteria2'):
+            row=canonical[name]
+            db.execute('UPDATE inbounds SET listen=?,port=?,stream_settings=? WHERE id=?',
+                (relocated(row['listen'],f.root),int(row['port']),relocated(row['stream_settings'],f.root),row['id']))
+        db.execute("UPDATE hosts SET address='reality.example.com' WHERE remark='hysteria2'")
         db.execute("UPDATE settings SET value='false' WHERE key='subJsonEnable'")
         db.execute("UPDATE settings SET value='https://user.example/export/' WHERE key='subJsonURI'")
         db.execute("UPDATE inbounds SET enable=0,tag='user-ws',remark='user profile' WHERE protocol='vless' AND stream_settings LIKE '%wsSettings%'")
         db.execute("UPDATE hosts SET address='user.example',port=2443 WHERE remark='ws'")
+    for target in ('/etc/nginx/stream-enabled/stream.conf','/etc/nginx/sites-available/hysteria-cover.conf'):
+        command='cat > '+target
+        f.write(target,relocated(render(command,domain='example.com',reality_domain='reality.example.com'),f.root),0o600)
+    enabled=f.path('/etc/nginx/sites-enabled/hysteria-cover.conf');enabled.parent.mkdir(parents=True,exist_ok=True)
+    enabled.symlink_to(f.path('/etc/nginx/sites-available/hysteria-cover.conf'))
     def state():
         with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
             case.assertEqual(db.execute('PRAGMA quick_check').fetchone(),('ok',))
@@ -1843,7 +1903,7 @@ finally:
         provider=base64.b64decode(self.provider,validate=True).decode()
         self.assertEqual(len(provider.splitlines()),5)
         for link in (urlsplit(line) for output in (raw,provider) for line in output.splitlines()):
-            self.assertEqual((link.hostname,link.port),('deploy.example',443))
+            self.assertEqual((link.hostname,link.port),('cover.example' if link.scheme in ('hysteria2','hy2') else 'deploy.example',443))
         public_values=[raw,provider]
         for config in self.client_configs:
             for outbound in config['outbounds']:
@@ -2047,8 +2107,9 @@ finally:
         self.ready(xray,('127.0.0.1',self.backends['trojan-grpc']))
         # The real x-ui provider remains the input; only public test endpoints are relocated.
         provider=base64.b64decode(self.provider,validate=True).decode()
-        self.assertEqual(provider.count('@deploy.example:443'),5)
-        payload=base64.b64encode(provider.replace('@deploy.example:443',f'@deploy.example:{self.public}').encode())
+        self.assertEqual(provider.count('@deploy.example:443'),4)
+        self.assertEqual(provider.count('@cover.example:443'),1)
+        payload=base64.b64encode(provider.replace('@deploy.example:443',f'@deploy.example:{self.public}').replace('@cover.example:443',f'@cover.example:{self.hysteria_port}').encode())
         class Provider(BaseHTTPRequestHandler):
             def do_GET(handler):
                 handler.send_response(200); handler.send_header('Content-Length',str(len(payload)))
@@ -2078,7 +2139,7 @@ finally:
             # Both variants use the same export. No test-side subscription/YAML proxy generator.
             runtime=runtime.replace('    health-check:',"        - '.name = tostring'\n    health-check:",1)
             runtime+=f'\nexternal-controller: 127.0.0.1:{controller}\nbind-address: 127.0.0.1\nrules:\n  - MATCH,🌍 VPN\n'
-            runtime+='hosts:\n  deploy.example: 127.0.0.1\n'
+            runtime+='hosts:\n  deploy.example: 127.0.0.1\n  cover.example: 127.0.0.1\n'
             runtime+='tls:\n  custom-certifactes:\n    - '+json.dumps(self.cert.read_text())+'\n'
             path=self.root/f'mihomo-{enabled}.yaml';path.write_text(runtime)
             process=self.launch([self.mihomo,'-d',self.root/f'mihomo-{enabled}','-f',path],f'mihomo-{enabled}')

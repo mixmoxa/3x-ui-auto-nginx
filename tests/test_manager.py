@@ -803,7 +803,7 @@ manager_menu
                 db.execute('UPDATE settings SET value=? WHERE key=?',('/root/cert/example.com/'+name,key))
             for iid,(role,row) in enumerate(inbounds(domain='example.com',reality_domain='reality.example.com').items(),20):
                 db.execute('INSERT INTO inbounds VALUES(?,?,?,?,?,?,?)',(iid,row['protocol'],row['listen'],int(row['port']),row['stream_settings'],'',''))
-                db.execute('INSERT INTO hosts VALUES(?,?,443)',(iid,'example.com'))
+                db.execute('INSERT INTO hosts VALUES(?,?,443)',(iid,'reality.example.com' if role=='hysteria2' else 'example.com'))
         code='CORE_RESULT=configured; PROJECT_SOURCE_SHA='+('a'*40)+'; domain=example.com; reality_domain=reality.example.com; XUIDB="$1"; VISION_RESULT=failed_rolled_back; AWG_RESULT=not_requested; AGH_RESULT=failed_unverified;\n'+function('write_managed_state')+'\nwrite_managed_state'
         result=subprocess.run(['bash','-c',code,'fixture',str(dbpath)],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)

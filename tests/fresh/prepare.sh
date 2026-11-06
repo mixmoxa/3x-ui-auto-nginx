@@ -15,6 +15,7 @@ printf "/dev/vda / ext4 defaults 0 1\n" > root/etc/fstab
 mkdir -p root/root/pilot root/dev root/proc root/sys root/run root/etc/systemd/network root/etc/letsencrypt root/etc/ssh/sshd_config.d
 cp /repo/x-ui-latest.sh root/root/pilot/
 cp /repo/tests/fresh/install.py /repo/tests/fresh/checks.py /repo/tests/fresh/diagnostics.py root/root/pilot/
+cp /repo/tests/http3.py root/root/pilot/
 cp /repo/assets/amneziawg/managed.py root/root/pilot/session.py
 cp /repo/assets/client/managed.py root/root/pilot/client.py
 cp /repo/assets/security/managed.py root/root/pilot/current-security.py
