@@ -312,11 +312,12 @@ if sys.argv[1]=='cert':
                 s.bind(('127.0.0.1',0)); public_port = s.getsockname()[1]
                 r.bind(('127.0.0.1',0)); reality_port = r.getsockname()[1]
             shared = render(SHARED, panel_port=str(panel.server_port), sub_port=str(sub.server_port))
-            self.assertEqual(shared.count(f'proxy_pass https://127.0.0.1:{sub.server_port};'),7)
+            self.assertEqual(shared.count(f'proxy_pass https://127.0.0.1:{sub.server_port};'),5)
             self.assertNotIn(f'proxy_pass http://127.0.0.1:{sub.server_port};',shared)
             (root/'includes.conf').write_text(shared)
             vhost = render(MAIN, panel_port=str(panel.server_port), sub_port=str(sub.server_port),
                            mtr_backend_port=str(clash.server_port))
+            self.assertEqual(vhost.count(f'proxy_pass https://127.0.0.1:{sub.server_port};'),2)
             self.assertIn(f'proxy_pass https://127.0.0.1:{panel.server_port};',vhost)
             # Fixture direct TLS entry bypasses only the outer stream/proxy-protocol hop.
             vhost = re.sub(r'127\.0\.0\.1:7443 ssl(?: http2)? proxy_protocol', f'127.0.0.1:{public_port} ssl', vhost)

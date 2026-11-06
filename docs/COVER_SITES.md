@@ -24,7 +24,9 @@ cleanup. Publication refuses symlinked parents and foreign cover paths. The
 selection file is root:root 0600; generated directories/files are 0755/0644.
 
 Static 404 handling is scoped to the static location; proxied service error
-contracts are preserved. /assets remains the subscription backend route. Network
+contracts are preserved. New installations serve root /assets routes on the panel domain only;
+native subscription HTML resources under its subscription prefix still work on
+both supported subscription domains. Network
 listeners, TLS termination, PROXY protocol, transport paths and client secrets
 are unchanged. New Vision uses cover-vision; its recognizer also accepts the
 exact legacy /var/www/html layout. Verified Vision rollback removes only a newly

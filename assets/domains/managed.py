@@ -461,10 +461,18 @@ class Operation:
         settings = context['settings']
         subpath, jsonpath = settings['subPath'].strip('/'), settings['subJsonPath'].strip('/')
         expected_locations = ('/'+subpath+'/', '= /'+subpath, '~ ^/'+subpath+'/(?<clash_sub_id>[^/]+)$',
-                              '/assets', '/assets/', '/'+jsonpath, '/'+jsonpath+'/')
-        require(shared.count('proxy_pass https://127.0.0.1:'+settings['subPort']+';') == 7 and
+                              '/'+jsonpath, '/'+jsonpath+'/')
+        assets = ''.join('location '+name+' { proxy_pass https://127.0.0.1:'+settings['subPort']+'; }'
+                         for name in ('/assets','/assets/'))
+        legacy_assets = normalize(assets) in normalize(shared)
+        require(shared.count('proxy_pass https://127.0.0.1:'+settings['subPort']+';') == (7 if legacy_assets else 5) and
                 all('location '+name+' {' in shared or 'location '+name+'  {' in shared for name in expected_locations),
                 'Subscription paths/TLS backend do not match nginx.')
+        if not legacy_assets:
+            require('location /assets' not in shared and
+                    normalize(assets) in normalize(self.read('/etc/nginx/sites-available/'+panel)) and
+                    'location /assets' not in self.read('/etc/nginx/sites-available/'+reality),
+                    'Unknown native subscription asset ownership.')
         xhttp = context['streams'][context['inbound_roles']['xhttp']].get('xhttpSettings', {}).get('path', '')
         require(re.fullmatch(r'/[A-Za-z0-9_-]+', xhttp) is not None and 'location ^~ '+xhttp+'/ {' in shared and
                 shared.count('grpc_pass unix:/dev/shm/uds2023.sock;') == 1, 'XHTTP path/socket does not match nginx.')
@@ -508,6 +516,10 @@ class Operation:
         require(main.count('stream { include /etc/nginx/stream-enabled/*.conf; }') == 1 and
                 'include /etc/nginx/sites-enabled/*;' in main, 'Unknown main nginx include layout.')
         self.read('/etc/nginx/sites-enabled/80.conf', '/etc/nginx/sites-available/80.conf')
+        names = self.http_names(self.read(HTTP))
+        # HTTP-01 preparation temporarily includes both original and proposed names.
+        # file_plan retains the existing ownership check before preparing that change.
+        require({panel,reality} <= set(names), 'Missing active names in the project HTTP-01 vhost.')
         if vision:
             for file in ('/etc/nginx/sites-available/vision.conf', '/etc/nginx/sites-available/vision-acme.conf',
                          '/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision'):
@@ -516,15 +528,41 @@ class Operation:
                 self.read('/etc/nginx/sites-enabled/'+name, '/etc/nginx/sites-available/'+name)
 
     @staticmethod
+    def http_names(text):
+        names = single(re.findall(r'^    server_name ([a-z0-9. -]+);$', text, re.M), 'Unknown HTTP-01 server names.').split()
+        guards = re.findall(r'^    if \(\$host[^\n]*$', text, re.M)
+        tokens = re.findall(r'^\s*server_tokens\s+([^;]+);', text, re.M)
+        if guards or tokens:
+            expected = '    if ($host !~* ^('+'|'.join(name.replace('.',r'\.') for name in names)+')$) { return 404; }'
+            require(guards == [expected] and tokens == ['off'], 'Unknown HTTP-01 Host guard.')
+        return names
+
+    @staticmethod
     def vhost(text, old, new):
-        # Only the five installer-emitted domain-bearing directives may change.
-        require(text.count(old) == 5, 'Custom domain-bearing nginx directives prevent an unambiguous switch.')
+        # Exactly one of the two installer-emitted Host/SNI contracts, never a generic regex editor.
+        normalize = lambda line: re.sub(r'\s+', '', line)
+        escaped = old.replace('.', r'\.')
+        guards = [normalize(line) for line in text.splitlines()
+                  if re.match(r'\s*if \(\$(host|ssl_server_name|scheme|safe)\b', line)]
+        legacy = [f'if ($host !~* ^(.+\\.)?{old}$) {{ return 444; }}',
+                  'if ($scheme ~* https) { set $safe 1; }',
+                  f'if ($ssl_server_name !~* ^(.+\\.)?{old}$) {{ set $safe "${{safe}}0"; }}',
+                  'if ($safe = 10) { return 444; }']
+        modern = [f'if ($host !~* ^{escaped}$) {{ return 404; }}',
+                  f'if ($ssl_server_name !~* ^{escaped}$) {{ return 421; }}']
+        old_layout = guards == list(map(normalize, legacy))
+        require((old_layout and text.count(old) == 5) or
+                (guards == list(map(normalize, modern)) and text.count(old) == 3 and text.count(escaped) == 2),
+                'Custom domain-bearing nginx directives prevent an unambiguous switch.')
         substitutions = [
             (r'^(\s*server_name )'+re.escape(old)+r'(;)$', lambda m: m[1]+new+m[2]),
             (r'^(\s*ssl_certificate\s+)/etc/letsencrypt/live/'+re.escape(old)+r'/fullchain.pem;$', lambda m: m[1]+'/etc/letsencrypt/live/'+new+'/fullchain.pem;'),
-            (r'^(\s*ssl_certificate_key\s+)/etc/letsencrypt/live/'+re.escape(old)+r'/privkey.pem;$', lambda m: m[1]+'/etc/letsencrypt/live/'+new+'/privkey.pem;'),
-            (r'^(\s*if \(\$host !~\* \^\(\.\+\\\.\)\?)'+re.escape(old)+r'(\$\).*)$', lambda m: m[1]+new+m[2]),
-            (r'^(\s*if \(\$ssl_server_name !~\* \^\(\.\+\\\.\)\?)'+re.escape(old)+r'(\$\).*)$', lambda m: m[1]+new+m[2])]
+            (r'^(\s*ssl_certificate_key\s+)/etc/letsencrypt/live/'+re.escape(old)+r'/privkey.pem;$', lambda m: m[1]+'/etc/letsencrypt/live/'+new+'/privkey.pem;')]
+        for variable in ('host','ssl_server_name'):
+            prefix = r'\^\(\.\+\\\.\)\?' if old_layout else r'\^'
+            previous, replacement = (old,new) if old_layout else (escaped,new.replace('.',r'\.'))
+            substitutions.append((r'^(\s*if \(\$'+variable+r' !~\* '+prefix+')'+re.escape(previous)+r'(\$\).*)$',
+                                  lambda m, value=replacement: m[1]+value+m[2]))
         for pattern, replacement in substitutions:
             text = edit(text, pattern, replacement)
         return text
@@ -817,11 +855,15 @@ class Operation:
                 add('/etc/nginx/sites-enabled/'+previous, None)
         add(STREAM, stream)
         http = self.read(HTTP)
-        names = single(re.findall(r'^    server_name ([a-z0-9. -]+);$', http, re.M), 'Unknown HTTP-01 server names.').split()
+        names = self.http_names(http)
         allowed = {old['panel'], old['reality'], *((context['manifest'] or {}).get('retained_domains', {}))}
         require(set(names) <= allowed and {old['panel'], old['reality']} <= set(names), 'Unknown names in the project HTTP-01 vhost.')
-        names = list(dict.fromkeys([*names, panel, reality]))
-        add(HTTP, edit(http, r'^    server_name [a-z0-9. -]+;$', lambda m: '    server_name '+' '.join(names)+';'))
+        updated_names = list(dict.fromkeys([*names, panel, reality]))
+        if re.search(r'^    if \(\$host', http, re.M):
+            before = '    if ($host !~* ^('+'|'.join(name.replace('.',r'\.') for name in names)+')$) { return 404; }'
+            after = '    if ($host !~* ^('+'|'.join(name.replace('.',r'\.') for name in updated_names)+')$) { return 404; }'
+            http = edit(http, '^'+re.escape(before)+'$', lambda m: after)
+        add(HTTP, edit(http, r'^    server_name [a-z0-9. -]+;$', lambda m: '    server_name '+' '.join(updated_names)+';'))
         add(HOOK, self.check('render-hook', panel, reality))
         if panel != old['panel']:
             directory = '/root/cert/'+panel

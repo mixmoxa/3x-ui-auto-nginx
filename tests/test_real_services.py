@@ -183,13 +183,20 @@ class RealServices(unittest.TestCase):
         self.assertTrue(owned);self.assertEqual({row[4] for row in owned},{f'127.0.0.1:{self.web}',f'127.0.0.1:{self.native}'})
         self.assertTrue(any(row[0]=='udp' for row in owned));return p
 
-    def start_nginx(self):
+    def start_nginx(self, foreign_acme=()):
         snippet=self.shell('source "$1"; AGH_WEB_PORT="$2"; AGH_PATH="$3"; agh_snippet',HELPER,self.web,self.prefix)
         from test_personal_xhttp import render
-        acme=render('cat > /etc/nginx/sites-available/80.conf')
+        acme=render('cat > /etc/nginx/sites-available/80.conf',domain=self.domain,reality_domain=self.reality)
         self.assertIn('listen 80;',acme)
         acme=acme.replace('listen 80;',f'listen 127.0.0.1:{self.http};').replace('    listen [::]:80;\n','')
         acme=acme.replace('/var/www/acme',str(self.webroot))
+        if foreign_acme:
+            # Independent test vhost: foreign-lineage renewal and wrong-webroot
+            # rejection must not depend on the managed default accepting any Host.
+            acme+=f'''server {{ listen 127.0.0.1:{self.http}; server_name {" ".join(foreign_acme)};
+server_tokens off;
+location ^~ /.well-known/acme-challenge/ {{ root {self.webroot}; try_files $uri =404; }}
+location / {{ return 404; }} }}\n'''
         temp='\n'.join(f'{kind}_temp_path {self.root}/{kind};' for kind in ('client_body','proxy','fastcgi','uwsgi','scgi'))
         path=self.root/'nginx.conf'
         path.write_text(f'pid {self.root}/nginx.pid; error_log {self.root}/nginx-error.log; events {{}} http {{ access_log {self.root}/access.log; {temp} {acme} server {{ listen 127.0.0.1:{self.https} ssl; server_name {self.domain}; ssl_certificate {self.cert}; ssl_certificate_key {self.key}; {snippet} location / {{ return 404; }} }} }}')
@@ -357,7 +364,7 @@ class RealServices(unittest.TestCase):
                             '--webroot','-w',webroot or self.webroot,'--cert-name',domain,'-d',domain,success=success)
 
     def test_real_certbot_pebble_http01_issuance_renewal_and_negative(self):
-        nginx=self.start_nginx();self.start_pebble()
+        nginx=self.start_nginx(foreign_acme=('broken.example.test',));self.start_pebble()
         domains = (self.domain, self.reality, 'vision.example.test')
         # Use the production separate Vision webroot vhost on the same HTTP listener.
         from test_integrated_features import helper
@@ -405,7 +412,7 @@ class RealServices(unittest.TestCase):
 
     def test_real_project_deploy_hook_and_nginx_reload(self):
         from certificate_fixtures import certificates,relocate
-        nginx=self.start_nginx();self.start_pebble()
+        nginx=self.start_nginx(foreign_acme=('unrelated.example.test',));self.start_pebble()
         for domain in (self.domain,self.reality,'unrelated.example.test'):self.issue(domain)
         # Existing Xray process/socket fixture remains explicitly FIXTURE: Phase 2 does not rerun Xray.
         context=self.root/'hook-context';context.mkdir()

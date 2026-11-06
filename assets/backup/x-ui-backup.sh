@@ -2031,7 +2031,21 @@ with sqlite3.connect(staged(dbpath)) as db:
         depth += line.count('{') - line.count('}')
         if depth == 0: location = None
         if depth < 0: raise ValueError('Invalid managed location braces')
-    if depth or seen != expected: raise ValueError('Incomplete managed subscription routes')
+    if depth: raise ValueError('Incomplete managed subscription routes')
+    if seen == expected - {'/assets','/assets/'}:
+        # New layout keeps only native root assets in the panel vhost. The
+        # subscription-prefixed HTML assets still use the unchanged shared route.
+        main = staged(nginx + '/sites-available/' + panel).read_text()
+        assets = re.findall(r'^[ \t]*location[ \t]+(/assets/?)[ \t]*\{([^{}\n]*)\}[ \t]*$',main,re.M)
+        owner = 'proxy_pass https://127.0.0.1:' + port + ';'
+        asset_route = r'\blocation\s+(?:=\s+|\^~\s+)?/assets(?:/|\s)'
+        if (len(assets) != 2 or {name for name,body in assets} != {'/assets','/assets/'} or
+                any(body.split() != owner.split() for name,body in assets) or
+                re.search(asset_route,text) or
+                re.search(asset_route,staged(nginx + '/sites-available/' + reality).read_text())):
+            raise ValueError('Unknown native subscription asset ownership')
+    elif seen != expected:
+        raise ValueError('Incomplete managed subscription routes')
     db.execute("UPDATE settings SET value='127.0.0.1' WHERE key='webListen' AND value='' ")
 # Remove only the two exact old managed panel proxies from the staged camouflage vhost.
 # The main panel vhost and shared include are intentionally outside this migration.

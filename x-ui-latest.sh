@@ -720,6 +720,8 @@ server {
     listen 80;
     ${ipv6_listen}
     server_name ${domain} ${reality_domain};
+    server_tokens off;
+    if (\$host !~* ^(${domain//./\\.}|${reality_domain//./\\.})\$) { return 404; }
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/acme;
         default_type text/plain;
@@ -868,8 +870,6 @@ EOF
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_pass https://127.0.0.1:${sub_port};
     }
-    location /assets  { proxy_pass https://127.0.0.1:${sub_port}; }
-    location /assets/ { proxy_pass https://127.0.0.1:${sub_port}; }
 
     #Subscription (json)
     location /${json_path} {
@@ -1004,10 +1004,8 @@ server {
     ssl_ciphers HIGH:!aNULL:!eNULL:!MD5:!DES:!RC4:!ADH:!SSLv3:!EXP:!PSK:!DSS;
     ssl_certificate     /etc/letsencrypt/live/${domain}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;
-    if (\$host !~* ^(.+\.)?${domain}\$)            { return 444; }
-    if (\$scheme ~* https)                          { set \$safe 1; }
-    if (\$ssl_server_name !~* ^(.+\.)?${domain}\$) { set \$safe "\${safe}0"; }
-    if (\$safe = 10)                                { return 444; }
+    if (\$host !~* ^${domain//./\\.}\$) { return 404; }
+    if (\$ssl_server_name !~* ^${domain//./\\.}\$) { return 421; }
     if (\$request_uri ~ "(\"|'|\`|~|,|:|;|%|\\$|&&|\?\?|0x00|0X00|\||\\|\{|\}|\[|\]|<|>|\.\.\.|\.\.\/|\/\/\/)") { set \$hack 1; }
     error_page 400 401 402 403 500 501 502 503 504 =404 /404;
     proxy_intercept_errors on;
@@ -1089,7 +1087,6 @@ server {
         alias /var/www/diagnostics/;
         index index.html;
         try_files \$uri \$uri/ /index.html;
-        add_header Set-Cookie "diag_key=${diag_token}; Path=${diag_path}; Secure; HttpOnly; SameSite=Lax; Max-Age=604800" always;
         add_header Cache-Control "no-store" always;
         add_header X-Robots-Tag "noindex, nofollow" always;
     }
@@ -1167,6 +1164,10 @@ server {
         proxy_set_header    X-Real-IP \$remote_addr;
     }
 
+    # Root subscription asset routes belong to the panel domain only.
+    location /assets  { proxy_pass https://127.0.0.1:${sub_port}; }
+    location /assets/ { proxy_pass https://127.0.0.1:${sub_port}; }
+
     include /etc/nginx/snippets/x-ui-auto-optional/*.conf;
     include /etc/nginx/snippets/includes.conf;
 }
@@ -1189,10 +1190,8 @@ server {
     ssl_ciphers HIGH:!aNULL:!eNULL:!MD5:!DES:!RC4:!ADH:!SSLv3:!EXP:!PSK:!DSS;
     ssl_certificate     /etc/letsencrypt/live/${reality_domain}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${reality_domain}/privkey.pem;
-    if (\$host !~* ^(.+\.)?${reality_domain}\$)            { return 444; }
-    if (\$scheme ~* https)                                  { set \$safe 1; }
-    if (\$ssl_server_name !~* ^(.+\.)?${reality_domain}\$) { set \$safe "\${safe}0"; }
-    if (\$safe = 10)                                        { return 444; }
+    if (\$host !~* ^${reality_domain//./\\.}\$) { return 404; }
+    if (\$ssl_server_name !~* ^${reality_domain//./\\.}\$) { return 421; }
     if (\$request_uri ~ "(\"|'|\`|~|,|:|;|%|\\$|&&|\?\?|0x00|0X00|\||\\|\{|\}|\[|\]|<|>|\.\.\.|\.\.\/|\/\/\/)") { set \$hack 1; }
     error_page 400 401 402 403 500 501 502 503 504 =404 /404;
     proxy_intercept_errors on;

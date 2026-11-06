@@ -283,6 +283,52 @@ class DomainFixture:
 
 
 class Domains(unittest.TestCase):
+    def test_http_guard_formats_preserve_panel_reality_both_sequence_and_rollback(self):
+        for historical in (False,True):
+            with self.subTest(historical=historical):
+                f=self.fixture(historical=historical,optional=True)
+                before=f.state()
+                for panel,reality in (('second-panel.example',None),(None,'second-cover.example'),
+                                      ('third-panel.example','third-cover.example')):
+                    f.change(panel,reality)
+                    context=f.operation.discover()
+                    for role in ('panel','reality'):
+                        name=context['domains'][role]
+                        text=f.p('/etc/nginx/sites-available/'+name).read_text()
+                        self.assertEqual('return 444;' in text,historical)
+                        if not historical:
+                            self.assertIn('if ($host !~* ^'+name.replace('.',r'\.')+'$) { return 404; }',text)
+                            self.assertIn('if ($ssl_server_name !~* ^'+name.replace('.',r'\.')+'$) { return 421; }',text)
+                    names=f.operation.http_names(f.p(f.module.HTTP).read_text())
+                    self.assertTrue(set(context['domains'][role] for role in ('panel','reality')) <= set(names))
+                    for table in ('clients','client_inbounds','users','client_traffics'):
+                        self.assertEqual(f.state()[table],before[table])
+                files={name:f.p('/etc/nginx/sites-available/'+name).read_bytes()
+                       for name in (context['domains']['panel'],context['domains']['reality'],'80.conf')}
+                f.fault='verifying new stack'
+                with self.assertRaises(subprocess.CalledProcessError):f.change('failed.example','failed-cover.example')
+                for name,contents in files.items():self.assertEqual(f.p('/etc/nginx/sites-available/'+name).read_bytes(),contents)
+                self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
+
+    def test_unknown_http_guards_refuse_before_backup(self):
+        for fault in ('host-dot','sni-dot','status','duplicate','http-dot','http-missing','extra-domain'):
+            with self.subTest(fault=fault):
+                f=self.fixture(); before=f.state()
+                path=f.p(f.module.HTTP if fault.startswith('http-') else '/etc/nginx/sites-available/'+f.panel)
+                text=path.read_text()
+                if fault=='host-dot':text=text.replace('^deploy\\.example$','^deploy.example$',1)
+                elif fault=='sni-dot':text=text.replace('if ($ssl_server_name !~* ^deploy\\.example$', 'if ($ssl_server_name !~* ^deploy.example$')
+                elif fault=='status':text=text.replace('return 421;','return 200;')
+                elif fault=='duplicate':text=text.replace('    if ($host !~*', '    if ($host !~* ^deploy\\.example$) { return 404; }\n    if ($host !~*',1)
+                elif fault=='http-dot':text=text.replace('deploy\\.example','deploy.example')
+                elif fault=='http-missing':text=re.sub(r'^    if \(\$host[^\n]*\n','',text,flags=re.M)
+                else:text+='\n# deploy.example custom identity\n'
+                path.write_text(text)
+                with self.assertRaises(f.module.Refusal):f.change('new.example')
+                self.assertEqual(f.state(),before)
+                self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] or args[0]=='certbot' for _,args in f.calls))
+                self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
+
     def test_cover_contents_and_selections_survive_panel_reality_both_and_rollback(self):
         from test_cover_sites import helper as covers
         cover=covers()
@@ -813,13 +859,42 @@ class Domains(unittest.TestCase):
         return backup,sync,state
 
     def test_updated_state_round_trips_through_existing_backup_v3(self):
-        f=self.fixture();f.change('new.example','new-cover.example')
-        backup,_,state=self.backup_fixture(f)
-        before=state();archive=backup.backup()
-        with sqlite3.connect(backup.path(f.module.DB)) as db:db.execute("UPDATE clients SET password='fixture-damage'")
-        result=backup.run_tool('restore',archive)
-        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-        self.assertTrue(state()==before,'Backup v3 did not preserve the post-switch SQLite state')
+        for historical in (False,True):
+            with self.subTest(historical=historical):
+                f=self.fixture(historical=historical);f.change('new.example','new-cover.example')
+                backup,_,state=self.backup_fixture(f)
+                files=('/etc/nginx/sites-available/new.example','/etc/nginx/sites-available/new-cover.example',
+                       f.module.HTTP,'/etc/nginx/snippets/includes.conf')
+                contents={name:backup.path(name).read_bytes() for name in files}
+                before=state();archive=backup.backup();original=archive.read_bytes()
+                with sqlite3.connect(backup.path(f.module.DB)) as db:db.execute("UPDATE clients SET password='fixture-damage'")
+                result=backup.run_tool('restore',archive)
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                self.assertTrue(state()==before,'Backup v3 did not preserve the post-switch SQLite state')
+                self.assertTrue(archive.read_bytes()==original,'Source archive changed')
+                self.assertTrue(all(backup.path(name).read_bytes()==data for name,data in contents.items()),
+                                'Restore rewrote an old or new HTTP layout')
+
+    def test_restore_refuses_conflicting_new_asset_ownership_before_replacement(self):
+        for fault in ('wrong-main-backend','duplicate-main','reality-route','shared-route'):
+            with self.subTest(fault=fault):
+                f=self.fixture(); backup,_,state=self.backup_fixture(f)
+                main=backup.path('/etc/nginx/sites-available/'+f.panel)
+                subport=f.operation.discover()['settings']['subPort']
+                route='location /assets { proxy_pass https://127.0.0.1:'+subport+'; }'
+                if fault=='wrong-main-backend':main.write_text(main.read_text().replace(route.replace('/assets {','/assets  {'),route.replace('https:','http:')))
+                elif fault=='duplicate-main':main.write_text(main.read_text().replace('    location /assets/', '    '+route+'\n    location /assets/',1))
+                else:
+                    target=backup.path('/etc/nginx/sites-available/'+f.reality if fault=='reality-route' else '/etc/nginx/snippets/includes.conf')
+                    target.write_text(target.read_text().replace('server {','server {\n    '+route,1) if fault=='reality-route' else target.read_text()+'\n'+route+'\n')
+                before=state();text=main.read_bytes();archive=backup.backup();original=archive.read_bytes()
+                calls=len(backup.commands())
+                result=backup.run_tool('restore',archive)
+                self.assertNotEqual(result.returncode,0)
+                self.assertTrue(state()==before,'Refused archive changed SQLite')
+                self.assertTrue(main.read_bytes()==text,'Refused archive changed live nginx files')
+                self.assertTrue(archive.read_bytes()==original,'Refused source archive changed')
+                self.assertFalse(any(c[:2]==['systemctl','stop'] for c in backup.commands()[calls:]))
 
     def test_change_with_telemt_creates_real_independent_backup_v3(self):
         import tarfile

@@ -111,15 +111,18 @@ def ipv6_available():
         return False
 
 
-def acme_config(domain, ipv6=None):
+def acme_config(domain, ipv6=None, legacy=False):
     domain_name(domain)
     if ipv6 is None: ipv6 = ipv6_available()
     listener = '    listen [::]:80;\n' if ipv6 else ''
+    escaped = domain.replace('.', r'\.')
+    guard = '' if legacy else f'    server_tokens off;\n    if ($host !~* ^{escaped}$) {{ return 404; }}\n'
+    target = '$host' if legacy else domain
     return MARKER + f'''server {{
     listen 80;
 {listener}    server_name {domain};
-    location ^~ /.well-known/acme-challenge/ {{ root /var/www/acme; try_files $uri =404; }}
-    location / {{ return 301 https://$host$request_uri; }}
+{guard}    location ^~ /.well-known/acme-challenge/ {{ root /var/www/acme; try_files $uri =404; }}
+    location / {{ return 301 https://{target}$request_uri; }}
 }}
 '''
 
@@ -144,7 +147,8 @@ def nginx_artifact_domain(site, acme):
             expected = render(name[1], int(port[1]), root=roots[0])
         else:
             expected = render(name[1], ipv6=True)
-        if (text != expected and not (render is acme_config and text == render(name[1], ipv6=False)) and
+        if (text != expected and not (render is acme_config and text in
+                (render(name[1], ipv6=ipv6, legacy=legacy) for ipv6 in (False,True) for legacy in (False,True))) and
                 not (render is fallback_config and roots[0] == '/var/www/html/cover-vision' and
                      text == expected.replace('    absolute_redirect off;\n','',1))):
             raise ValueError('Modified Vision nginx configuration; preserved')

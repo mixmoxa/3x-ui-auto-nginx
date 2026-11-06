@@ -306,11 +306,17 @@ install() { local -a args=(); while (($#)); do case "$1" in -o|-g) shift 2;; *) 
                                         try:
                                             connection.request('GET',path,headers={'Host':name})
                                             response=connection.getresponse(); body=response.read()
-                                            if path.startswith('/.well-known/'):
+                                            accepted=name.lower() in names[:2] or (stage!='initial' and name.lower()==names[2])
+                                            if not accepted:
+                                                self.assertEqual(response.status,404)
+                                                self.assertIsNone(response.getheader('Location'))
+                                                self.assertNotIn(b'ACME exact bytes',body)
+                                            elif path.startswith('/.well-known/'):
                                                 self.assertEqual((response.status,body),(200,b'ACME exact bytes'))
                                             else:
                                                 self.assertEqual(response.status,301)
                                                 self.assertEqual(response.getheader('Location'),'https://'+name.lower()+path)
+                                            self.assertEqual(response.getheader('Server'),'nginx')
                                             expected.append(f'{selected}|{name.lower()}|{path}|{response.status}')
                                         finally: connection.close()
                                 if stage=='fallback':
