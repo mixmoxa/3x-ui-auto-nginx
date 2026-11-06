@@ -664,7 +664,7 @@ systemctl() {
             for path in ('etc/nginx/sites-available','etc/nginx/sites-enabled','etc/letsencrypt/renewal-hooks/deploy'):
                 (root/path).mkdir(parents=True)
             stubs="""nginx() { :; }; systemctl() { :; }; check_installation() { :; }; msg_warn() { :; }
-python3() { if [[ $1 == - ]]; then command python3 \"$@\"; else echo '# ACME fixture'; fi; }
+python3() { [[ $* != *cover-source/managed.py* ]] || return 0; if [[ $1 == - ]]; then command python3 \"$@\"; else echo '# ACME fixture'; fi; }
 certbot() { echo \"$1\" >> \"$MARKER\"; return 33; }
 """
             source='\n'.join(function(n) for n in ('get_port','check_free','make_port'))+'\n'+relocate(function('install_vision'),root)
@@ -684,7 +684,7 @@ certbot() { echo \"$1\" >> \"$MARKER\"; return 33; }
             (root/'etc/letsencrypt/renewal-hooks/deploy').mkdir(parents=True)
             stubs="""get_port() { local n; n=$(cat \"$COUNTER\"); echo $((n+1)) > \"$COUNTER\"; echo $((35000+n/2)); }
 nginx() { :; }; systemctl() { :; }; check_installation() { :; }; msg_warn() { :; }
-python3() { if [[ $1 == - ]]; then command python3 \"$@\"; else return 1; fi; }
+python3() { [[ $* != *cover-source/managed.py* ]] || return 0; if [[ $1 == - ]]; then command python3 \"$@\"; else return 1; fi; }
 """
             source='\n'.join(function(n) for n in ('check_free','make_port'))+'\n'+relocate(function('install_vision'),root)
             body='make_port sub_port panel_port ws_port trojan_port mtr_backend_port || exit 1; install_vision || :; printf "%s\\n" "${ALLOCATED_TCP_PORTS[@]}"'

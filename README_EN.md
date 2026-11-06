@@ -21,7 +21,7 @@ Two domains, a clean VPS, and a few minutes to install.
 
 **3X-UI AUTO NGINX** installs [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray with nginx, HTTPS, connection profiles, subscriptions, diagnostics, and Backup / Restore. AmneziaWG 3.1 and AdGuard Home with DoH are optional. The interactive manager also lets you change domains and manage backups.
 
-Bring two domains and a clean VPS. A cover website is selected and deployed automatically.
+Bring two domains and a clean VPS. New installs give the panel and REALITY separate multipage static sites from six templates, personalized once. Vision uses a third template different from REALITY. Backup/Restore and domain changes preserve content; legacy sites are not automatically replaced. This is not a proven defense against DPI, active probing or IP blocking. [Cover site details](docs/COVER_SITES.md).
 
 ## ✨ Why this project
 

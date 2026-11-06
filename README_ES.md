@@ -21,7 +21,7 @@ Dos dominios, un VPS limpio y unos minutos para completar la instalación.
 
 **3X-UI AUTO NGINX** instala [3x-ui](https://github.com/MHSanaei/3x-ui) y Xray, y configura nginx, HTTPS, perfiles de conexión, suscripciones, diagnósticos de red y copias de seguridad y restauración. AmneziaWG 3.1 y AdGuard Home con DoH son opcionales. El gestor interactivo también permite cambiar dominios y administrar las copias de seguridad.
 
-Solo necesitas dos dominios y un VPS limpio. El instalador selecciona y despliega automáticamente un sitio web de camuflaje.
+Solo necesitas dos dominios y un VPS limpio. Las instalaciones nuevas generan sitios estáticos independientes para el panel y REALITY, personalizados una sola vez entre seis plantillas. Vision utiliza otra plantilla distinta de REALITY. Backup/Restore y el cambio de dominios conservan el contenido; los sitios antiguos no se sustituyen automáticamente. No es una protección demostrada contra DPI, sondeos activos o bloqueo de IP. [Detalles](docs/COVER_SITES.md).
 
 ## ✨ ¿Por qué elegir este proyecto?
 

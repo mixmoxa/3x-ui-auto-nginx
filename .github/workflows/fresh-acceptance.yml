@@ -13,11 +13,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  fresh:
-    name: Full fresh installer (ubuntu-26.04)
+  scope:
+    name: Fresh scope classification
     runs-on: ubuntu-26.04
-    # P/R/Both each add a real full Backup v3 and certificate switch in QEMU.
-    timeout-minutes: 60
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,13 +26,76 @@ jobs:
       - name: Classify diff and validate documentation scope
         id: scope
         run: python3 tests/ci_scope.py
-      - name: Full fresh installer and cold boot
-        if: steps.scope.outputs.docs_only != 'true'
-        run: bash tests/fresh/run.sh
-      - name: Report actual CI mode and result
-        if: always()
+
+  positive:
+    name: Fresh positive scenarios (ubuntu-26.04)
+    needs: scope
+    if: needs.scope.outputs.docs_only == 'false'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Linked fresh installation, consumers, cold boot and recovery
         env:
-          CI_DOCS_ONLY: ${{ steps.scope.outputs.docs_only }}
-          CI_JOB_STATUS: ${{ job.status }}
-          CI_FRESH: 'true'
-        run: python3 tests/ci_scope.py --summary
+          XUI_FRESH_GROUP: positive
+        run: bash tests/fresh/run.sh
+
+  negative:
+    name: Fresh negative scenarios (ubuntu-26.04)
+    needs: scope
+    if: needs.scope.outputs.docs_only == 'false'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Clean-disk dependency failure and DoT outage with real consumers
+        env:
+          XUI_FRESH_GROUP: negative
+        run: bash tests/fresh/run.sh
+
+  fresh:
+    name: Full fresh installer (ubuntu-26.04)
+    needs: [scope, positive, negative]
+    if: always()
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Require verified scope and complete scenario results
+        env:
+          CI_DOCS_ONLY: ${{ needs.scope.outputs.docs_only }}
+          CI_SCOPE_RESULT: ${{ needs.scope.result }}
+          CI_POSITIVE_RESULT: ${{ needs.positive.result }}
+          CI_NEGATIVE_RESULT: ${{ needs.negative.result }}
+        run: |
+          python3 - <<'PYFRESHRESULT'
+          import os, sys
+
+          def fresh_success(docs, scope, positive, negative):
+              if scope != 'success':
+                  return False
+              if docs == 'true':
+                  return positive == negative == 'skipped'
+              return docs == 'false' and positive == negative == 'success'
+
+          docs = os.environ.get('CI_DOCS_ONLY', '')
+          scope = os.environ.get('CI_SCOPE_RESULT', '')
+          positive = os.environ.get('CI_POSITIVE_RESULT', '')
+          negative = os.environ.get('CI_NEGATIVE_RESULT', '')
+          passed = fresh_success(docs, scope, positive, negative)
+          if passed and docs == 'true':
+              message = 'DOCS-ONLY: Full Fresh E2E not executed; documentation scope verified.'
+          elif passed:
+              message = 'Full Fresh E2E: PASS; both positive and negative groups completed.'
+          else:
+              message = 'Full Fresh E2E: FAIL; scope or a required scenario group did not complete as expected.'
+          print(message)
+          if os.environ.get('GITHUB_STEP_SUMMARY'):
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+                  out.write(message+'\n')
+          sys.exit(0 if passed else 1)
+          PYFRESHRESULT

@@ -249,6 +249,59 @@ def restore_acceptance(ref):
     poweroff()
 
 
+def fresh_acceptance(ref, group='all'):
+    """Run the linked positive installation and/or the clean-disk negative cases."""
+    global phase
+    if group not in ('all','positive','negative'):
+        raise ValueError('Invalid fresh scenario group')
+    if group in ('all','positive'):
+        fresh_disk()
+        phase = 'maximum-install'
+        boot()
+        install('positive', ref)
+        invoke('checks.installed()', 'installed')
+        phase = 'manager-backup'
+        invoke('checks.manager_backup()', 'manager-backup', 150, tty=True)
+        phase = 'transport-consumers'
+        invoke('checks.transports()', 'transports', 300)
+        phase = 'AWG-payload'
+        invoke('checks.amneziawg()', 'awg', 120)
+        phase = 'tech0-RED-GREEN'
+        invoke('checks.search_domain_regression()', 'tech0', 120)
+        phase = 'installed-renewal-hooks'
+        invoke('checks.renewal()', 'renewal', 300)
+        identity = ssh('cat /proc/sys/kernel/random/boot_id', 10)
+        assert identity.returncode == 0 and re.fullmatch(rb'[a-f0-9-]{36}\n', identity.stdout)
+        # The second QEMU process boots exactly the same installed disk.
+        command = "tr -d '-' < /proc/sys/kernel/random/boot_id > /root/pilot/first-boot-id"
+        assert ssh(command, 10).returncode == 0
+        poweroff()
+        phase = 'cold-boot'
+        boot()
+        invoke('checks.installed(cold=True)', 'cold')
+        phase = 'cold-transport-consumers'
+        invoke('checks.transports()', 'cold-transports', 300)
+        phase = 'change-domains'
+        invoke('checks.change_domains()', 'change-domains', 1200, tty=True)
+        phase = 'restore-before-domains'
+        invoke('checks.restore_before_domains()', 'restore-before-domains', 600, tty=True)
+        poweroff()
+    if group in ('all','negative'):
+        phase = 'mandatory-dependency-negative'
+        fresh_disk()
+        boot()
+        install('dependency', ref)
+        poweroff()
+        phase = 'DoT-outage-partial-install'
+        fresh_disk()
+        (ROOT/'dot-outage').touch()
+        boot()
+        install('dot-outage', ref)
+        phase = 'DoT-outage-core-consumers'
+        invoke('checks.transports(vision=False)', 'partial-transports', 240)
+        poweroff()
+
+
 if __name__ == '__main__':
     ref = os.environ['XUI_AUTO_REF']
     assert re.fullmatch('[0-9a-f]{40}', ref)
@@ -274,50 +327,9 @@ if __name__ == '__main__':
         if os.environ.get('XUI_RESTORE_ACCEPTANCE') == '1':
             restore_acceptance(ref)
         else:
-            fresh_disk()
-            phase = 'maximum-install'
-            boot()
-            install('positive', ref)
-            invoke('checks.installed()', 'installed')
-            phase = 'manager-backup'
-            invoke('checks.manager_backup()', 'manager-backup', 150, tty=True)
-            phase = 'transport-consumers'
-            invoke('checks.transports()', 'transports', 300)
-            phase = 'AWG-payload'
-            invoke('checks.amneziawg()', 'awg', 120)
-            phase = 'tech0-RED-GREEN'
-            invoke('checks.search_domain_regression()', 'tech0', 120)
-            phase = 'installed-renewal-hooks'
-            invoke('checks.renewal()', 'renewal', 300)
-            identity = ssh('cat /proc/sys/kernel/random/boot_id', 10)
-            assert identity.returncode == 0 and re.fullmatch(rb'[a-f0-9-]{36}\n', identity.stdout)
-            # The second QEMU process boots exactly the same installed disk.
-            command = "tr -d '-' < /proc/sys/kernel/random/boot_id > /root/pilot/first-boot-id"
-            assert ssh(command, 10).returncode == 0
-            poweroff()
-            phase = 'cold-boot'
-            boot()
-            invoke('checks.installed(cold=True)', 'cold')
-            phase = 'cold-transport-consumers'
-            invoke('checks.transports()', 'cold-transports', 300)
-            phase = 'change-domains'
-            invoke('checks.change_domains()', 'change-domains', 1200, tty=True)
-            phase = 'restore-before-domains'
-            invoke('checks.restore_before_domains()', 'restore-before-domains', 600, tty=True)
-            poweroff()
-            phase = 'mandatory-dependency-negative'
-            fresh_disk()
-            boot()
-            install('dependency', ref)
-            poweroff()
-            phase = 'DoT-outage-partial-install'
-            fresh_disk()
-            (ROOT/'dot-outage').touch()
-            boot()
-            install('dot-outage', ref)
-            phase = 'DoT-outage-core-consumers'
-            invoke('checks.transports(vision=False)', 'partial-transports', 240)
-            poweroff()
+            group = os.environ.get('XUI_FRESH_GROUP', 'all')
+            report['scenario_group'] = group
+            fresh_acceptance(ref, group)
         report['result'] = 'PASS'
     except Exception as error:
         (ROOT/'failure.private.log').write_text(traceback.format_exc())

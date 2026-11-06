@@ -455,13 +455,16 @@ class RealIntegration(unittest.TestCase):
         cover = cover.replace('/etc/nginx/snippets/includes.conf',str(self.root/'shared.conf'))
         cover = cover.replace('/var/www',str(self.root/'www'))
         (self.root/'www/html').mkdir(parents=True,exist_ok=True)
-        (self.root/'www/html/index.html').write_text('cover')
+
+        for name in ('index.html','cover-panel/index.html','cover-reality/index.html'):
+            path=self.root/'www/html'/name;path.parent.mkdir(parents=True,exist_ok=True)
+            if not path.exists():path.write_text('cover')
         cover = cover.replace('    server_tokens off;',f'    access_log {self.root}/reality-access.log reality_probe;\n    server_tokens off;')
         config = f'''load_module /usr/lib/nginx/modules/ngx_stream_module.so;
 worker_processes 1; daemon off; pid {self.root}/nginx.pid; error_log {self.root}/nginx-error.log;
 events {{ worker_connections 256; }}
 stream {{ {stream} }}
-http {{ log_format reality_probe '$remote_addr|$proxy_protocol_addr'; access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {main} {cover} {getattr(self, 'vision_site', '')} }}
+http {{ include /etc/nginx/mime.types; log_format reality_probe '$remote_addr|$proxy_protocol_addr'; access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {main} {cover} {getattr(self, 'vision_site', '')} }}
 '''
         path = self.root/'nginx.conf';path.write_text(config)
         result = subprocess.run([self.nginx,'-t','-p',str(self.root)+'/', '-c',path],text=True,capture_output=True,timeout=15)
@@ -523,6 +526,70 @@ http {{ log_format reality_probe '$remote_addr|$proxy_protocol_addr'; access_log
         self.client(name)
         self.client(name,negative=True)
         self.passed.append(name+' positive/negative')
+
+    def test_personalized_cover_sites_native_sni_and_static_http(self):
+        from test_cover_sites import helper
+        from test_integrated_features import helper as feature
+        cover=helper();generator=cover.module('generate');checker=cover.module('check')
+        for role,code in (('panel','A1'),('reality','B1'),('vision','B2')):
+            destination=self.root/'www/html'/('cover-'+role)
+            generator.generate(code,destination,[0,0,0,0])
+            self.assertEqual(checker.check_site(destination)[0],[])
+        subprocess.run(['openssl','req','-x509','-nodes','-newkey','rsa:2048','-days','2',
+            '-subj','/CN=deploy.example','-addext','subjectAltName=DNS:deploy.example,DNS:cover.example,DNS:vision.example',
+            '-keyout',str(self.key),'-out',str(self.cert)],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=20)
+        self.vision_module=feature('vision');self.vision_port=port(self.allocated_ports);fallback=port(self.allocated_ports)
+        self.vision_site=self.vision_module.fallback_config('vision.example',fallback,'/var/www/html/cover-vision').replace('/var/www/html',str(self.root/'www/html'))
+        config=copy.deepcopy(self.server)
+        config['inbounds'].append(self.vision_module.inbound('vision.example',self.vision_port,fallback,str(self.cert),str(self.key)))
+        self.nginx_config()
+        server=self.launch([self.xray,'run','-c',self.validate(config,'cover-server')],'cover-server')
+        self.ready(server,('127.0.0.1',self.backends['reality']))
+        panel=self.launch([self.xui],'cover-panel',{**os.environ,'XUI_DB_FOLDER':str(self.root/'db'),
+            'XUI_BIN_FOLDER':str(self.root/'bin'),'XUI_LOG_FOLDER':str(self.root/'logs')})
+        self.ready(panel,('127.0.0.1',self.backends['panel']))
+        def request(domain,path,head=False):
+            args=['curl','-q','-sS','--noproxy','*','--cacert',str(self.cert),'--resolve',
+                f'{domain}:{self.public}:127.0.0.1','--max-time','10','-w','\\n%{http_code}|%{content_type}',
+                f'https://{domain}:{self.public}'+path]
+            if head:args.insert(1,'-I')
+            result=subprocess.check_output(args,timeout=15);body,_,meta=result.rpartition(b'\n')
+            code,mime=meta.decode().split('|');return int(code),mime,body
+        for role,domain in (('panel','deploy.example'),('reality','cover.example'),('vision','vision.example')):
+            site=self.root/'www/html'/('cover-'+role)
+            for page in site.rglob('*.html'):
+                route='/'+str(page.relative_to(site))
+                if route.endswith('index.html'):route=route[:-10]
+                code,mime,body=request(domain,route)
+                self.assertEqual(code,200);self.assertIn('text/html',mime);self.assertEqual(body,page.read_bytes())
+            if role in ('reality','vision'):
+                with self.subTest(redirect_role=role):
+                    directory=next(p.parent for p in sorted(site.rglob('index.html')) if p.parent!=site)
+                    path='/'+str(directory.relative_to(site))
+                    headers_file=self.root/('redirect-'+role)
+                    code=subprocess.check_output(['curl','-q','-sS','--noproxy','*','--cacert',str(self.cert),
+                        '--resolve',f'{domain}:{self.public}:127.0.0.1','--max-time','10',
+                        '-D',str(headers_file),'-o','/dev/null','-w','%{http_code}',
+                        f'https://{domain}:{self.public}'+path],timeout=15)
+                    self.assertEqual(code,b'301')
+                    locations=re.findall(r'(?im)^location: ([^\r\n]+)',headers_file.read_text())
+                    self.assertEqual(locations,[path+'/'])
+                    followed,_,body=request(domain,locations[0])
+                    self.assertEqual(followed,200);self.assertEqual(body,(directory/'index.html').read_bytes())
+            code,_,headers=request(domain,'/',True)
+            self.assertEqual(code,200);self.assertNotIn(b'<!doctype',headers.lower())
+            for relative in ('static/site.css','static/hero.svg','favicon.ico','favicon.svg',
+                             *[str(p.relative_to(site)) for p in (site/'static').glob('*.js')]):
+                code,mime,body=request(domain,'/'+relative)
+                self.assertEqual(code,200);self.assertEqual(body,(site/relative).read_bytes())
+                self.assertTrue(mime.startswith(('text/css','application/javascript','text/javascript','image/')))
+            for route in ('/does-not-exist','/static/absent.svg','/cover-sites.json','/tools/generate.py','/data/variants.json'):
+                code,_,body=request(domain,route);self.assertEqual(code,404);self.assertEqual(body,(site/'404.html').read_bytes())
+        # /assets is still owned by the native subscription backend, not a cover.
+        code,_,body=request('deploy.example','/assets/unknown-cover-asset')
+        self.assertEqual(code,404);self.assertNotEqual(body,(self.root/'www/html/cover-panel/404.html').read_bytes())
+        self.client('reality',server_log='cover-server.log');self.client('xhttp',server_log='cover-server.log')
+        self.passed.append('Three personalized covers: native SNI / TLS / PROXY / GET+HEAD / MIME / true 404 / assets / XHTTP')
 
     def test_reality(self): self.transport('reality')
 

@@ -241,7 +241,7 @@ printf 'CPU_STATE|%s|%s\n' "$CPU_SUPPORT_LEVEL" "$CPU_SUPPORT_TEXT"
         # Run the actual main ordering/summary on files; installer operations are no-ops.
         mocks = '\n'.join(name + '() { :; }' for name in (
             "preflight_base_os", "prepare_base_os", "prepare_system_dns", "finish_initial_reboot", "write_managed_state",
-            "select_security", "select_vision", "select_client", "select_xhttp_cdn","preflight_xhttp_cdn","preflight_integrated_features", "select_amneziawg", "preflight_amneziawg", "preflight_panel_release", "make_port", "select_adguard", "cleanup_adguard", "validate_domains", "clean_previous_install", "install_packages", "setup_firewall", "get_server_ip",
+            "select_security", "select_vision", "select_client", "select_xhttp_cdn","preflight_xhttp_cdn","preflight_cover_sites","preflight_integrated_features", "select_amneziawg", "preflight_amneziawg", "preflight_panel_release", "make_port", "select_adguard", "cleanup_adguard", "validate_domains", "clean_previous_install", "install_packages", "setup_firewall", "get_server_ip",
             "get_ssl_certs", "install_panel", "configure_nginx", "configure_xui_db", "install_clash_sub",
             "install_fake_site", "install_diagnostics", "tune_system", "install_backup_tool", "setup_certificate_renewal", "setup_acme_http", "confirm_destructive_reinstall", "write_managed_state",
         )) + r'''
@@ -897,7 +897,7 @@ sleep() { :; }
                 self.assertTrue(line.lstrip().startswith("#"), "Unexpected upstream runtime source")
 
     def test_project_asset_ref_validation_precedes_downloads(self):
-        initialization = SOURCE[SOURCE.index('PROJECT_REF='):SOURCE.index('FAKE_SITE_COUNT=')]
+        initialization = SOURCE[SOURCE.index('PROJECT_REF='):SOURCE.index('PROJECT_SOURCE_SHA=')]
         accepted = (None, '', 'main', 'a1' * 20, 'AB' * 20, 'v1.4.1', 'v0.0.0')
         rejected = ('personal', 'feature/path', 'v1.2', 'v1.2.3-rc.1', 'v01.2.3', 'a' * 39,
                     'g' * 40, 'main/../other', ' main', 'main\n', '$(touch forbidden)')
@@ -941,16 +941,16 @@ curl() {
     printf '#!/usr/bin/env bash\necho \"xui-backup:1 inspect backup-json lock-fd9\"\n' > "$output"
 }
 '''
-        initialization = SOURCE[SOURCE.index('PROJECT_REF='):SOURCE.index('FAKE_SITE_COUNT=')]
-        names = ('install_clash_sub','install_fake_site','install_diagnostics','install_backup_tool')
-        expected = {'assets/clash/clash.yaml','assets/fake-sites/site-01/index.html',
+        initialization = SOURCE[SOURCE.index('PROJECT_REF='):SOURCE.index('PROJECT_SOURCE_SHA=')]
+        names = ('install_clash_sub','install_diagnostics','install_backup_tool')
+        expected = {'assets/clash/clash.yaml',
                     'assets/diagnostics/index.html','assets/diagnostics/librespeed/speedtest.js',
                     'assets/diagnostics/librespeed/speedtest_worker.js','assets/diagnostics/mtr-backend.py',
                     'assets/backup/x-ui-backup.sh'}
         for ref in ('main','a1' * 20,'v1.4.1'):
             with self.subTest(ref=ref), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp); (root/'etc/systemd/system').mkdir(parents=True)
-                script = mock + initialization + '\nFAKE_SITE_COUNT=1\n'
+                script = mock + initialization + '\n'
                 script += '\n'.join(relocate(function(name),root) for name in names)
                 script += '\n' + '\n'.join(names)
                 log = root/'urls'

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="{{ACCENT}}">
+  <meta name="description" content="Try a small, fully local task board with no account or network requests.">
+  <title>Workspace demo | {{BRAND}}</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/static/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header"><div class="shell header-inner">
+  <a class="brand" href="/" aria-label="{{BRAND}} home"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M5 9.5 16 3l11 6.5v13L16 29 5 22.5z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 19.5 16 9l6 10.5h-4.3L16 16l-1.7 3.5z" fill="currentColor"/></svg></span><span>{{BRAND}}</span></a>
+  <nav class="nav-wide" aria-label="Primary"><a href="/">Overview</a><a href="/product/">Product</a><a href="/demo/" aria-current="page">Workspace demo</a><a href="/guides/">Guides</a><a href="/principles/">Principles</a></nav>
+  <div class="header-actions"><a class="btn btn-small" href="/demo/">Open demo <span aria-hidden="true">↗</span></a></div>
+  <details class="nav-mobile"><summary aria-label="Open navigation">Menu <span aria-hidden="true">☰</span></summary><nav aria-label="Mobile navigation"><a href="/">Overview</a><a href="/product/">Product</a><a href="/demo/" aria-current="page">Workspace demo</a><a href="/guides/">Guides</a><a href="/principles/">Principles</a></nav></details>
+</div></header>
+<main id="main">
+<section class="page-head shell"><span class="kicker">BROWSER DEMO</span><h1>A small place to make progress.</h1><p>Add a step, mark it complete or start again. This demonstration works entirely in your browser; it does not create an account or sync to a server.</p></section><section class="shell demo-wrap"><div class="demo-app" aria-labelledby="board-title"><div class="demo-toolbar"><div><span class="kicker">PROJECT BOARD</span><h2 id="board-title">Launch checklist</h2></div><div class="demo-label" id="task-counter" aria-live="polite">Loading tasks…</div></div><p class="demo-description">A short example of turning a project into visible actions.</p><form class="task-form" id="task-form"><label for="task-input">Add the next step</label><div class="input-row"><input id="task-input" type="text" name="task" maxlength="88" autocomplete="off" placeholder="e.g. Review accessibility" required><button class="btn btn-primary" type="submit">Add step</button></div><span class="input-hint">Up to 88 characters. Tasks are stored only on this device.</span></form><ul class="task-list" id="task-list" aria-label="Project tasks"><li class="loading">Preparing your board…</li></ul><div class="demo-bottom"><button id="reset-tasks" type="button" class="text-button">Restore example tasks</button><span id="storage-notice" class="demo-note" aria-live="polite"></span></div></div><aside class="demo-aside"><span class="kicker">WHAT YOU CAN TRY</span><h2>Start small, stay specific.</h2><p>The goal is not to reproduce a full project management application. It is to make the essential interaction understandable.</p><ol><li>Add a task with an action verb.</li><li>Mark it done when the outcome is visible.</li><li>Remove items you no longer need.</li></ol><div class="demo-aside-note"><strong>Your information stays local.</strong><p>The demonstration uses browser storage when available. There is no login, API or remote submission.</p></div><a class="text-link" href="/guides/">Read the short guide →</a></aside></section><section class="section section-tinted"><div class="shell mini-section"><h2>Want the reasoning behind the layout?</h2><p>Explore how a clear project space keeps context and action connected.</p><a href="/product/" class="btn btn-quiet">See the product model →</a></div></section><script src="/static/demo.js" defer></script>
+</main>
+<footer class="footer"><div class="shell footer-inner"><div><a class="footer-brand" href="/">{{BRAND}}</a><p>A clear place for work, ideas and the steps between them.</p></div><div><h2>Explore</h2><a href="/product/">Product</a><a href="/guides/">Guides</a><a href="/principles/">Principles</a></div><div><h2>Try it</h2><a href="/demo/">Browser demo</a><span>Runs locally in your browser.</span></div></div><div class="shell footer-bottom"><span>Thoughtful software, clearly explained.</span><span>All essential resources are served from this site.</span></div></footer>
+</body></html>

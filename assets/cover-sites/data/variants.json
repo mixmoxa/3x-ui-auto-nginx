@@ -1,0 +1,284 @@
+{
+  "A1": {
+    "brands": [
+      "Asterfold Workspace",
+      "Grainline Workspace",
+      "Nimbleleaf Workspace",
+      "Cairnfield Workspace",
+      "Pavilion Workspace",
+      "Plainview Workspace"
+    ],
+    "palettes": [
+      {
+        "id": "evergreen",
+        "accent": "#147e69",
+        "accent2": "#0c614f",
+        "soft": "#e1f2eb"
+      },
+      {
+        "id": "ocean",
+        "accent": "#286c9e",
+        "accent2": "#1b507c",
+        "soft": "#e5f0f8"
+      },
+      {
+        "id": "iris",
+        "accent": "#6b57a6",
+        "accent2": "#4b398b",
+        "soft": "#ede8f7"
+      },
+      {
+        "id": "copper",
+        "accent": "#a45f2c",
+        "accent2": "#874716",
+        "soft": "#f9ecdf"
+      }
+    ],
+    "copy": [
+      {
+        "home_headline": "Make space for meaningful work.",
+        "home_lede": "Bring projects, notes and next steps into a calmer, more readable shape. Start with the essential information and keep the work moving."
+      },
+      {
+        "home_headline": "Good projects start with clarity.",
+        "home_lede": "Keep the reasoning, practical steps and important references in view. A thoughtful workspace model helps progress make sense."
+      }
+    ]
+  },
+  "B1": {
+    "brands": [
+      "Ternwick Systems",
+      "Larchwell Engineering",
+      "Monarch Fieldworks",
+      "Wrenford Systems",
+      "Hearthline Technical",
+      "Rivermark Engineering"
+    ],
+    "palettes": [
+      {
+        "id": "terracotta",
+        "accent": "#a45234",
+        "accent2": "#74361f",
+        "soft": "#f3e2d5"
+      },
+      {
+        "id": "slate",
+        "accent": "#3f6477",
+        "accent2": "#284858",
+        "soft": "#e2eaed"
+      },
+      {
+        "id": "forest",
+        "accent": "#4e6950",
+        "accent2": "#344a35",
+        "soft": "#e5ece3"
+      },
+      {
+        "id": "plum",
+        "accent": "#7a556c",
+        "accent2": "#563b4b",
+        "soft": "#f0e6eb"
+      }
+    ],
+    "copy": [
+      {
+        "home_headline": "Systems that make sense when it matters.",
+        "home_lede": "Independent thinking on dependable infrastructure, clear technical decisions and the practical details that keep systems operable.",
+        "about_lede": "An independent engineering practice centred on clear systems, proportionate decisions and useful technical writing."
+      },
+      {
+        "home_headline": "A more considered way to build systems.",
+        "home_lede": "Practical engineering starts with observation, clear boundaries and the discipline to choose changes that solve real problems.",
+        "about_lede": "A technical practice focused on understanding complex systems, reducing unnecessary risk and documenting the decisions that matter."
+      }
+    ]
+  },
+  "A2": {
+    "brands": [
+      "Signalbay Operations",
+      "Northstar Signals",
+      "Clearframe Observability",
+      "Beaconline Systems",
+      "Evident Metrics",
+      "Tracewell Systems"
+    ],
+    "palettes": [
+      {
+        "id": "mint",
+        "accent": "#98e8bd",
+        "accent2": "#5dbf94",
+        "soft": "#14362e"
+      },
+      {
+        "id": "sky",
+        "accent": "#91d0f7",
+        "accent2": "#4eade1",
+        "soft": "#143149"
+      },
+      {
+        "id": "amber",
+        "accent": "#f2ce8b",
+        "accent2": "#dcae63",
+        "soft": "#41301e"
+      },
+      {
+        "id": "lilac",
+        "accent": "#c4b3f6",
+        "accent2": "#a590dc",
+        "soft": "#302a49"
+      }
+    ],
+    "copy": [
+      {
+        "home_headline": "Make sense of the signals.",
+        "home_lede": "Monitoring should lead to understanding, not another wall of charts. Explore practical methods, runbooks and a small reliability calculation tool."
+      },
+      {
+        "home_headline": "Keep reliability within view.",
+        "home_lede": "Build useful service indicators, make alerts actionable and improve the handoff from observation to response with clear reference material."
+      }
+    ]
+  },
+  "A3": {
+    "brands": [
+      "Forgegrid Tools",
+      "Portstone Developer Tools",
+      "Syntaxfield",
+      "Layerline Tools",
+      "Quillstack Reference",
+      "Buildwell Utilities"
+    ],
+    "palettes": [
+      {
+        "id": "lime",
+        "accent": "#b8e18a",
+        "accent2": "#8bbb56",
+        "soft": "#2c4031"
+      },
+      {
+        "id": "peach",
+        "accent": "#efb38b",
+        "accent2": "#c88c69",
+        "soft": "#47352b"
+      },
+      {
+        "id": "ice",
+        "accent": "#a0d7eb",
+        "accent2": "#7baebe",
+        "soft": "#29414a"
+      },
+      {
+        "id": "lavender",
+        "accent": "#cab6ef",
+        "accent2": "#a895c9",
+        "soft": "#393247"
+      }
+    ],
+    "copy": [
+      {
+        "home_headline": "Simple tools. Clear results.",
+        "home_lede": "Format JSON, encode URL components and read concise HTTP guides with no sign-in or remote API. The utility is in what it does.",
+        "about_lede": "A compact public collection of browser tools and field references for common web development questions."
+      },
+      {
+        "home_headline": "A practical kit for web work.",
+        "home_lede": "Keep the everyday mechanics of web development understandable: a few browser utilities, accurate HTTP notes and no hidden service requirements.",
+        "about_lede": "An open set of straightforward developer utilities, with explicit boundaries and reference material you can use without an account."
+      }
+    ]
+  },
+  "B2": {
+    "brands": [
+      "Waypoint Protocol Notes",
+      "Meridian Web Reference",
+      "Fieldmark Documentation",
+      "Lattice Reference",
+      "Commonline Manuals",
+      "Webform Notes"
+    ],
+    "palettes": [
+      {
+        "id": "sea",
+        "accent": "#367b70",
+        "accent2": "#275e56",
+        "soft": "#e1eee9"
+      },
+      {
+        "id": "blue",
+        "accent": "#3b7094",
+        "accent2": "#2c5574",
+        "soft": "#e6eff6"
+      },
+      {
+        "id": "aubergine",
+        "accent": "#75567b",
+        "accent2": "#5a3f5f",
+        "soft": "#eee7f0"
+      },
+      {
+        "id": "ochre",
+        "accent": "#9c773f",
+        "accent2": "#745528",
+        "soft": "#f0ebde"
+      }
+    ],
+    "copy": [
+      {
+        "home_headline": "Documentation for the everyday web.",
+        "home_lede": "Readable notes about requests, representations, caching and errors. Start with simple concepts and follow them into concrete HTTP examples."
+      },
+      {
+        "home_headline": "Understand what the web returns.",
+        "home_lede": "A compact public reference for ordinary HTTP behaviour: methods, response codes, redirects and cache validation, explained without unnecessary machinery."
+      }
+    ]
+  },
+  "B3": {
+    "brands": [
+      "Pebblewick Studio",
+      "Sundayline Studio",
+      "Tandem Formworks",
+      "Mosaicfield Studio",
+      "Form & Interval",
+      "Smallframe Studio"
+    ],
+    "palettes": [
+      {
+        "id": "coral",
+        "accent": "#b75d4e",
+        "accent2": "#874136",
+        "soft": "#f0dbd2"
+      },
+      {
+        "id": "moss",
+        "accent": "#557659",
+        "accent2": "#38523c",
+        "soft": "#e1e7d7"
+      },
+      {
+        "id": "indigo",
+        "accent": "#6873a1",
+        "accent2": "#4b547e",
+        "soft": "#e3e4f0"
+      },
+      {
+        "id": "gold",
+        "accent": "#a77d3f",
+        "accent2": "#795a2b",
+        "soft": "#eee2ca"
+      }
+    ],
+    "copy": [
+      {
+        "home_headline": "Design is a way of asking better questions.",
+        "home_lede": "Independent studies in visual systems, information hierarchy and useful form. Explore the decisions behind the work, not just the final image.",
+        "about_lede": "A place for self-initiated design studies, careful thinking and practical experiments in legibility."
+      },
+      {
+        "home_headline": "Made to be seen. Built to make sense.",
+        "home_lede": "Explorations in graphic systems and visual communication, with open notes about how each concept develops and what remains untested.",
+        "about_lede": "An independent collection of design experiments guided by clarity, readable structure and transparent limits."
+      }
+    ]
+  }
+}

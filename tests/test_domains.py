@@ -283,6 +283,26 @@ class DomainFixture:
 
 
 class Domains(unittest.TestCase):
+    def test_cover_contents_and_selections_survive_panel_reality_both_and_rollback(self):
+        from test_cover_sites import helper as covers
+        cover=covers()
+        for new_vision in (False,True):
+            f=self.fixture(optional=True)
+            stage=f.root/'prepared-covers';web=f.p('/var/www/html');state=f.p('/etc/x-ui/cover-sites.json')
+            cover.prepare(stage,state,['panel','reality','vision']);cover.publish(stage,web,state,['panel','reality','vision'])
+            if new_vision:
+                path=f.p('/etc/nginx/sites-available/vision.conf')
+                path.write_text(helper('vision').fallback_config('vision.example',12001,root='/var/www/html/cover-vision'))
+            before={r:cover.tree(web/('cover-'+r)) for r in ('panel','reality','vision')};choices=state.read_bytes()
+            for panel,reality in (('second.example',None),(None,'second-cover.example'),('third.example','third-cover.example')):
+                f.change(panel,reality)
+                self.assertEqual({r:cover.tree(web/('cover-'+r)) for r in before},before)
+                self.assertTrue(state.read_bytes()==choices,'Selection changed on domain switch')
+            f.fault='switching:nginx:-t'
+            with self.assertRaises(Exception):f.change('failed.example','failed-cover.example')
+            self.assertEqual({r:cover.tree(web/('cover-'+r)) for r in before},before)
+            self.assertTrue(state.read_bytes()==choices,'Selection changed on rollback')
+
     def fixture(self, **kwargs):
         temporary = tempfile.TemporaryDirectory(prefix='domain-operation-'); self.addCleanup(temporary.cleanup)
         return DomainFixture(temporary.name, **kwargs)
@@ -527,7 +547,7 @@ class Domains(unittest.TestCase):
                 route=f.p('/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf')
                 if foreign=='before-preflight':route.write_text('# foreign route; preserve\n')
                 script='systemctl() { :; }; msg_err() { :; };\n'
-                script+='\n'.join(relocated(function(name),f.root) for name in ('preflight_xhttp_cdn','clean_previous_install'))
+                script+='\n'.join(relocated(function(name),f.root) for name in ('preflight_xhttp_cdn','preflight_cover_sites','clean_previous_install'))
                 script+='\nINSTALL_XHTTP_CDN=n; preflight_xhttp_cdn; '
                 if foreign=='after-preflight':script+="printf '# changed route; preserve\\n' > "+str(route)+'; '
                 script+='clean_previous_install'

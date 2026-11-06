@@ -72,7 +72,7 @@ class AuditInstaller(unittest.TestCase):
             self.assertIn('proxy_pass https://127.0.0.1:10002',block[1])
         self.assertNotIn('location /panel',reality)
         self.assertNotIn('127.0.0.1:10002',reality)
-        for item in ('listen 127.0.0.1:9443 ssl','root /var/www/html/;',
+        for item in ('listen 127.0.0.1:9443 ssl','root /var/www/html/cover-reality;',
                      '/etc/letsencrypt/live/cover.example/fullchain.pem',
                      '/etc/letsencrypt/live/cover.example/privkey.pem',
                      'include /etc/nginx/snippets/includes.conf;'):

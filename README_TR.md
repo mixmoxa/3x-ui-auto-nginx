@@ -21,7 +21,7 @@
 
 **3X-UI AUTO NGINX**, [3x-ui](https://github.com/MHSanaei/3x-ui) ve Xray'i kurar; nginx, HTTPS, bağlantı profilleri, abonelikler, ağ tanılama ve yedekleme/geri yükleme yapılandırmasını hazırlar. AmneziaWG 3.1 ve DoH destekli AdGuard Home isteğe bağlıdır. Etkileşimli yöneticiyle alan adlarını değiştirebilir ve yedeklemeleri de yönetebilirsiniz.
 
-İki alan adı ve temiz bir VPS yeterlidir. Kurulum aracı bir kamuflaj web sitesini otomatik seçip yayınlar.
+İki alan adı ve temiz bir VPS yeterlidir. Yeni kurulumlarda panel ve REALITY için altı şablondan bir kez kişiselleştirilen bağımsız çok sayfalı statik siteler oluşturulur. Vision, REALITY’den farklı bir şablon kullanır. Backup/Restore ve alan adı değişikliği içeriği korur; eski siteler otomatik değiştirilmez. Bu, DPI, aktif sorgulama veya IP engellemeye karşı kanıtlanmış bir koruma değildir. [Ayrıntılar](docs/COVER_SITES.md).
 
 ## ✨ Neden bu proje?
 

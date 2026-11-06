@@ -569,10 +569,10 @@ sysctl() {
     def test_preparation_errors_preserve_deployment_and_initial_reboot_is_manual(self):
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
                'select_adguard','select_client','preflight_base_os','preflight_panel_release','make_port','preflight_amneziawg',
-               'select_xhttp_cdn','preflight_xhttp_cdn','preflight_integrated_features','setup_swap','prepare_base_os','prepare_system_dns')
+               'select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features','setup_swap','prepare_base_os','prepare_system_dns')
         base='\n'.join(n+'() { echo '+n+'; };' for n in names)
         base+='\nmsg_err() { echo "$*" >&2; }; msg_warn() { :; }; cleanup_adguard() { echo CLEANUP; exit 19; };\n'
-        for failure in ('preflight_base_os','select_xhttp_cdn','preflight_xhttp_cdn','preflight_integrated_features','prepare_base_os','prepare_system_dns'):
+        for failure in ('preflight_base_os','select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features','prepare_base_os','prepare_system_dns'):
             result=subprocess.run(['bash','-eu','-c',base+function('main')+'\n'+failure+'() { return 1; }; main'],capture_output=True,text=True)
             self.assertEqual(result.returncode,1,result.stderr)
             self.assertNotIn('CLEANUP',result.stdout)
@@ -621,7 +621,7 @@ sysctl() {
                 if case=='disabled-apt': override=override.replace("    return ''\n","    if args[0]=='apt-config': return 'APT::Periodic::Enable \"0\";'\n    return ''\n")
                 prefix, cli=source.split("if __name__ == '__main__':",1)
                 (root/'helper.py').write_text(prefix.replace("root=Path('/')", 'root=Path('+repr(str(root))+')')+override+"if __name__ == '__main__':"+cli)
-                names=('confirm_destructive_reinstall','validate_domains','select_vision','select_amneziawg','select_xhttp_cdn','preflight_xhttp_cdn','select_adguard','select_client',
+                names=('confirm_destructive_reinstall','validate_domains','select_vision','select_amneziawg','select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','select_adguard','select_client',
                        'preflight_panel_release','make_port','preflight_amneziawg','preflight_vision_artifacts','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state')
                 stubs='\n'.join(name+'() { :; }' for name in names)
                 stubs+='\nselect_security() { INSTALL_SECURITY='+('n' if case=='declined' else 'y')+'; }; msg_err() { echo "$*" >&2; }; msg_warn() { :; };\n'
@@ -677,7 +677,7 @@ sysctl() {
     def test_main_stops_after_mandatory_setup_failure(self):
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
                'select_adguard','select_client','preflight_base_os','preflight_panel_release','make_port','preflight_amneziawg',
-               'select_xhttp_cdn','preflight_xhttp_cdn','preflight_integrated_features','setup_swap','prepare_base_os','prepare_system_dns','cleanup_adguard','clean_previous_install',
+               'select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features','setup_swap','prepare_base_os','prepare_system_dns','cleanup_adguard','clean_previous_install',
                'install_packages','setup_firewall','get_server_ip','setup_acme_http','get_ssl_certs','install_panel',
                'configure_nginx','configure_xui_db','install_clash_sub','install_fake_site','install_diagnostics','tune_system',
                'install_backup_tool','setup_certificate_renewal','check_installation','show_results','finish_initial_reboot','write_managed_state')
@@ -692,14 +692,14 @@ sysctl() {
                 self.assertIn('exit 73',result.stderr)
 
     def test_required_download_failure_does_not_report_success(self):
-        for name in ('install_clash_sub','install_fake_site','install_diagnostics'):
+        for name in ('install_clash_sub','install_diagnostics'):
             with self.subTest(stage=name), tempfile.TemporaryDirectory() as directory:
                 script=function(name)
                 for path in ('/var/www','/usr/local/lib','/etc/systemd/system'):
                     script=script.replace(path,directory+path)
                 (Path(directory)/'etc/systemd/system').mkdir(parents=True)
                 mocks='curl() { echo download-failed >&2; return 73; }; msg_ok() { echo SUCCESS; }; msg_err() { echo "$*" >&2; }; sed() { :; }; dd() { :; }; chown() { :; }; chmod() { :; }; id() { return 0; }; setcap() { :; }; systemctl() { :; };\n'
-                result=subprocess.run(['bash','-u','-c',mocks+script+'\n'+name],env={**os.environ,'GITHUB_RAW':'https://fixture.invalid','FAKE_SITE_COUNT':'1','diag_path':'/diagnostics/','domain':'panel.example','IP4':'203.0.113.7','mtr_backend_port':'10005','panel_path':'panel'},capture_output=True,text=True)
+                result=subprocess.run(['bash','-u','-c',mocks+script+'\n'+name],env={**os.environ,'GITHUB_RAW':'https://fixture.invalid','diag_path':'/diagnostics/','domain':'panel.example','IP4':'203.0.113.7','mtr_backend_port':'10005','panel_path':'panel'},capture_output=True,text=True)
                 self.assertNotEqual(result.returncode,0,result.stdout)
                 self.assertNotIn('SUCCESS',result.stdout)
 
@@ -848,7 +848,7 @@ sysctl() {
     def test_optional_dns_failure_continues_core_only_after_verified_rollback(self):
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
                'select_adguard','select_client','preflight_base_os','preflight_panel_release','make_port','preflight_amneziawg',
-               'select_xhttp_cdn','preflight_xhttp_cdn','preflight_integrated_features','setup_swap','prepare_base_os','verify_base_os','cleanup_adguard','clean_previous_install',
+               'select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features','setup_swap','prepare_base_os','verify_base_os','cleanup_adguard','clean_previous_install',
                'install_packages','setup_firewall','get_server_ip','setup_acme_http','get_ssl_certs','install_panel',
                'configure_nginx','configure_xui_db','install_clash_sub','install_fake_site','install_diagnostics','tune_system',
                'install_backup_tool','setup_certificate_renewal','check_installation','finish_initial_reboot','write_managed_state')
@@ -1038,7 +1038,7 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
                 (root/path).mkdir(parents=True)
             source = (ROOT/'x-ui-latest.sh').read_text()
             script = relocated('install_vision() {'+source.split('install_vision() {',1)[1].split('\ninstall_security()',1)[0],root)
-            stubs = 'python3() { echo \'# render fixture\'; }; ln() { return 1; }; nginx() { :; }; systemctl() { :; }; check_installation() { :; }; msg_warn() { :; }; make_port() { for destination in "$@"; do printf -v "$destination" %s "$((RANDOM+10000))"; done; };\n'
+            stubs = 'python3() { [[ $* != *cover-source/managed.py* ]] || return 0; echo \'# render fixture\'; }; ln() { return 1; }; nginx() { :; }; systemctl() { :; }; check_installation() { :; }; msg_warn() { :; }; make_port() { for destination in "$@"; do printf -v "$destination" %s "$((RANDOM+10000))"; done; };\n'
             result = subprocess.run(['bash','-eu','-c',stubs+script+'\nPANEL_STAGE=/stage; vision_domain=vision.example; install_vision || :; echo "$VISION_RESULT"'],capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertEqual(result.stdout.strip(),'failed_rolled_back')
@@ -1052,7 +1052,7 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
                 (root/path).mkdir(parents=True)
             source=(ROOT/'x-ui-latest.sh').read_text()
             script=relocated('install_vision() {'+source.split('install_vision() {',1)[1].split('\ninstall_security()',1)[0],root)
-            stubs='nginx() { :; }; systemctl() { :; }; check_installation() { :; }; check_webroot_lineage() { :; }; msg_warn() { :; }; make_port() { for destination in "$@"; do printf -v "$destination" %s "$((RANDOM+10000))"; done; }; render_vision_hook() { echo "#!/bin/bash"; }; chown() { :; }; certbot() { echo CERTIFICATE_DELETED; }; python3() { if [[ \"$*\" == *--render-acme* ]]; then echo \'# render fixture\'; return 0; fi; echo \'{"status":"failed_unverified"}\'; return 1; };\n'
+            stubs='nginx() { :; }; systemctl() { :; }; check_installation() { :; }; check_webroot_lineage() { :; }; msg_warn() { :; }; make_port() { for destination in "$@"; do printf -v "$destination" %s "$((RANDOM+10000))"; done; }; render_vision_hook() { echo "#!/bin/bash"; }; chown() { :; }; certbot() { echo CERTIFICATE_DELETED; }; python3() { [[ $* != *cover-source/managed.py* ]] || return 0; if [[ \"$*\" == *--render-acme* ]]; then echo \'# render fixture\'; return 0; fi; echo \'{"status":"failed_unverified"}\'; return 1; };\n'
             result=subprocess.run(['bash','-eu','-c',stubs+script+'\nVISION_OWNED_LINEAGE=vision.example; vision_domain=vision.example; domain=panel.example; panel_path=test; config_username=test; config_password=test; PANEL_STAGE=/stage; AWG_HELPER=/helper; install_vision || :; echo "$VISION_RESULT"'],capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertTrue((root/'etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision').exists())
@@ -1214,7 +1214,7 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
     def test_declined_features_never_mutate_system(self):
         declined=subprocess.run(['bash','-eu','-c','python3() { echo MUTATION; return 1; };\n'+function('prepare_system_dns')+'\nINSTALL_SECURITY=n; prepare_system_dns'],capture_output=True,text=True)
         self.assertEqual(declined.returncode,0,declined.stderr); self.assertNotIn('MUTATION',declined.stdout)
-        names = ('confirm_destructive_reinstall', 'validate_domains', 'select_amneziawg', 'select_xhttp_cdn', 'preflight_xhttp_cdn', 'select_adguard',
+        names = ('confirm_destructive_reinstall', 'validate_domains', 'select_amneziawg', 'select_xhttp_cdn', 'preflight_xhttp_cdn','preflight_cover_sites', 'select_adguard',
                  'preflight_panel_release','make_port', 'preflight_amneziawg', 'cleanup_adguard', 'clean_previous_install',
                  'install_packages', 'setup_firewall', 'get_server_ip', 'setup_acme_http', 'get_ssl_certs',
                  'install_panel', 'configure_nginx', 'configure_xui_db', 'install_clash_sub', 'install_fake_site',
@@ -1276,7 +1276,7 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
         # Security, Vision, AWG, AGH, Client; exact required six combinations.
         scenarios=('nnnnn','ynnny','nynny','ynnyy','nyyny','yyyyy')
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
-               'select_adguard','select_client','preflight_panel_release','make_port','preflight_amneziawg','select_xhttp_cdn','preflight_xhttp_cdn','preflight_integrated_features',
+               'select_adguard','select_client','preflight_panel_release','make_port','preflight_amneziawg','select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features',
                'cleanup_adguard','clean_previous_install','install_packages','setup_firewall','get_server_ip','setup_acme_http',
                'get_ssl_certs','install_panel','configure_nginx','configure_xui_db','install_clash_sub','install_fake_site',
                'install_diagnostics','tune_system','install_backup_tool','setup_certificate_renewal','check_installation','show_results','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state')

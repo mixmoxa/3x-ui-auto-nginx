@@ -21,7 +21,7 @@
 
 **3X-UI AUTO NGINX** 自动安装 [3x-ui](https://github.com/MHSanaei/3x-ui) 和 Xray，并配置 nginx、HTTPS、连接配置、订阅、网络诊断以及 Backup / Restore。AmneziaWG 3.1 和支持 DoH 的 AdGuard Home 均为可选功能。 交互式管理菜单还支持更换域名和管理备份。
 
-准备两个域名和一台全新的 VPS 即可。安装脚本会自动选择并部署一个伪装网站。
+准备两个域名和一台全新的 VPS 即可。新安装会从六个模板中，为面板和 REALITY 分别生成独立的多页静态网站，并仅个性化一次。Vision 使用与 REALITY 不同的模板。备份、恢复和更换域名都会保留内容，不会自动替换旧网站。这并非已证实可抵御 DPI、主动探测或 IP 封锁的措施。[详细说明](docs/COVER_SITES.md)。
 
 ## ✨ 为什么选择这个项目？
 

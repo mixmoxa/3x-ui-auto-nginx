@@ -13,6 +13,7 @@ SUITES = {
     'systemd': ('test_security_systemd.SecuritySystemd',),
     'nonroot': (
         'test_manager.Manager',
+        'test_cover_sites.CoverResources',
         'test_release_asset.ReleaseAsset',
         'test_installer_compatibility.InstallerCompatibility',
         'test_ci_scope.CIScope',
@@ -31,6 +32,7 @@ SUITES = {
     'root': (
         'test_domains.Domains',
         'test_manager.ManagerBackup',
+        'test_cover_sites.CoverPublication',
         'test_audit_findings.DiagnosticsFiles',
         'test_personal_backup.PersonalBackup',
         'test_adguard_backup.AdGuardBackup',

@@ -5,6 +5,11 @@ umask 077
 repository=$(git rev-parse --show-toplevel)
 ref=$(git rev-parse HEAD)
 restore_mode=${XUI_RESTORE_ACCEPTANCE:-0}
+fresh_group=all
+if [[ "$restore_mode" != 1 ]]; then
+    fresh_group=${XUI_FRESH_GROUP:-all}
+    case "$fresh_group" in all|positive|negative) ;; *) printf 'Invalid fresh scenario group\n' >&2; exit 2 ;; esac
+fi
 distro=ubuntu:26.04
 if [[ "$restore_mode" == 1 ]]; then
     distro=${XUI_TEST_DISTRO:-ubuntu:26.04}
@@ -49,10 +54,11 @@ PY
 )
 network=()
 for mapping in "${proxy_hosts[@]}"; do network+=(--add-host "$mapping"); done
-docker run --name "$container" --rm --memory=6g --cpus=2 "${network[@]}" \
+docker run --name "$container" --rm --memory=6g --cpus=4 "${network[@]}" \
     -e HTTP_PROXY -e HTTPS_PROXY -e ALL_PROXY -e http_proxy -e https_proxy -e all_proxy \
     -e "XUI_AUTO_REF=$ref" \
     -e "XUI_RESTORE_ACCEPTANCE=$restore_mode" \
+    -e "XUI_FRESH_GROUP=$fresh_group" \
     -e CURL_CA_BUNDLE=/run/proxy-ca.pem \
     --mount "type=bind,src=$work,dst=/pilot" \
     --mount "type=bind,src=$repository,dst=/repo,readonly" \

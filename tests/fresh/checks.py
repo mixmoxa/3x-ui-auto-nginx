@@ -38,6 +38,11 @@ def restore_content():
     for name in ('/etc/x-ui/pr2-persist', '/root/cert/panel.example.test/fullchain.pem',
                  '/root/cert/panel.example.test/privkey.pem'):
         result[name] = hashlib.sha256(Path(name).read_bytes()).hexdigest()
+    for path in (Path('/etc/x-ui/cover-sites.json'), *Path('/var/www/html').glob('cover-*/*')):
+        if path.is_file(): result[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+        elif path.is_dir():
+            for item in path.rglob('*'):
+                if item.is_file():result[str(item)] = hashlib.sha256(item.read_bytes()).hexdigest()
     return result
 
 
@@ -197,6 +202,20 @@ def installed(cold=False):
         assert 'does match certificate' in run('openssl','x509','-in',str(cert),'-noout','-checkhost',domain)
         assert run('openssl','x509','-in',str(cert),'-noout','-pubkey')==run('openssl','pkey','-in',str(key),'-pubout')
     checks['three_certificate_lineages']=True
+    selections=json.loads(Path('/etc/x-ui/cover-sites.json').read_text())
+    assert selections['panel']['template'] in ('A1','A2','A3')
+    assert selections['reality']['template'] in ('B1','B2','B3')
+    assert selections['vision']['template'] in ('B1','B2','B3')
+    assert selections['vision']['template'] != selections['reality']['template']
+    for role,domain in (('panel','panel.example.test'),('reality','reality.example.test'),('vision','vision.example.test')):
+        site=Path('/var/www/html')/('cover-'+role)
+        args=('curl','-q','-sS','--noproxy','*','--resolve',domain+':443:127.0.0.1','--max-time','10')
+        assert run(*args,'-f','https://'+domain+'/') == (site/'index.html').read_text()
+        headers=run(*args,'-f','-I','https://'+domain+'/')
+        assert '200' in headers.splitlines()[0] and '<!doctype' not in headers.lower()
+        assert 'text/css' in run(*args,'-f','-I','https://'+domain+'/static/site.css')
+        assert run(*args,'-o','/dev/null','-w','%{http_code}','https://'+domain+'/absent-cover-page') == '404'
+    checks['independent_static_cover_sites']=True
     log=re.sub(r'\x1b\[[0-9;]*m','',(root/'installer.raw.log').read_text())
     username=re.search(r'^ Username: (\S+)$',log,re.M)[1];password=re.search(r'^ Password: (\S+)$',log,re.M)[1]
     with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:
@@ -502,6 +521,8 @@ def change_domains():
                '/etc/letsencrypt/live/reality.example.test/fullchain.pem','/etc/letsencrypt/live/reality.example.test/privkey.pem',
                '/etc/ssh/sshd_config','/etc/ufw/user.rules','/etc/ufw/user6.rules','/etc/x-ui/initial-client.json',
                '/usr/local/x-ui/x-ui','/usr/bin/x-ui')
+    protected += ('/etc/x-ui/cover-sites.json',) + tuple(str(path) for role in ('panel','reality','vision')
+        for path in (Path('/var/www/html')/('cover-'+role)).rglob('*') if path.is_file())
     def hashes():return {name:hashlib.sha256(Path(name).read_bytes()).hexdigest() for name in protected}
     def database():
         with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:

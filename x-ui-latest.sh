@@ -160,7 +160,6 @@ configure_project_source() {
 }
 # Validation is local only; source/import performs no operation.
 configure_project_source || return 1 2>/dev/null || exit 1
-FAKE_SITE_COUNT=10
 PROJECT_SOURCE_SHA=
 LEGACY_CERTBOT_CRON='@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" > /dev/null 2>&1'
 
@@ -944,7 +943,7 @@ EOF
         grpc_pass grpc://127.0.0.1:${trojan_port};
     }
 
-    location / { try_files \$uri \$uri/ =404; }
+    location / { error_page 404 /404.html; try_files \$uri \$uri/ =404; }
 EOF
     [[ $? -eq 0 ]] || return 1
 
@@ -990,7 +989,7 @@ server {
     listen 127.0.0.1:7443 ssl${http2_listen} proxy_protocol;
     ${http2_on}
     index index.html index.htm index.php;
-    root /var/www/html/;
+    root /var/www/html/cover-panel;
     real_ip_header proxy_protocol;
     set_real_ip_from 127.0.0.1;
     # This vhost listens on 7443 behind the SNI stream (public port 443). Without
@@ -1178,13 +1177,14 @@ EOF
     cat > "/etc/nginx/sites-available/${reality_domain}" <<EOF
 server {
     server_tokens off;
+    absolute_redirect off;
     server_name ${reality_domain};
     listen 127.0.0.1:9443 ssl${http2_listen} proxy_protocol;
     real_ip_header proxy_protocol;
     set_real_ip_from 127.0.0.1;
     ${http2_on}
     index index.html index.htm index.php;
-    root /var/www/html/;
+    root /var/www/html/cover-reality;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!eNULL:!MD5:!DES:!RC4:!ADH:!SSLv3:!EXP:!PSK:!DSS;
     ssl_certificate     /etc/letsencrypt/live/${reality_domain}/fullchain.pem;
@@ -1740,21 +1740,42 @@ install_clash_sub() {
     fi
 }
 
-install_fake_site() {
-    local idx=$(( (RANDOM % FAKE_SITE_COUNT) + 1 ))
-    local site_id
-    site_id=$(printf "site-%02d" "$idx")
-    local url="${GITHUB_RAW}/assets/fake-sites/${site_id}/index.html"
+# Download one immutable project archive, never mix templates from mutable main.
+preflight_cover_sites() {
+    [[ -n ${PROJECT_SOURCE_SHA:-} && $PROJECT_SOURCE_SHA == "${PROJECT_REF:-}" ]] || pin_project_source || return 1
+    local archive="$PANEL_STAGE/cover-source.tar.gz"
+    curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 \
+        "https://codeload.github.com/xPROMSx/3x-ui-auto-nginx/tar.gz/$PROJECT_SOURCE_SHA" -o "$archive" || return 1
+    python3 - "$archive" "$PANEL_STAGE/cover-source" "$PROJECT_SOURCE_SHA" <<'PYCOVER' || return 1
+import pathlib, sys, tarfile
+archive, target, sha = sys.argv[1:]
+target = pathlib.Path(target)
+prefix = '3x-ui-auto-nginx-'+sha+'/assets/cover-sites/'
+with tarfile.open(archive, 'r:gz') as bundle:
+    selected = [m for m in bundle.getmembers() if m.name.startswith(prefix) and not m.isdir()]
+    if not selected or len(selected) > 400 or sum(m.size for m in selected) > 8*1024*1024:
+        raise ValueError('Invalid cover source bundle')
+    for member in selected:
+        relative = pathlib.PurePosixPath(member.name[len(prefix):])
+        if not member.isfile() or relative.is_absolute() or '..' in relative.parts:
+            raise ValueError('Unsafe cover source archive')
+        path = target.joinpath(*relative.parts)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with bundle.extractfile(member) as source, path.open('xb') as out: out.write(source.read())
+for name in ('managed.py','tools/generate.py','tools/check.py','data/variants.json'):
+    if not (target/name).is_file(): raise ValueError('Missing cover source: '+name)
+PYCOVER
+    python3 -I "$PANEL_STAGE/cover-source/managed.py" check "$PANEL_STAGE/cover-prepared" || return 1
+    local -a roles=(panel reality)
+    [[ ${INSTALL_VISION:-n} != y ]] || roles+=(vision)
+    # Full reinstall creates new selections; it does not adopt the previous sites.
+    python3 -I "$PANEL_STAGE/cover-source/managed.py" prepare "$PANEL_STAGE/cover-prepared" \
+        --state "$PANEL_STAGE/cover-absent.json" --roles "${roles[@]}"
+}
 
-    mkdir -p /var/www/html || return 1
-    if curl -fsSL "$url" -o /var/www/html/index.html; then
-        chown -R www-data:www-data /var/www/html 2>/dev/null || return 1
-        chmod 644 /var/www/html/index.html || return 1
-        msg_ok "$(ui_text 'Fake cover site '\''%s'\'' installed.' 'Сайт прикрытия '\''%s'\'' установлен.' "$site_id")"
-    else
-        msg_err "$(ui_text 'Failed to download fake site %s from GitHub.' 'Не удалось загрузить сайт прикрытия %s с GitHub.' "$site_id")"
-        return 1
-    fi
+install_fake_site() {
+    python3 -I "${PANEL_STAGE:?Cover preflight required}/cover-source/managed.py" publish \
+        "$PANEL_STAGE/cover-prepared" --roles panel reality
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3000,7 +3021,8 @@ install_vision() {
         msg_warn 'Existing Vision lineage was not approved by project ownership preflight; preserved.'
         return 1
     fi
-    if python3 "$PANEL_STAGE/managed-vision.py" --render-acme "$vision_domain" > /etc/nginx/sites-available/vision-acme.conf &&
+    if python3 -I "$PANEL_STAGE/cover-source/managed.py" publish "$PANEL_STAGE/cover-prepared" --roles vision &&
+       python3 "$PANEL_STAGE/managed-vision.py" --render-acme "$vision_domain" > /etc/nginx/sites-available/vision-acme.conf &&
        { vision_stage='activating ACME configuration'; chmod 0644 /etc/nginx/sites-available/vision-acme.conf &&
          ln -s /etc/nginx/sites-available/vision-acme.conf /etc/nginx/sites-enabled/vision-acme.conf; } &&
        { vision_stage='validating ACME nginx configuration'; nginx -t; } &&
@@ -3028,6 +3050,7 @@ install_vision() {
         VISION_RESULT=failed_rolled_back
     fi
     if [[ "$VISION_RESULT" == failed_rolled_back ]]; then
+        python3 -I "$PANEL_STAGE/cover-source/managed.py" rollback-vision "$PANEL_STAGE/cover-prepared" || result=1
         rm -f "$hook" || result=1
         rm -f /etc/nginx/sites-enabled/vision-acme.conf /etc/nginx/sites-available/vision-acme.conf || result=1
         if (( new_lineage )) && [[ -e "/etc/letsencrypt/live/$vision_domain" || -e "/etc/letsencrypt/renewal/$vision_domain.conf" ]]; then
@@ -3123,6 +3146,7 @@ main() {
     preflight_base_os || { msg_err "$(ui_text 'Base OS preflight failed; existing deployment was not removed.' 'Предварительная проверка ОС не пройдена; существующая установка не удалена.')"; exit 1; }
     preflight_panel_release || { msg_err "$(ui_text 'Release preflight failed; existing deployment was not removed.' 'Предварительная проверка релиза не пройдена; существующая установка не удалена.')"; exit 1; }
     make_port sub_port panel_port ws_port trojan_port mtr_backend_port || exit 1
+    preflight_cover_sites || { msg_err 'Cover site preparation failed before cleanup.'; exit 1; }
     preflight_amneziawg || { msg_err "$(ui_text 'AmneziaWG preflight failed; existing deployment was not removed.' 'Предварительная проверка AmneziaWG не пройдена; существующая установка не удалена.')"; exit 1; }
     preflight_integrated_features || { msg_err "$(ui_text 'Feature preparation stopped before cleanup; see the component error above.' 'Подготовка компонентов остановлена до удаления данных; проверьте ошибку компонента выше.')"; exit 1; }
     preflight_xhttp_cdn || { msg_err "$(ui_text 'XHTTP CDN preflight failed; existing deployment was not removed.' 'Предварительная проверка XHTTP CDN не пройдена; существующая установка не удалена.')"; exit 1; }
@@ -3158,10 +3182,10 @@ main() {
     [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text '[5] 3X-UI, PROTOCOLS AND NGINX' '[5] 3X-UI, ПРОТОКОЛЫ И NGINX')"
     install_panel || { msg_err "$(ui_text '3X-UI installation failed (exit %s). See the cause above; installation stopped.' 'Установка 3X-UI завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
 
+    install_fake_site || { msg_err "$(ui_text 'Cover site download/setup failed (exit %s). See the cause above; installation stopped.' 'Загрузка или настройка сайта прикрытия завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
     configure_nginx || { msg_err "$(ui_text 'nginx configuration failed (exit %s). See the cause above; installation stopped.' 'Настройка nginx завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
     configure_xui_db || { msg_err "$(ui_text '3X-UI database configuration failed (exit %s). See the cause above; installation stopped.' 'Настройка базы 3X-UI завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
     install_clash_sub || { msg_err "$(ui_text 'Clash template download/setup failed (exit %s). See the cause above; installation stopped.' 'Загрузка или настройка шаблона Clash завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
-    install_fake_site || { msg_err "$(ui_text 'Cover site download/setup failed (exit %s). See the cause above; installation stopped.' 'Загрузка или настройка сайта прикрытия завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
     install_diagnostics || { msg_err "$(ui_text 'Diagnostics download/setup failed (exit %s). See the cause above; installation stopped.' 'Загрузка или настройка диагностики завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }
     tune_system || { TUNING_RESULT=partially_skipped; msg_warn "$(ui_text 'Kernel tuning failed; core installation continues.' 'Не удалось настроить параметры ядра; установка основного стека продолжается.')"; }
     install_backup_tool || { msg_err "$(ui_text 'Backup tool setup failed (exit %s). See the cause above; installation stopped.' 'Установка утилиты Backup завершилась ошибкой (exit %s). См. причину выше; установка остановлена.' "$?")"; exit 1; }

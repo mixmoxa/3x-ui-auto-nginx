@@ -333,5 +333,99 @@ class CIScope(unittest.TestCase):
         self.fail('DNS negative unexpectedly passed')
 
 
+    def test_fresh_scenario_groups_preserve_all_thirteen_phases(self):
+        import ast
+        from types import SimpleNamespace
+        tree=ast.parse((ROOT/'tests/fresh/acceptance.py').read_text())
+        function=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='fresh_acceptance')
+        positive=['maximum-install','manager-backup','transport-consumers','AWG-payload','tech0-RED-GREEN',
+                  'installed-renewal-hooks','cold-boot','cold-transport-consumers','change-domains','restore-before-domains']
+        negative=['mandatory-dependency-negative','DoT-outage-partial-install','DoT-outage-core-consumers']
+        with tempfile.TemporaryDirectory() as directory:
+            for group,expected,disks in (('all',positive+negative,3),('positive',positive,1),('negative',negative,2)):
+                events=[];calls=[];group_root=Path(directory)/group;group_root.mkdir()
+                env=dict(ROOT=group_root,phase='',re=re)
+                def record(kind):events.append((kind,env['phase']))
+                env.update(fresh_disk=lambda:record('disk'),boot=lambda:record('boot'),poweroff=lambda:record('off'),
+                    install=lambda scenario,*args:(record('phase'),calls.append(scenario)),
+                    invoke=lambda expression,*args,**kwargs:(record('phase'),calls.append(expression)),
+                    ssh=lambda *args,**kwargs:SimpleNamespace(returncode=0,stdout=b'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n'))
+                exec(compile(ast.Module(body=[function],type_ignores=[]),'acceptance.py','exec'),env)
+                env['fresh_acceptance']('a'*40,group)
+                self.assertEqual([phase for kind,phase in events if kind=='phase'],
+                                 [expected[0]]+expected if group!='negative' else expected)
+                positive_calls=['positive','checks.installed()','checks.manager_backup()','checks.transports()',
+                    'checks.amneziawg()','checks.search_domain_regression()','checks.renewal()',
+                    'checks.installed(cold=True)','checks.transports()','checks.change_domains()',
+                    'checks.restore_before_domains()']
+                negative_calls=['dependency','dot-outage','checks.transports(vision=False)']
+                self.assertEqual(calls,(positive_calls if group!='negative' else [])+
+                                       (negative_calls if group!='positive' else []))
+                self.assertEqual(sum(kind=='disk' for kind,_ in events),disks)
+                if group!='positive':
+                    for phase in negative[:2]:
+                        boot_index=events.index(('boot',phase))
+                        self.assertEqual(events[boot_index-1][0],'disk')
+                if group!='negative':
+                    cold=events.index(('boot','cold-boot'))
+                    self.assertEqual(events[cold-1][0],'off')
+                    self.assertNotIn(('disk','cold-boot'),events)
+            events.clear()
+            with self.assertRaises(ValueError):env['fresh_acceptance']('a'*40,'unknown')
+            self.assertEqual(events,[])
+        main=next(node for node in tree.body if isinstance(node,ast.If) and ast.unparse(node.test)=="__name__ == '__main__'")
+        restore=next(node for node in ast.walk(main) if isinstance(node,ast.If) and 'XUI_RESTORE_ACCEPTANCE' in ast.unparse(node.test))
+        self.assertEqual(ast.unparse(restore.body[0]),'restore_acceptance(ref)')
+        self.assertNotIn('fresh_acceptance',ast.unparse(ast.Module(body=restore.body,type_ignores=[])))
+
+    def test_fresh_final_check_fails_closed_for_all_job_results(self):
+        import ast,itertools,textwrap
+        workflow=(ROOT/'.github/workflows/fresh-acceptance.yml').read_text()
+        code=textwrap.dedent(re.search(r"python3 - <<'PYFRESHRESULT'\n(.*?)^          PYFRESHRESULT$",workflow,re.M|re.S)[1])
+        tree=ast.parse(code);function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='fresh_success')
+        env={};exec(compile(ast.Module(body=[function],type_ignores=[]),'fresh-result','exec'),env)
+        states=('success','failure','cancelled','skipped')
+        for docs in ('true','false','','unknown'):
+            for scope,positive,negative in itertools.product(states,repeat=3):
+                expected=scope=='success' and ((docs=='true' and positive==negative=='skipped') or
+                                              (docs=='false' and positive==negative=='success'))
+                self.assertEqual(env['fresh_success'](docs,scope,positive,negative),expected,
+                                 (docs,scope,positive,negative))
+        for docs,scope,positive,negative,passed in (('false','success','success','success',True),
+                ('true','success','skipped','skipped',True),('true','failure','skipped','skipped',False),
+                ('false','success','skipped','success',False),('false','success','cancelled','success',False)):
+            with tempfile.TemporaryDirectory() as directory:
+                summary=Path(directory)/'summary'
+                result=subprocess.run(['python3','-c',code],text=True,capture_output=True,env={**os.environ,
+                    'CI_DOCS_ONLY':docs,'CI_SCOPE_RESULT':scope,'CI_POSITIVE_RESULT':positive,
+                    'CI_NEGATIVE_RESULT':negative,'GITHUB_STEP_SUMMARY':str(summary)})
+                self.assertEqual(result.returncode==0,passed)
+                self.assertEqual(summary.read_text().strip(),result.stdout.strip())
+                if docs=='true' and passed:
+                    self.assertIn('Full Fresh E2E not executed',result.stdout)
+                    self.assertNotIn('Full Fresh E2E: PASS',result.stdout)
+
+    def test_fresh_workflow_wires_independent_groups_and_keeps_vm_limits(self):
+        workflow=(ROOT/'.github/workflows/fresh-acceptance.yml').read_text()
+        self.assertEqual(workflow.count('name: Full fresh installer (ubuntu-26.04)'),1)
+        self.assertIn('needs: [scope, positive, negative]',workflow)
+        self.assertIn('if: always()',workflow.split('  fresh:',1)[1])
+        self.assertEqual(workflow.count('timeout-minutes: 60'),2)
+        self.assertEqual(workflow.count("if: needs.scope.outputs.docs_only == 'false'"),2)
+        for group in ('positive','negative'):
+            block=re.split(r'\n  [a-z]+:',workflow.split('  '+group+':',1)[1])[0]
+            self.assertIn('needs: scope',block)
+            self.assertIn('XUI_FRESH_GROUP: '+group,block)
+        script=(ROOT/'tests/fresh/run.sh').read_text()
+        self.assertIn('--cpus=4',script);self.assertNotIn('--cpus=2',script)
+        self.assertIn('--memory=6g',script)
+        self.assertIn('-e "XUI_FRESH_GROUP=$fresh_group"',script)
+        self.assertIn("'-smp', '2'",(ROOT/'tests/fresh/acceptance.py').read_text())
+        self.assertIn('-smp 2',(ROOT/'tests/systemd/boot.sh').read_text())
+        result=subprocess.run(['bash','tests/fresh/run.sh'],cwd=ROOT,text=True,capture_output=True,
+                              env={**os.environ,'XUI_FRESH_GROUP':'unsupported','XUI_RESTORE_ACCEPTANCE':'0'})
+        self.assertEqual(result.returncode,2);self.assertIn('Invalid fresh scenario group',result.stderr)
+
+
 if __name__ == '__main__':
     unittest.main()
