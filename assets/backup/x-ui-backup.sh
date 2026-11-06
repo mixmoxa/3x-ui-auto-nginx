@@ -522,7 +522,7 @@ preflight_target_telemt() {
     # Read-only, before even package bootstrap: replacing nginx cannot preserve
     # a separate Telemt lifecycle. Partial/ambiguous installations also refuse.
     local path status
-    for path in /etc/telemt /var/lib/telemt /var/lib/telemt-web-manager /var/lib/telemt-web-manager-acme /usr/local/bin/telemt \
+    for path in /etc/telemt /var/lib/telemt /var/lib/telemt-web-manager /var/lib/telemt-web-manager-acme /var/www/telemt-web-manager /usr/local/bin/telemt \
         /etc/systemd/system/telemt.service /etc/systemd/system/telemt.service.d \
         /usr/lib/systemd/system/telemt.service /lib/systemd/system/telemt.service \
         /etc/nginx/conf.d/telemt-web-manager.conf /etc/nginx/conf.d/telemt-web-manager-acme.conf \
@@ -534,7 +534,7 @@ preflight_target_telemt() {
         die 'Restore over existing or partial Telemt is not supported; no Telemt state was changed.'
     fi
     if [[ -d /etc/nginx ]]; then
-        if grep -rqsE 'twm_frontend|telemt-web-manager|127[.]0[.]0[.]1:7444' /etc/nginx; then
+        if grep -rqsEi 'twm_frontend|twpm_web_backend|telemt-web-manager|127[.]0[.]0[.]1:7444' /etc/nginx; then
             die 'Restore over existing or partial Telemt is not supported; no Telemt state was changed.'
         else
             status=$?
@@ -544,9 +544,9 @@ preflight_target_telemt() {
 }
 
 exclude_staged_telemt() {
-    # One narrow migration for Manager v1.1.5. Never load code from the archive
-    # or consult target TLS files. The optional LIVE manifest is evidence only
-    # during Backup; historical v3 archives intentionally have no such manifest.
+    # Only canonical Manager vhosts (direct, keepalive, original site v0.3).
+    # Never load archive code or consult target TLS files. A LIVE manifest binds
+    # new vhosts during Backup; historical v3 archives have no such manifest.
     python3 - "$STAGING/files" /etc/nginx /etc/letsencrypt /root/cert \
         "${1:-restore}" /var/lib/telemt-web-manager/manifest.json /var/lib/telemt-web-manager-acme <<'PYTELEMT'
 import hashlib, json, os, pathlib, re, shutil, stat, sys
@@ -635,7 +635,7 @@ try:
     renewal_hint = any('telemt-web-manager' in p.read_text(errors='replace')
                        for p in (staged(certroot)/'renewal').glob('*.conf') if p.is_file() and not p.is_symlink())
     if not (has_manifest or renewal_hint or any(os.path.lexists(p) for p in known) or
-            any(re.search(r'twm_frontend|telemt-web-manager|127\.0\.0\.1:7444', s) for s in sources.values())):
+            any(re.search(r'twm_frontend|twpm_web_backend|telemt-web-manager|127\.0\.0\.1:7444', s, re.I) for s in sources.values())):
         sys.exit(0)
     require(not linked_dirs)
     content = text(vhost)
@@ -676,7 +676,41 @@ server {{
     }}
 }}
 '''
-    require(content == expected)
+    # Exact render_vhost/render_site_server at TWPM PR #39's verified HEAD.
+    # The site digest is bound by nginx_sha256, not recomputed from live files.
+    header = '# Managed by telemt-web-manager v1. Manual changes require review.\n'
+    cached = expected.replace(header, header + '''upstream twpm_web_backend {
+    server 127.0.0.1:18080;
+    keepalive 32;
+}
+''', 1).replace('proxy_pass http://127.0.0.1:18080;', 'proxy_pass http://twpm_web_backend;', 1)
+    digest = re.search(r'^# TWPM original site v0\.3 sha256: ([0-9a-f]{64})$', content, re.M)
+    site = cached.replace(header, header + '# TWPM original site v0.3 sha256: ' + digest[1] + '\n', 1) + '''server {
+    listen 127.0.0.1:18081;
+    server_name _;
+    root /var/www/telemt-web-manager;
+    index index.html;
+    absolute_redirect off;
+    server_tokens off;
+    autoindex off;
+    charset utf-8;
+    access_log off;
+    error_log /dev/null crit;
+    default_type application/octet-stream;
+    types {
+        text/html html;
+        text/css css;
+        image/svg+xml svg;
+        image/x-icon ico;
+        text/plain txt;
+    }
+    add_header Content-Security-Policy "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" always;
+    error_page 404 /404.html;
+    location / { try_files $uri $uri/ =404; }
+}
+''' if digest else None
+    require(content in (expected, cached, site))
+    require(mode != 'backup' or content == expected or has_manifest)
     require(text(hook) == '#!/bin/sh\nset -eu\n/usr/sbin/nginx -t\n/usr/bin/systemctl reload nginx\n')
     has_acme = os.path.lexists(acme)
     if has_acme:
@@ -742,8 +776,9 @@ server {{
             continue
         remaining = edits.get(path, saved)
         words = [t[0] for t in tokens(remaining)]
-        require(not any('twm_frontend' in w or uses_host(w) or 'telemt-web-manager' in w or
-                        '127.0.0.1:7444' in w or '127.0.0.1:18080' in w for w in words))
+        ports = r'(?:^|:)(?:7444|18080' + ('|18081' if digest else '') + r')(?:$|/)'
+        require(not any('twm_frontend' in w.lower() or 'twpm_web_backend' in w.lower() or uses_host(w) or
+                        'telemt-web-manager' in w or re.search(ports, w) for w in words))
     for path in aliases:
         target = os.readlink(path)
         require(not uses_host(target) and 'telemt-web-manager' not in target)

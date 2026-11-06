@@ -47,6 +47,12 @@ SNI_INCLUDE = '/etc/nginx/stream-sni.d/*.conf'
 UPSTREAM_INCLUDE = '/etc/nginx/stream-upstreams.d/*.conf'
 TELEMT_FILES = ('/etc/nginx/conf.d/telemt-web-manager.conf', '/etc/nginx/conf.d/telemt-web-manager-acme.conf',
                 '/etc/nginx/stream-sni.d/telemt-web-manager.conf', '/etc/nginx/stream-upstreams.d/telemt-web-manager.conf')
+TELEMT_MANIFEST = '/var/lib/telemt-web-manager/manifest.json'
+TELEMT_VHOST_DIGESTS = (
+    'a35de3320bdd721063a3d13ff7d6ed2ccabd469c57ee10387882c126c42afef5',  # direct
+    '8eb4edbb28cbc42d1a3cceb473ad3b36f4dbb26ab11920947f9920adc3c6cb00',  # keepalive
+    '9eaf317bae5488e259c1d621d77e6a42d1b2c8c4149de97a519ccadca1981f04',  # site v0.3
+)
 
 
 class Refusal(ValueError):
@@ -411,8 +417,9 @@ class Operation:
     def stream_integration(self, context, stream):
         """Recognize only the two agreed Telemt layouts, without editing them.
 
-        Vhost digests pin render_vhost/render_acme from Manager v1.1.5,
-        3e73ceac75f1b7a7008446fa14c5811a76418c42, replacing only its domain.
+        Vhost digests pin the three complete render_vhost outputs at TWPM
+        3bf3fbea7fa77d662983f102e778a7b16e4a15ee, replacing only domain/site digest.
+        The historical direct-vhost/ACME contract stays unchanged.
         The remaining complete stream still has to match our bounded template.
         """
         normalize = lambda value: re.sub(r'\s+', '', re.sub(r'(?m)#.*$', '', value))
@@ -455,9 +462,24 @@ class Operation:
         hostname(host)
         require(host not in context['domains'].values(), 'Telemt SNI conflicts with a managed 3X-UI domain.')
         vhost = self.read(TELEMT_FILES[0])
-        require(digest(vhost.replace(host, '{domain}').encode()) == 'a35de3320bdd721063a3d13ff7d6ed2ccabd469c57ee10387882c126c42afef5',
-                'Changed or inconsistent Telemt HTTPS vhost.')
+        require('{domain}' not in vhost and '{site_digest}' not in vhost, 'Unexpanded Telemt HTTPS vhost markers.')
+        canonical = re.sub(r'(?m)^(# TWPM original site v0\.3 sha256: )[0-9a-f]{64}$',
+                           r'\1{site_digest}', vhost.replace(host, '{domain}'))
+        vhost_digest = digest(canonical.encode())
+        require(vhost_digest in TELEMT_VHOST_DIGESTS, 'Changed or inconsistent Telemt HTTPS vhost.')
         paths = [TELEMT_FILES[0]] + (list(TELEMT_FILES[2:]) if included else [])
+        if vhost_digest != TELEMT_VHOST_DIGESTS[0]:
+            # New layouts bind the variable site identity to the live manifest.
+            # Guard it read-only; never add it to scoped recovery writes.
+            require(os.path.lexists(self.path(TELEMT_MANIFEST)), 'Missing Telemt manifest for the new vhost.')
+            state = json.loads(self.read(TELEMT_MANIFEST))
+            marker = self.path(TELEMT_MANIFEST)
+            require(stat.S_IMODE(marker.stat().st_mode) == 0o600 and stat.S_IMODE(marker.parent.stat().st_mode) == 0o700,
+                    'Unsafe Telemt manifest permissions.')
+            require(isinstance(state, dict) and type(state.get('schema')) is int and state['schema'] == 1 and
+                    state.get('domain') == host and state.get('nginx_sha256') == digest(vhost.encode()),
+                    'Telemt manifest and HTTPS vhost disagree.')
+            paths.append(TELEMT_MANIFEST)
         if os.path.lexists(self.path(TELEMT_FILES[1])):
             require(digest(self.read(TELEMT_FILES[1]).replace(host, '{domain}').encode()) ==
                     '787a182c26bb2d5b335b5a62573a56df524f2f24f35c303b17ab7eab9f4d7035', 'Changed Telemt ACME vhost.')
@@ -1125,6 +1147,7 @@ class Operation:
         allowed = {'/etc/systemd/system/x-ui.service', '/etc/default/x-ui', '/etc/nginx/sites-available/vision.conf',
                    '/etc/nginx/sites-available/vision-acme.conf', '/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision'}
         allowed.update(TELEMT_FILES)
+        allowed.add(TELEMT_MANIFEST)
         require(record['guards'].keys() <= allowed and all(self.guard_value(path) == expected for path, expected in record['guards'].items()),
                 'Service/Vision resources changed independently; operation refused to overwrite them.')
 
