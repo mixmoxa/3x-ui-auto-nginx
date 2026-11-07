@@ -6,7 +6,7 @@
 
 ### 在自己的 VPS 上自动部署 3X-UI / XRAY-CORE
 
-**REALITY · XHTTP · HYSTERIA2 · WebSocket · gRPC · NGINX · HTTPS · BACKUP / RESTORE**
+**REALITY · XHTTP · HYSTERIA2 · NGINX · HTTPS · BACKUP / RESTORE**
 
 两个域名，一台全新的 VPS，只需几分钟即可完成安装。
 
@@ -19,24 +19,24 @@
 
 </div>
 
-**3X-UI AUTO NGINX** 自动安装 [3x-ui](https://github.com/MHSanaei/3x-ui) 和 Xray，并配置 nginx、HTTPS、连接配置、订阅、网络诊断以及 Backup / Restore。AmneziaWG 3.1 和支持 DoH 的 AdGuard Home 均为可选功能。 交互式管理菜单还支持更换域名和管理备份。
+**3X-UI AUTO NGINX** 是一款免费安装工具，可在自己的 VPS 上自动部署 [3x-ui](https://github.com/MHSanaei/3x-ui) 和 Xray。它负责配置 Nginx、HTTPS 证书、REALITY、XHTTP、Hysteria2、订阅和诊断功能。通过交互式管理菜单，你可以安装服务器、更换域名，以及管理 Backup/Restore v3。XTLS Vision、AmneziaWG 3.1 和带 DNS-over-HTTPS（DoH）的 AdGuard Home 均为可选功能。
 
-准备两个域名和一台全新的 VPS 即可。新安装会从六个模板中，为面板和 REALITY 分别生成独立的多页静态网站，并仅个性化一次。Vision 使用与 REALITY 不同的模板。备份、恢复和更换域名都会保留内容，不会自动替换旧网站。这并非已证实可抵御 DPI、主动探测或 IP 封锁的措施。[详细说明](docs/COVER_SITES.md)。
+**不只是常规的 3x-ui 安装：**全新部署会为面板和 REALITY 分别生成独立、个性化的多页面网站。在 REALITY 域名上，普通的 TCP HTTPS 请求和未经认证的 UDP HTTP/3 请求会显示同一个网站。所有功能均利用现有的 Nginx 和 Xray，无须 Docker 或额外的 Web 服务器。v2.4.0 的改进不会自动应用到此前安装的 VPS。
 
 ## ✨ 为什么选择这个项目？
 
 | | |
 | --- | --- |
-| **预配置的连接方式**<br>REALITY、XHTTP、Hysteria2、Amnezia WG、VLESS XTLS Vision、WebSocket TLS 和 Trojan gRPC。 | **内部服务不直接暴露**<br>面板和订阅服务的内部端口不会直接暴露到互联网。 |
-| **受限的 nginx 路由**<br>外部请求无法被代理到任意本地端口。 | **Backup / Restore v3**<br>回滚当前 VPS，或将备份恢复到新服务器，包括其他 VPS 服务商的服务器。 |
-| **自动管理证书**<br>自动申请和续期 Let's Encrypt 证书，无需手动配置。 | **AdGuard Home + DoH**<br>按需启用，无需第三个域名。 |
-| **英语和俄语管理菜单**<br>通过简洁的菜单完成安装和备份管理。 | **更换域名**<br>无需重装服务器，即可更换面板域名、REALITY 域名或两者。 |
+| **开箱即用的连接**<br>安装时默认启用 REALITY、XHTTP 和 Hysteria2；还可按需选择其他传输方式。 | **完整的伪装网站**<br>六套适配移动设备的多页面模板，每次全新安装都会进行一次个性化配置。 |
+| **Hysteria2 HTTP/3 伪装**<br>REALITY 域名下，普通 TCP HTTPS 请求与未经认证的 UDP HTTP/3 请求显示同一网站。 | **内部管理接口隔离**<br>面板和订阅通过 Nginx 和 HTTPS 提供，内部端口不会直接暴露到互联网。 |
+| **Backup / Restore v3**<br>支持备份、恢复及迁移到其他 VPS，并保留用户数据与个性化网站。 | **管理菜单与域名更换**<br>提供俄语和英语菜单；无需重装即可更换面板域名、REALITY 域名或两者。 |
+| **自动证书与安全设置**<br>自动申请和续期 Let's Encrypt 证书；可选 SSH 防护与自动安全更新。 | **可选功能**<br>XTLS Vision、AmneziaWG 3.1、面向 CDN 的 XHTTP，以及支持 DoH 的 AdGuard Home。 |
 
 <a id="installation"></a>
 
 ## 🚀 快速开始
 
-配置**两个域名**的 DNS 记录，使它们指向你的 VPS IP 地址：一个用于面板，另一个用于 REALITY。通过 SSH 以 **root** 身份登录，并开放 TCP **80/443** 和 UDP **443**。查看[支持的系统](#technical-details)。
+将**两个域名**的 DNS 记录指向 VPS 的 IP 地址：一个用于面板，另一个用于 REALITY。通过 SSH 以 **root** 身份登录，并确认 TCP 端口 **80、443** 和 UDP 端口 **443** 可从互联网访问。查看[支持的系统](#technical-details)。
 
 ```bash
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
@@ -47,7 +47,7 @@ curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x
 - **1 — Installation：**全新部署或完整重装服务器。
 - **2 — Change Domains：**无需重装即可更换面板域名、REALITY 域名或两者。
 - **3 — Backups：**创建、查看和恢复备份。
-- **4 — Telegram Web Proxy Manager：**打开独立管理器或确认安装。退出管理器会结束 3X-UI 会话；取消安装则返回菜单。
+- **4 — Telegram Web Proxy Manager：**启动或安装独立的 Telegram 代理管理器。
 - **0 — Exit：**退出。
 
 菜单需要在交互式 SSH 终端中使用。
@@ -55,7 +55,7 @@ curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x
 <details>
 <summary><strong>备用下载 — GitHub Releases 不可用时</strong></summary>
 
-直接从当前 `main` 分支安装。其内容可能与最新发布的版本不同。
+**`main` 分支用于开发。**其中可能包含尚未纳入稳定版本的更改，包括测试不充分的功能或已知、未知错误。日常安装建议使用上方的稳定版本。
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
@@ -261,20 +261,28 @@ DoH 地址格式示例：
 
 如果操作系统更新后需要重启，安装程序会给出提示。**首次重启需手动执行** `sudo reboot`。
 
+## 🌐 伪装网站与 HTTP/3
+
+**告别简单的占位页，使用完整网站。**全新安装会自动为面板和 REALITY 创建两个不同的多页面网站。提供六套现代化模板，包含可用的导航、插图和适配手机的页面布局。启用可选的 XTLS Vision 后，它也会获得独立的网站。
+
+**每次安装都有自己的风格。**网站名称、配色、图片和文案会自动个性化配置。执行 Backup/Restore 或更换域名时，已选定的设计会保留。
+
+**Hysteria2 的 HTTP/3 伪装。**在 REALITY 域名下，普通 TCP HTTPS 请求和未经认证的 UDP HTTP/3 请求都会获得同一个完整网站。面板和订阅接口与公开的 HTTP/3 伪装服务保持隔离。
+
 ## 🚀 连接配置
 
 | 连接 | 状态 |
 | --- | :---: |
-| VLESS + REALITY | ✅ 可直接使用 |
-| VLESS + XHTTP | ✅ 可直接使用 |
-| 面向 CDN 的 VLESS + XHTTP | ✅ 可选 |
-| Hysteria2 | ✅ 可直接使用 |
-| VLESS + WebSocket (TLS) | ✅ 可直接使用 |
-| Trojan + gRPC | ✅ 可直接使用 |
-| VLESS + XTLS Vision | ✅ 可选 |
-| Amnezia WG | ✅ 可选 |
+| VLESS + REALITY | ✅ 默认启用 |
+| VLESS + XHTTP | ✅ 默认启用 |
+| 面向 CDN 的 VLESS + XHTTP | 🔧 可选，默认禁用 |
+| Hysteria2 | ✅ 默认启用 |
+| VLESS + WebSocket (TLS) | ◻️ 默认禁用 |
+| Trojan + gRPC | ◻️ 默认禁用 |
+| VLESS + XTLS Vision | 🔧 可选 |
+| Amnezia WG | 🔧 可选 |
 
-安装程序预先配置五个基本连接：REALITY、XHTTP 和 Hysteria2 默认启用；WebSocket 和 Trojan gRPC 可按需在 3X-UI 面板中启用。
+安装完成后，REALITY、XHTTP 和 Hysteria2 默认启用。WebSocket TLS 和 Trojan gRPC 也会创建，但需要在 3X-UI 面板中手动启用。
 
 XTLS Vision、Amnezia WG 和面向 CDN 的 XHTTP 仅在安装时选择后才会添加。面向 CDN 的 XHTTP 默认禁用，启用并绑定客户端后才会出现在订阅中。
 
@@ -333,9 +341,9 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 
 ## ✈️ Telegram Web Proxy Manager
 
-[配套项目](https://github.com/xPROMSx/telegram-web-proxy-manager)，用于搭建自己的 Telegram WEB Proxy，支持 HTTPS、伪装网站以及带回滚机制的更新。
+[Telegram Web Proxy Manager](https://github.com/xPROMSx/telegram-web-proxy-manager) 是一个独立的配套项目，可部署自己的 Telegram WEB Proxy，提供 HTTPS、伪装网站，以及支持回滚的更新。
 
-两个项目相互独立；**此安装脚本不会安装 Telegram Web Proxy Manager**。
+**TWPM 不包含在 3X-UI 的默认安装中。**主菜单选项 4 可启动此管理器，或在确认后单独安装。两个项目分别管理。
 
 <a id="technical-details"></a>
 

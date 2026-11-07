@@ -6,7 +6,7 @@
 
 ### Automated deployment of 3X-UI / XRAY-CORE on your own VPS
 
-**REALITY · XHTTP · HYSTERIA2 · WebSocket · gRPC · NGINX · HTTPS · BACKUP / RESTORE**
+**REALITY · XHTTP · HYSTERIA2 · NGINX · HTTPS · BACKUP / RESTORE**
 
 Two domains, a clean VPS, and a few minutes to install.
 
@@ -19,24 +19,24 @@ Two domains, a clean VPS, and a few minutes to install.
 
 </div>
 
-**3X-UI AUTO NGINX** installs [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray with nginx, HTTPS, connection profiles, subscriptions, diagnostics, and Backup / Restore. AmneziaWG 3.1 and AdGuard Home with DoH are optional. The interactive manager also lets you change domains and manage backups.
+**3X-UI AUTO NGINX** is a free installer for deploying [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray on your own VPS. It configures Nginx, HTTPS certificates, REALITY, XHTTP, Hysteria2, subscriptions, and diagnostics. Its interactive manager handles server installation, domain changes, and Backup/Restore v3. Optional features include XTLS Vision, AmneziaWG 3.1, and AdGuard Home with DNS-over-HTTPS (DoH).
 
-Bring two domains and a clean VPS. New installs give the panel and REALITY separate multipage static sites from six templates, personalized once. Vision uses a third template different from REALITY. Backup/Restore and domain changes preserve content; legacy sites are not automatically replaced. This is not a proven defense against DPI, active probing or IP blocking. [Cover site details](docs/COVER_SITES.md).
+**More than a standard 3x-ui installation:** fresh deployments get separate, personalized multi-page websites for the panel and REALITY. On the REALITY domain, ordinary HTTPS requests over TCP and unauthenticated HTTP/3 requests over UDP serve the same website. The existing Nginx and Xray components handle everything, with no Docker or additional web servers. The v2.4.0 changes are not applied automatically to previously installed VPS servers.
 
-## ✨ Why this project
+## ✨ Why this project?
 
 | | |
 | --- | --- |
-| **Preconfigured connections**<br>REALITY, XHTTP, Hysteria2, Amnezia WG, VLESS XTLS Vision, WebSocket TLS, and Trojan gRPC. | **Private internal services**<br>The panel and subscription service don't expose their internal ports to the internet. |
-| **Restricted nginx routing**<br>Requests cannot be forwarded to arbitrary local ports. | **Backup / Restore v3**<br>Roll back your VPS or restore to a new server, including one from another hosting provider. |
-| **Automatic certificates**<br>Let's Encrypt issuance and renewal need no manual configuration. | **AdGuard Home + DoH**<br>Opt in during setup; no third domain needed. |
-| **English and Russian manager**<br>Install and manage backups through a simple menu. | **Change domains**<br>Change the panel domain, REALITY domain, or both without reinstalling the server. |
+| **Ready-to-use connections**<br>REALITY, XHTTP, and Hysteria2 are enabled on installation; additional transports are available as options. | **Complete cover websites**<br>Six responsive, multi-page templates with one-time personalization for every fresh installation. |
+| **Hysteria2 HTTP/3 cover**<br>Ordinary HTTPS requests over TCP and unauthenticated HTTP/3 requests over UDP serve the same site on the REALITY domain. | **Isolated internal interfaces**<br>The panel and subscriptions use Nginx and HTTPS; their internal ports are not exposed directly to the internet. |
+| **Backup / Restore v3**<br>Backup, recovery, and migration to another VPS while preserving user data and personalized sites. | **Manager and domain changes**<br>English and Russian menus; change the panel domain, REALITY domain, or both without reinstalling. |
+| **Automatic certificates and security**<br>Let's Encrypt with automatic renewal; optional SSH protection and automatic security updates. | **Optional features**<br>XTLS Vision, AmneziaWG 3.1, CDN-ready XHTTP, and AdGuard Home with DoH. |
 
 <a id="installation"></a>
 
 ## 🚀 Quick start
 
-Configure the DNS records for **two domains** to point to your VPS IP address: one for the panel, one for REALITY. Connect via SSH as **root** and allow TCP **80/443**, UDP **443**. [Supported systems](#technical-details).
+Point the DNS records of **two domains** to your VPS IP address: one for the panel and one for REALITY. Connect via SSH as **root** and make sure inbound TCP ports **80 and 443** and UDP port **443** are reachable from the internet. [Supported systems](#technical-details).
 
 ```bash
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
@@ -47,7 +47,7 @@ After launching, choose **1 — English** or **2 — Русский**. Then the 
 - **1 — Installation:** set up a new server or perform a full reinstall.
 - **2 — Change Domains:** change the panel domain, REALITY domain, or both without reinstalling.
 - **3 — Backups:** create, list, and restore backups.
-- **4 — Telegram Web Proxy Manager:** open the independent manager or confirm its installation. Exiting the manager ends the 3X-UI session; cancelling installation returns to the menu.
+- **4 — Telegram Web Proxy Manager:** launch or install the separate Telegram proxy manager.
 - **0 — Exit.**
 
 The menu requires an interactive SSH terminal.
@@ -55,7 +55,7 @@ The menu requires an interactive SSH terminal.
 <details>
 <summary><strong>Fallback download — if GitHub Releases is unavailable</strong></summary>
 
-Install directly from the current `main` branch. Its contents may differ from the latest published release.
+**The `main` branch is used for development.** It may contain changes not yet included in a stable release, including insufficiently tested features or bugs. For normal installations, use the stable release above.
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
@@ -261,22 +261,30 @@ The installation report displays the **panel URL, username and password, diagnos
 
 If an OS update requires a reboot, the installer will notify you. **The initial reboot is manual**: run `sudo reboot`.
 
+## 🌐 Cover websites and HTTP/3
+
+**Complete websites instead of basic placeholders.** Fresh installations automatically create separate, multi-page websites for the panel and REALITY. Six modern templates feature working navigation, illustrations, and responsive layouts. Optional XTLS Vision gets its own website.
+
+**Every installation looks different.** The name, color palette, images, and text are automatically personalized. The selected design is preserved across Backup/Restore and domain changes.
+
+**Hysteria2 with HTTP/3 cover.** Ordinary HTTPS requests over TCP and unauthenticated HTTP/3 requests over UDP on the REALITY domain receive the same complete website. The panel and subscriptions remain isolated from this public HTTP/3 cover.
+
 ## 🚀 Connection profiles
 
 | Connection | Status |
 | --- | :---: |
-| VLESS + REALITY | ✅ Ready to use |
-| VLESS + XHTTP | ✅ Ready to use |
-| VLESS + XHTTP for CDN | ✅ Optional |
-| Hysteria2 | ✅ Ready to use |
-| VLESS + WebSocket (TLS) | ✅ Ready to use |
-| Trojan + gRPC | ✅ Ready to use |
-| VLESS + XTLS Vision | ✅ Optional |
-| Amnezia WG | ✅ Optional |
+| VLESS + REALITY | ✅ Enabled by default |
+| VLESS + XHTTP | ✅ Enabled by default |
+| VLESS + XHTTP for CDN | 🔧 Optional, disabled |
+| Hysteria2 | ✅ Enabled by default |
+| VLESS + WebSocket (TLS) | ◻️ Disabled by default |
+| Trojan + gRPC | ◻️ Disabled by default |
+| VLESS + XTLS Vision | 🔧 Optional |
+| Amnezia WG | 🔧 Optional |
 
-Five standard profiles are configured: REALITY, XHTTP, and Hysteria2 are enabled immediately, while WebSocket and Trojan gRPC can be enabled in 3X-UI as needed.
+REALITY, XHTTP, and Hysteria2 are enabled after installation. WebSocket TLS and Trojan gRPC are created but remain disabled until you enable them in the 3X-UI panel.
 
-XTLS Vision, Amnezia WG, and XHTTP for CDN are added only when selected during installation. XHTTP for CDN is created disabled and does not appear in subscriptions until you enable it and attach a client.
+XTLS Vision, Amnezia WG, and XHTTP for CDN are added only if selected during installation. XHTTP for CDN is created disabled and will not appear in subscriptions until you enable it and attach a client.
 
 Create clients automatically during installation or manually in the panel to use the connections. Amnezia WG clients are created separately.
 
@@ -341,9 +349,9 @@ Service interfaces are not exposed directly to the internet. The panel, subscrip
 
 ## ✈️ Telegram Web Proxy Manager
 
-[A companion project](https://github.com/xPROMSx/telegram-web-proxy-manager) for your own Telegram WEB Proxy: HTTPS, a cover site, and updates with rollback.
+[Telegram Web Proxy Manager](https://github.com/xPROMSx/telegram-web-proxy-manager) is an independent companion project for running your own Telegram WEB Proxy, with HTTPS, a cover website, and updates with rollback.
 
-The projects are independent; **this installer does not install Telegram Web Proxy Manager**.
+**TWPM is not part of the default 3X-UI installation.** Main menu option 4 lets you launch it or start its separate installation after confirmation. Both projects are managed independently.
 
 <a id="technical-details"></a>
 

@@ -6,7 +6,7 @@
 
 ### Kendi VPS sunucunuzda otomatik 3X-UI / XRAY-CORE kurulumu
 
-**REALITY · XHTTP · HYSTERIA2 · WebSocket · gRPC · NGINX · HTTPS · BACKUP / RESTORE**
+**REALITY · XHTTP · HYSTERIA2 · NGINX · HTTPS · BACKUP / RESTORE**
 
 İki alan adı, temiz bir VPS ve kurulumu tamamlamak için yalnızca birkaç dakika.
 
@@ -19,24 +19,24 @@
 
 </div>
 
-**3X-UI AUTO NGINX**, [3x-ui](https://github.com/MHSanaei/3x-ui) ve Xray'i kurar; nginx, HTTPS, bağlantı profilleri, abonelikler, ağ tanılama ve yedekleme/geri yükleme yapılandırmasını hazırlar. AmneziaWG 3.1 ve DoH destekli AdGuard Home isteğe bağlıdır. Etkileşimli yöneticiyle alan adlarını değiştirebilir ve yedeklemeleri de yönetebilirsiniz.
+**3X-UI AUTO NGINX**, kendi VPS sunucunuzda [3x-ui](https://github.com/MHSanaei/3x-ui) ve Xray kurmak için ücretsiz bir yükleyicidir. Nginx, HTTPS sertifikaları, REALITY, XHTTP, Hysteria2, abonelikler ve tanılama araçlarını yapılandırır. Etkileşimli yöneticiyle sunucu kurulumu, alan adı değişikliği ve Backup/Restore v3 işlemlerini gerçekleştirebilirsiniz. XTLS Vision, AmneziaWG 3.1 ve DNS-over-HTTPS (DoH) destekli AdGuard Home isteğe bağlıdır.
 
-İki alan adı ve temiz bir VPS yeterlidir. Yeni kurulumlarda panel ve REALITY için altı şablondan bir kez kişiselleştirilen bağımsız çok sayfalı statik siteler oluşturulur. Vision, REALITY’den farklı bir şablon kullanır. Backup/Restore ve alan adı değişikliği içeriği korur; eski siteler otomatik değiştirilmez. Bu, DPI, aktif sorgulama veya IP engellemeye karşı kanıtlanmış bir koruma değildir. [Ayrıntılar](docs/COVER_SITES.md).
+**Standart bir 3x-ui kurulumundan fazlası:** yeni kurulumlarda panel ve REALITY için birbirinden farklı, kişiselleştirilmiş çok sayfalı web siteleri oluşturulur. REALITY alan adında TCP üzerinden normal HTTPS istekleri ve UDP üzerinden kimlik doğrulaması yapılmamış HTTP/3 istekleri aynı web sitesini gösterir. Tüm bunlar mevcut Nginx ve Xray ile çalışır; Docker veya ek web sunucusu gerekmez. v2.4.0 yenilikleri, önceden kurulmuş VPS sunucularına otomatik olarak uygulanmaz.
 
 ## ✨ Neden bu proje?
 
 | | |
 | --- | --- |
-| **Hazır bağlantı profilleri**<br>REALITY, XHTTP, Hysteria2, Amnezia WG, VLESS XTLS Vision, WebSocket TLS ve Trojan gRPC. | **Dışarıya kapalı dahili hizmetler**<br>Panelin ve abonelik hizmetinin dahili portları doğrudan internete açılmaz. |
-| **Kısıtlı nginx yönlendirmesi**<br>İstekler rastgele yerel portlara yönlendirilemez. | **Backup / Restore v3**<br>Mevcut VPS'i önceki durumuna döndürün veya farklı bir sağlayıcıdaki yeni sunucuya geri yükleyin. |
-| **Otomatik sertifikalar**<br>Let's Encrypt sertifikaları elle yapılandırma gerektirmeden alınır ve yenilenir. | **AdGuard Home + DoH**<br>Kurulumda isteğe bağlıdır; üçüncü bir alan adı gerekmez. |
-| **İngilizce ve Rusça yönetici**<br>Basit bir menüden kurulum ve yedekleme yönetimi. | **Alan adı değiştirme**<br>Panel, REALITY veya her iki alan adını sunucuyu yeniden kurmadan değiştirin. |
+| **Kullanıma hazır bağlantılar**<br>REALITY, XHTTP ve Hysteria2 kurulumda etkinleştirilir; ek taşıma yöntemleri isteğe bağlıdır. | **Eksiksiz kamuflaj siteleri**<br>Yeni kurulumlarda bir kez kişiselleştirilen, mobil uyumlu altı çok sayfalı şablon. |
+| **Hysteria2 için HTTP/3 kamuflajı**<br>REALITY alan adında TCP üzerinden normal HTTPS ve UDP üzerinden kimliği doğrulanmamış HTTP/3 istekleri aynı siteyi gösterir. | **Yalıtılmış dahili arayüzler**<br>Panel ve abonelikler Nginx ve HTTPS üzerinden çalışır; dahili portları doğrudan internete açılmaz. |
+| **Backup / Restore v3**<br>Verileri ve kişiselleştirilmiş siteleri koruyarak yedekleme, kurtarma ve başka bir VPS'e taşıma. | **Yönetici ve alan adı değişikliği**<br>Rusça ve İngilizce menü; panelin, REALITY'nin veya her ikisinin alan adını yeniden kurmadan değiştirin. |
+| **Otomatik sertifikalar ve güvenlik**<br>Let's Encrypt sertifikaları otomatik yenilenir; SSH koruması ve güvenlik güncellemeleri isteğe bağlıdır. | **Ek özellikler**<br>XTLS Vision, AmneziaWG 3.1, CDN için XHTTP ve DoH destekli AdGuard Home. |
 
 <a id="installation"></a>
 
 ## 🚀 Hızlı başlangıç
 
-**İki alan adının** DNS kayıtlarını VPS IP adresinize yönlendirin: biri panel, diğeri REALITY için. SSH üzerinden **root** olarak bağlanın ve TCP **80/443** ile UDP **443** erişimine izin verin. [Desteklenen sistemler](#technical-details).
+**İki alan adının** DNS kayıtlarını VPS IP adresinize yönlendirin: biri panel, diğeri REALITY için. SSH üzerinden **root** olarak bağlanın ve TCP **80 ile 443** ve UDP **443** portlarına internetten erişilebildiğini doğrulayın. [Desteklenen sistemler](#technical-details).
 
 ```bash
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
@@ -47,7 +47,7 @@ Betiği çalıştırdıktan sonra **1 — English** veya **2 — Русский*
 - **1 — Installation:** yeni sunucu kurma veya tam yeniden kurulum.
 - **2 — Change Domains:** panel alan adını, REALITY alan adını veya ikisini yeniden kurmadan değiştirme.
 - **3 — Backups:** yedek oluşturma, listeleme ve geri yükleme.
-- **4 — Telegram Web Proxy Manager:** bağımsız yöneticiyi açın veya kurulumunu onaylayın. Yöneticiden çıkış 3X-UI oturumunu bitirir; kurulumu iptal etmek menüye döndürür.
+- **4 — Telegram Web Proxy Manager:** bağımsız Telegram proxy yöneticisini başlatma veya kurma.
 - **0 — Exit:** çıkış.
 
 Menü, etkileşimli bir SSH terminali gerektirir.
@@ -55,7 +55,7 @@ Menü, etkileşimli bir SSH terminali gerektirir.
 <details>
 <summary><strong>Alternatif indirme — GitHub Releases kullanılamıyorsa</strong></summary>
 
-Doğrudan güncel `main` dalından kurulum yapar. İçeriği, yayımlanan son sürümden farklı olabilir.
+**`main` dalı geliştirme amacıyla kullanılır.** Henüz kararlı sürüme eklenmemiş değişiklikler, yeterince test edilmemiş özellikler veya hatalar içerebilir. Normal kurulumlar için yukarıdaki kararlı sürümü tercih edin.
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
@@ -261,22 +261,30 @@ Kurulum sonunda **panel adresi, kullanıcı adı ve parola, tanılama adresi ve 
 
 İşletim sistemi güncellemesi yeniden başlatma gerektiriyorsa kurulum aracı bunu bildirir. **İlk yeniden başlatma elle yapılır:** `sudo reboot`.
 
+## 🌐 Kamuflaj siteleri ve HTTP/3
+
+**Basit yer tutucu sayfalar yerine gerçek web siteleri.** Yeni kurulumlarda panel ve REALITY için otomatik olarak farklı, çok sayfalı siteler oluşturulur. Çalışan gezinme bağlantıları, görseller ve mobil uyumlu tasarımlar içeren altı modern şablon bulunur. İsteğe bağlı XTLS Vision için ayrı bir site seçilir.
+
+**Her kurulumun görünümü farklıdır.** Site adı, renk paleti, görseller ve metinler otomatik olarak kişiselleştirilir. Seçilen tasarım Backup/Restore ve alan adı değişiklikleri sırasında korunur.
+
+**HTTP/3 kamuflajlı Hysteria2.** REALITY alan adında TCP üzerinden normal HTTPS ve UDP üzerinden kimlik doğrulaması yapılmamış HTTP/3 istekleri aynı eksiksiz web sitesini görüntüler. Panel ve abonelikler, halka açık HTTP/3 kamuflajından ayrı tutulur.
+
 ## 🚀 Bağlantı profilleri
 
 | Bağlantı | Durum |
 | --- | :---: |
-| VLESS + REALITY | ✅ Kullanıma hazır |
-| VLESS + XHTTP | ✅ Kullanıma hazır |
-| CDN için VLESS + XHTTP | ✅ İsteğe bağlı |
-| Hysteria2 | ✅ Kullanıma hazır |
-| VLESS + WebSocket (TLS) | ✅ Kullanıma hazır |
-| Trojan + gRPC | ✅ Kullanıma hazır |
-| VLESS + XTLS Vision | ✅ İsteğe bağlı |
-| Amnezia WG | ✅ İsteğe bağlı |
+| VLESS + REALITY | ✅ Varsayılan olarak etkin |
+| VLESS + XHTTP | ✅ Varsayılan olarak etkin |
+| CDN için VLESS + XHTTP | 🔧 İsteğe bağlı, devre dışı |
+| Hysteria2 | ✅ Varsayılan olarak etkin |
+| VLESS + WebSocket (TLS) | ◻️ Varsayılan olarak devre dışı |
+| Trojan + gRPC | ◻️ Varsayılan olarak devre dışı |
+| VLESS + XTLS Vision | 🔧 İsteğe bağlı |
+| Amnezia WG | 🔧 İsteğe bağlı |
 
-Kurulum aracı beş temel profili hazırlar: REALITY, XHTTP ve Hysteria2 baştan etkindir; WebSocket ve Trojan gRPC ise gerektiğinde 3X-UI panelinden etkinleştirilebilir.
+Kurulumdan sonra REALITY, XHTTP ve Hysteria2 etkin olur. WebSocket TLS ve Trojan gRPC de oluşturulur ancak 3X-UI panelinden etkinleştirilene kadar devre dışı kalır.
 
-XTLS Vision, Amnezia WG ve CDN için XHTTP yalnızca kurulumda seçildiklerinde eklenir. CDN için XHTTP devre dışı oluşturulur; etkinleştirilip bir istemci bağlanana kadar aboneliklerde görünmez.
+XTLS Vision, Amnezia WG ve CDN için XHTTP yalnızca kurulum sırasında seçilirse eklenir. CDN için XHTTP devre dışı oluşturulur; etkinleştirilip bir istemci bağlanana kadar aboneliklerde görünmez.
 
 Bağlantıları kullanmak için kurulum sırasında otomatik olarak veya panelde elle istemci oluşturun. Amnezia WG istemcileri ayrı oluşturulur.
 
@@ -333,9 +341,9 @@ Hizmet arayüzleri doğrudan internete açılmaz. Panel, abonelikler ve ek hizme
 
 ## ✈️ Telegram Web Proxy Manager
 
-[Kardeş projemiz](https://github.com/xPROMSx/telegram-web-proxy-manager), kendi Telegram WEB Proxy sunucunuzu HTTPS, kamuflaj sitesi ve geri alma destekli güncellemelerle kurmanızı sağlar.
+[Telegram Web Proxy Manager](https://github.com/xPROMSx/telegram-web-proxy-manager), HTTPS, kamuflaj sitesi ve geri alma destekli güncellemelerle kendi Telegram WEB Proxy sunucunuzu kurmanızı sağlayan bağımsız bir projedir.
 
-Projeler birbirinden bağımsızdır; **bu kurulum aracı Telegram Web Proxy Manager'ı yüklemez**.
+**TWPM, 3X-UI'nin varsayılan kurulumuna dahil değildir.** Ana menüdeki 4. seçenekle yöneticiyi başlatabilir veya onay verdikten sonra ayrı olarak kurabilirsiniz. İki proje bağımsız yönetilir.
 
 <a id="technical-details"></a>
 
