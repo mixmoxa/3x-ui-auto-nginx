@@ -1857,7 +1857,8 @@ xray_blocks = re.findall(r'\bupstream\s+xray\s*\{([^{}]*)\}', stream_text)
 cover_rows = []
 with sqlite3.connect(staged(dbpath).as_uri()+'?mode=ro',uri=True) as cover_db:
     node = 'node_id' if any(r[1] == 'node_id' for r in cover_db.execute('PRAGMA table_info(inbounds)')) else 'NULL'
-    for row in cover_db.execute("SELECT listen,port,stream_settings,"+node+" FROM inbounds WHERE protocol='hysteria'"):
+    local_filter = ' AND (node_id IS NULL OR node_id=0)' if node == 'node_id' else ''
+    for row in cover_db.execute("SELECT listen,port,stream_settings,"+node+" FROM inbounds WHERE protocol='hysteria'"+local_filter):
         stream_settings = json.loads(row[2])
         if str(row[1]) == '443': cover_rows.append((row,stream_settings))
 new_cover = (cover_site.exists() or cover_site.is_symlink() or cover_enabled.exists() or cover_enabled.is_symlink() or
@@ -1894,7 +1895,7 @@ server {
     if not cover_enabled.is_symlink() or os.readlink(cover_enabled) != nginx+'/sites-available/hysteria-cover.conf':
         raise ValueError('Unknown staged Hysteria activation link')
     with sqlite3.connect(staged(dbpath).as_uri()+'?mode=ro',uri=True) as cover_db:
-        reals = [json.loads(value) for value, in cover_db.execute("SELECT stream_settings FROM inbounds WHERE protocol='vless' AND listen='127.0.0.1' AND port=8443")]
+        reals = [json.loads(value) for value, in cover_db.execute("SELECT stream_settings FROM inbounds WHERE protocol='vless' AND listen='127.0.0.1' AND port=8443"+local_filter)]
     if len(reals) != 1 or reals[0].get('realitySettings',{}).get('xver') != 1:
         raise ValueError('REALITY backup requires its known PROXY v1 fallback')
 
@@ -1967,7 +1968,7 @@ server {{
 with sqlite3.connect(staged(dbpath)) as db:
     # User TLS settings need not match the seed, but referenced files must survive Restore.
     # Never let a restored active inbound silently borrow a target-only certificate/key.
-    for protocol, stream_json in db.execute('SELECT protocol,stream_settings FROM inbounds WHERE enable=1'):
+    for protocol, stream_json in db.execute('SELECT protocol,stream_settings FROM inbounds WHERE enable=1' + local_filter):
         stream = {} if protocol == 'amneziawg' and stream_json == '' else json.loads(stream_json)
         if stream.get('security') == 'tls':
             for pair in stream.get('tlsSettings',{}).get('certificates',[]):

@@ -344,7 +344,16 @@ def http3_cover():
     ca='/usr/local/share/ca-certificates/pilot-pebble.crt'
     headers,body,_=asyncio.run(request('127.0.0.1',443,domain,ca))
     assert headers[b':status']==b'200' and body==(site/'index.html').read_bytes()
-    assert 'unix:/run/3x-ui-hysteria-cover.sock' in Path('/usr/local/x-ui/bin/config.json').read_text()
+    # setEnable hot-adds through Xray's API; config.json is a startup snapshot.
+    with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:
+        row=db.execute('SELECT enable,stream_settings FROM inbounds WHERE id=?',
+                       (state['inbound_roles']['hysteria2'],)).fetchone()
+    assert row and row[0], 'Managed Hysteria2 is not enabled in SQLite'
+    stream=json.loads(row[1])
+    assert stream['hysteriaSettings']['masquerade']=={
+        'type':'proxy','url':'unix:/run/3x-ui-hysteria-cover.sock','rewriteHost':False}
+    assert stream['tlsSettings']['serverName']==domain
+    assert stream['tlsSettings']['rejectUnknownSni'] is True
     assert stat.S_ISSOCK(Path('/run/3x-ui-hysteria-cover.sock').stat().st_mode)
     assert Path('/run/3x-ui-hysteria-cover.sock').stat().st_mode&0o777==0o666
     for path in ('/panel/','/diagnostics/','/assets/','/.env'):

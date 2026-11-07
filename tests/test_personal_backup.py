@@ -1693,6 +1693,68 @@ class PersonalBackup(unittest.TestCase):
         f.write('/etc/x-ui/cover-sites.json','{"reality":{"template":"B1"}}\n',0o600)
         return backend, text
 
+    def add_node_inbound_fixture(self, protocol, node_id, enabled, *, masquerade=False, remote_tls=False):
+        """Copy a supported local role into a distinct 3x-ui node without changing it."""
+        port = 8443 if protocol == 'vless' else 443
+        with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
+            db.row_factory = sqlite3.Row
+            if not any(row[1] == 'node_id' for row in db.execute('PRAGMA table_info(inbounds)')):
+                db.execute('ALTER TABLE inbounds ADD COLUMN node_id INTEGER')
+            source = db.execute('SELECT * FROM inbounds WHERE protocol=? AND CAST(port AS INTEGER)=? AND node_id IS NULL',
+                                (protocol, port)).fetchone()
+            self.assertIsNotNone(source)
+            record = dict(source)
+            del record['id']
+            record.update(node_id=node_id, enable=enabled, remark=f'node-{node_id}-{protocol}',
+                          tag=f'node-{node_id}-{protocol}')
+            stream = json.loads(record['stream_settings'])
+            if masquerade:
+                stream['hysteriaSettings']['masquerade'] = {
+                    'type':'proxy', 'url':'unix:/run/3x-ui-hysteria-cover.sock', 'rewriteHost':False}
+            if remote_tls:
+                for cert in stream.get('tlsSettings',{}).get('certificates',[]):
+                    cert['certificateFile'] = '/remote-node/fullchain.pem'
+                    cert['keyFile'] = '/remote-node/privkey.pem'
+            record['stream_settings'] = json.dumps(stream)
+            columns = list(record)
+            db.execute('INSERT INTO inbounds ('+','.join(columns)+') VALUES ('+
+                       ','.join('?' for _ in columns)+')', [record[column] for column in columns])
+
+    def test_hysteria_cover_restore_ignores_remote_nodes(self):
+        self.seed_hysteria_cover()
+        # Remote Hysteria2 can share UDP/443; remote REALITY can share :8443.
+        # Their TLS files belong to other servers, not the backed-up local VPS.
+        self.add_node_inbound_fixture('hysteria', 2, 1, remote_tls=True)
+        self.add_node_inbound_fixture('hysteria', 3, 0, remote_tls=True)
+        self.add_node_inbound_fixture('vless', 4, 1)
+        with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
+            before = db.execute('SELECT id,node_id,enable,protocol,stream_settings FROM inbounds ORDER BY id').fetchall()
+        archive = self.backup()
+        saved_archive = archive.read_bytes()
+        result = self.run_tool('restore', archive)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
+            after = db.execute('SELECT id,node_id,enable,protocol,stream_settings FROM inbounds ORDER BY id').fetchall()
+        self.assertEqual(after, before)
+        self.assertEqual(archive.read_bytes(), saved_archive)
+
+    def test_legacy_local_hysteria_ignores_remote_masquerade(self):
+        # The old local layout must not be mistaken for a new local HTTP/3 cover.
+        self.add_node_inbound_fixture('hysteria', 2, 0, masquerade=True)
+        archive = self.backup()
+        result = self.run_tool('restore', archive)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_hysteria_cover_still_rejects_conflicting_local_roles(self):
+        self.seed_hysteria_cover()
+        self.add_node_inbound_fixture('hysteria', 0, 0)
+        archive = self.backup()
+        (self.root / 'commands').write_text('')
+        result = self.run_tool('restore', archive)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Ambiguous staged Hysteria cover', result.stdout + result.stderr)
+        self.assertFalse(any(c[:2] == ['systemctl', 'stop'] for c in self.commands()))
+
     def test_hysteria_cover_restore_and_unknown_backend_refusal(self):
         f=self
         backend,text=self.seed_hysteria_cover()

@@ -213,6 +213,28 @@ def run_profile(f):
         result=subprocess.run(['bash','-c',strict+'\nsystemctl() { return 0; }; sleep() { :; }; check_xray_runtime'],capture_output=True,timeout=12)
         if (result.returncode==0)!=all(state()):raise AssertionError('Fresh health no longer strictly requires all roles')
 
+    # Fresh Change Domains restarts with all roles disabled, then hot-enables
+    # them. The startup config.json may legitimately omit those runtime inbounds.
+    for name in roles:toggle(name,False)
+    settled(False,False,False)
+    stop(panel);f.release_subscription_socket();panel=panel_start();settled(False,False,False)
+    for name in roles:toggle(name,True)
+    settled(True,True,True)
+    def persisted_cover():
+        with sqlite3.connect(f.root/'db/x-ui.db') as db:
+            enabled,raw=db.execute('SELECT enable,stream_settings FROM inbounds WHERE id=?',
+                                   (roles['hysteria2'],)).fetchone()
+        stream=json.loads(raw)
+        assert enabled and stream['hysteriaSettings']['masquerade']=={
+            'type':'proxy','url':'unix:'+str(socket_path),'rewriteHost':False}
+        assert stream['tlsSettings']['serverName']=='cover.example'
+        assert h3()[0][b':status']==b'200' and socket_path.is_socket()
+    persisted_cover()
+    stop(panel);f.release_subscription_socket();panel=panel_start();settled(True,True,True)
+    persisted_cover()
+    assert str(socket_path) in (f.root/'bin/config.json').read_text()
+    assert client('hysteria2',True)
+    print('Native hot Enable persistence / startup rebuild / HTTP3 client PASS',flush=True)
     hot_pid=native_pid()
     # Gray order reaches all eight combinations and exercises reverse enables.
     for r,h,x in ((1,1,1),(0,1,1),(0,0,1),(1,0,1),(1,0,0),(1,1,0),(0,1,0),(0,0,0),(1,1,1)):
