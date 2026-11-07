@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Run a real systemd guest using TCG; no KVM, privileges, host network or cgroups.
+# Run real systemd guests with KVM; no privileged Docker or host network/cgroups.
 set -Eeuo pipefail
+python3 /repo/tests/kvm.py
+printf 'Systemd guest: KVM, 4 vCPU, 2048 MiB\n'
 rm -f /work/reboot-policy.tar /work/pre-boot-id /work/expected-origins.json /work/reboot.cpio.gz
 rm -rf /work/root
 mkdir -p /work/root
@@ -34,6 +36,7 @@ After=systemd-journald.service dbus.service
 [Service]
 Type=oneshot
 WorkingDirectory=/repo
+ExecStartPre=/usr/bin/python3 -c 'import os; print("Guest online CPUs:", os.cpu_count(), flush=True); assert os.cpu_count()==4'
 ExecStart=/bin/bash -c 'python3 tests/run_ci.py --suite systemd; rc=$?; if [ "$rc" = 0 ]; then echo XUI_SYSTEMD_TEST_PASS; else echo XUI_SYSTEMD_TEST_FAIL; fi; systemctl poweroff; exit "$rc"'
 StandardOutput=journal+console
 StandardError=journal+console
@@ -46,7 +49,7 @@ cd /work/root
 find . -xdev -print0 | cpio --null -o --format=newc 2>/work/cpio.log | gzip -1 > /work/rootfs.cpio.gz
 kernel=$(find /boot -maxdepth 1 -name 'vmlinuz-*' -type f | sort -V | tail -1)
 [[ -n "$kernel" ]]
-timeout 15m qemu-system-x86_64 -machine accel=tcg -m 2048 -smp 2 -nodefaults \
+/usr/bin/time -f 'Systemd first boot: elapsed=%e peak_rss_kib=%M' timeout 15m qemu-system-x86_64 -accel kvm -m 2048 -smp 4 -nodefaults \
     -no-reboot -display none -serial stdio -monitor none -nic none \
     -fsdev local,id=ci,path=/work,security_model=none -device virtio-9p-pci,fsdev=ci,mount_tag=xui-ci \
     -kernel "$kernel" -initrd /work/rootfs.cpio.gz \
@@ -80,10 +83,18 @@ if grep -qx 'VERSION_ID="26.04"' /work/root/etc/os-release; then
 fi
 cd /work/root
 find . -xdev -print0 | cpio --null -o --format=newc 2>/work/cpio-reboot.log | gzip -1 > /work/reboot.cpio.gz
-timeout 4m qemu-system-x86_64 -machine accel=tcg -m 2048 -smp 2 -nodefaults \
+/usr/bin/time -f 'Systemd cold boot: elapsed=%e peak_rss_kib=%M' timeout 4m qemu-system-x86_64 -accel kvm -m 2048 -smp 4 -nodefaults \
     -no-reboot -display none -serial stdio -monitor none -nic none \
     -fsdev local,id=ci,path=/work,security_model=none -device virtio-9p-pci,fsdev=ci,mount_tag=xui-ci \
     -kernel "$kernel" -initrd /work/reboot.cpio.gz \
     -append "console=ttyS0 panic=1 quiet rdinit=/init systemd.show_status=false $second_boot_ipv6" | tee /work/reboot.log
 grep -q 'XUI_SECOND_BOOT_PASS' /work/reboot.log
 ! grep -q 'XUI_SECOND_BOOT_FAIL' /work/reboot.log
+
+for metric in memory.peak memory.events cpu.max cpu.stat memory.max; do
+    if [[ -r /sys/fs/cgroup/$metric ]]; then
+        printf 'Container %s: ' "$metric"
+        tr '\n' ' ' < "/sys/fs/cgroup/$metric"
+        printf '\n'
+    fi
+done

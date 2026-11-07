@@ -60,7 +60,17 @@ The private Backup v3 fixture restores real files and runs the verified AGH bina
 The v2 integration case starts official 3x-ui v3.9.0 with its real client API, CSRF session, native RAW/JSON subscriptions and embedded Xray 26.9.30. It verifies REALITY/XHTTP/Hysteria2/Vision/AWG attachments and per-inbound credentials, then connects through Vision with Xray and Mihomo. HTTPS fallback, PROXY source IP, wrong UUID/SNI/ALPN/trust, closed administrative paths, restart and certificate replacement are real network checks. Certbot/Pebble separately issues and renews three webroot lineages; CI does not claim this is a complete public ACME/systemd/Xray deployment.
 The same Vision/API case and native AWG transfer case run in both Ubuntu service jobs and a normal Debian 13 container. Canonical suite privilege checks remain unchanged; these selected cross-distro cases use private nonroot state.
 
-`stack-services.yml` also runs the canonical `systemd` suite against Ubuntu 24.04, Ubuntu 26.04 and Debian 13 userspace inside QEMU TCG. Docker exports each root filesystem; an ordinary container boots it with the tools image's Ubuntu kernel. No privileged Docker, host cgroups, KVM, outside network or paid infrastructure is used. Native Fail2ban/sshd, APT configuration/timers and resolved are exercised. Generated test CA and local authenticated TLS DNS endpoints provide actual TLS traffic, with packet capture excluding plaintext fallback. This tests native distro userspace with a common CI kernel, not each distro's production kernel or cloud network.
+`stack-services.yml` also runs the canonical `systemd` suite against Ubuntu 24.04, Ubuntu 26.04 and Debian 13 userspace inside QEMU KVM. Docker exports each root filesystem; an ordinary container boots it with the tools image's Ubuntu kernel. No privileged Docker, host cgroups, outside network or paid infrastructure is used. Native Fail2ban/sshd, APT configuration/timers and resolved are exercised. Generated test CA and local authenticated TLS DNS endpoints provide actual TLS traffic, with packet capture excluding plaintext fallback. This tests native distro userspace with a common CI kernel, not each distro's production kernel or cloud network.
+
+VM acceptance requires at least four available CPUs and usable KVM. The shared
+preflight opens `/dev/kvm`, checks its API and creates a VM; every QEMU boot uses
+`-accel kvm` without TCG fallback. Docker exposes only `/dev/kvm`, without
+`--privileged`, CPU quotas or a container memory cap. Fresh retains 4096 MiB guest
+RAM and systemd retains 2048 MiB. Safe job summaries report CPU/RAM availability,
+QEMU peak RSS, cgroup memory/OOM and CPU throttling counters. Missing KVM is an
+explicit failure, including on local machines; it never silently runs TCG. Native security
+scenarios reset consumed Fail2ban start counters only between independent cases;
+unit limits and within-operation failure/rollback checks remain unchanged.
 
 See [v2 audit scope](docs/V2_AUDIT.md) for option states, ownership, portable Restore and remaining live acceptance boundaries.
 
@@ -79,7 +89,7 @@ There is no push, synchronize, opened or manual-dispatch trigger. A new final
 launch cancels an older running Full Fresh job for the same PR.
 
 The unchanged harness boots a minimal disk-based VM
-under QEMU TCG with 2 vCPU/4 GiB RAM, runs the unmodified installer `main()` with
+under QEMU KVM with 4 vCPU/4 GiB RAM, runs the unmodified installer `main()` with
 maximum options and one exact checkout SHA, then cold-boots the same disk.
 Actual installed services, subscriptions, restricted MTR HTTP and Xray/AWG data
 transfer are checked; TLS clients explicitly trust the temporary CA and reject

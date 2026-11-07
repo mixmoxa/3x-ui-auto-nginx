@@ -17,6 +17,7 @@ if [[ "$restore_mode" == 1 ]]; then
 fi
 [[ "$ref" =~ ^[0-9a-f]{40}$ ]]
 git diff --quiet HEAD -- x-ui-latest.sh assets
+[[ -c /dev/kvm ]] || { printf 'KVM device unavailable; no TCG fallback\n' >&2; exit 1; }
 work=$(mktemp -d)
 container="xui-fresh-$$"
 root_container=""
@@ -54,7 +55,7 @@ PY
 )
 network=()
 for mapping in "${proxy_hosts[@]}"; do network+=(--add-host "$mapping"); done
-docker run --name "$container" --rm --memory=6g --cpus=4 "${network[@]}" \
+docker run --name "$container" --rm --device=/dev/kvm "${network[@]}" \
     -e HTTP_PROXY -e HTTPS_PROXY -e ALL_PROXY -e http_proxy -e https_proxy -e all_proxy \
     -e "XUI_AUTO_REF=$ref" \
     -e "XUI_RESTORE_ACCEPTANCE=$restore_mode" \

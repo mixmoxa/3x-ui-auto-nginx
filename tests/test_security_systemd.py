@@ -482,6 +482,12 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
         from test_integrated_features import helper
         security = helper('security')
         run = lambda *args: subprocess.check_output(args, text=True, stderr=subprocess.STDOUT, timeout=90)
+        def configure_scenario():
+            # Independent cases must not share a consumed start budget. KVM can
+            # run them within systemd's five-start/ten-second window. Preserve
+            # native unit limits and every within-operation failure/rollback.
+            run('systemctl','reset-failed','fail2ban.service')
+            return security.configure()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); cert, key = root/'cert.pem', root/'key.pem'
             run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
@@ -642,7 +648,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
             independent=security.Transaction()
             try:
                 fail_tls.set()
-                independent_result=security.configure()
+                independent_result=configure_scenario()
                 self.assertEqual(independent_result['status'],'configured',independent_result)
                 self.assertEqual(independent_result['apt'],'configured')
                 self.assertEqual(independent_result['fail2ban'],'configured')
@@ -685,7 +691,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                         'dst port 53 and (dst host 1.1.1.1 or dst host 1.0.0.1 or dst host 8.8.8.8 or dst host 8.8.4.4)'],
                         stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             try:
-                result = security.configure()
+                result = configure_scenario()
                 self.assertEqual(disabled.read_bytes(),disabled_policy)
                 if result['status'] != 'configured': print('TLS queries observed:',len(seen),'server errors:',errors,flush=True)
                 self.assertEqual(result['status'], 'configured', result)
@@ -757,7 +763,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                     run('resolvectl','default-route','xui-test','yes')
                     before_tls=len(seen)
                     restarts=len(plain_at_restart)
-                    route_result=security.configure()
+                    route_result=configure_scenario()
                     security.verify_dns()
                     self.assertEqual(len(plain_at_restart),restarts,'Final Security step restarted prepared DNS')
                     self.assertEqual(route_result['status'],'configured',route_result)
@@ -779,7 +785,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                         raise ValueError('controlled Fail2ban restart failure')
                     return command(*args,**kwargs)
                 security.command=fail_jail
-                try: partial=security.configure()
+                try: partial=configure_scenario()
                 finally: security.command=command
                 self.assertTrue(restart_failure[0])
                 self.assertEqual(partial['status'],'partial',partial)
@@ -798,7 +804,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                 run('systemctl','enable','--now','ssh.socket')
                 with socket.create_connection(('127.0.0.1',2222),timeout=5) as ssh:
                     self.assertTrue(ssh.recv(200).startswith(b'SSH-2.0-'))
-                self.assertEqual(security.configure()['status'],'configured')
+                self.assertEqual(configure_scenario()['status'],'configured')
                 self.assertEqual(security.ssh_ports(effective,run('systemctl','show','ssh.socket','-p','Listen','--value')),[2222])
                 self.assertIn('2222',run('fail2ban-client','-d'))
                 self.assertEqual(run('/usr/sbin/sshd','-T'),effective)
@@ -822,7 +828,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                 self.assertEqual(run('/usr/sbin/sshd','-T'),effective)
                 # A late unavailable TLS upstream does not couple final APT/SSH
                 # setup to DNS. Explicit DNS recovery still uses its checkpoint.
-                failed = security.configure()
+                failed = configure_scenario()
                 self.assertEqual(failed['status'],'configured',failed)
                 self.assertEqual(failed['apt'],'configured',failed)
                 self.assertEqual(failed['fail2ban'],'configured',failed)

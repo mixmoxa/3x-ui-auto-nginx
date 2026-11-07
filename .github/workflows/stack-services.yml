@@ -130,7 +130,7 @@ jobs:
           container_id=$(docker create xui-systemd-root)
           trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true; sudo rm -rf "$vm_directory"' EXIT
           docker export "$container_id" -o "$vm_directory/rootfs.tar"
-          docker run --rm --network none \
+          docker run --rm --network none --device=/dev/kvm \
             --mount "type=bind,src=$vm_directory,dst=/work" \
             --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/repo,readonly" \
             xui-systemd-tools bash /repo/tests/systemd/boot.sh

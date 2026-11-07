@@ -407,7 +407,31 @@ class CIScope(unittest.TestCase):
                     self.assertIn('Full Fresh E2E not executed',result.stdout)
                     self.assertNotIn('Full Fresh E2E: PASS',result.stdout)
 
-    def test_fresh_workflow_wires_independent_groups_and_keeps_vm_limits(self):
+    def test_kvm_preflight_requires_actual_vm_creation(self):
+        import importlib.util
+        from unittest.mock import patch, mock_open
+        spec=importlib.util.spec_from_file_location('kvm_probe',ROOT/'tests/kvm.py')
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        with patch.object(module.os,'sched_getaffinity',return_value=set(range(4))), \
+             patch('builtins.open',mock_open()) as opened, \
+             patch.object(module.fcntl,'ioctl',side_effect=[12,123]) as ioctl, \
+             patch.object(module.os,'close') as close:
+            result=module.preflight()
+            self.assertEqual(result['accelerator'],'kvm');self.assertEqual(result['available_cpus'],4)
+            self.assertEqual([call.args[1] for call in ioctl.call_args_list],[0xAE00,0xAE01])
+            close.assert_called_once_with(123)
+        with patch.object(module.os,'sched_getaffinity',return_value={0,1,2,3}), \
+             patch('builtins.open',side_effect=PermissionError):
+            with self.assertRaisesRegex(RuntimeError,'no TCG fallback'):module.preflight()
+        for replies in ([12,PermissionError()], [11]):
+            with patch.object(module.os,'sched_getaffinity',return_value={0,1,2,3}), \
+                 patch('builtins.open',mock_open()), \
+                 patch.object(module.fcntl,'ioctl',side_effect=replies):
+                with self.assertRaises(RuntimeError):module.preflight()
+        with patch.object(module.os,'sched_getaffinity',return_value={0,1}):
+            with self.assertRaisesRegex(RuntimeError,'four available CPUs'):module.preflight()
+
+    def test_fresh_workflow_wires_independent_groups_and_kvm_budgets(self):
         workflow=(ROOT/'.github/workflows/fresh-acceptance.yml').read_text()
         self.assertEqual(workflow.count('name: Full fresh installer (ubuntu-26.04)'),1)
         self.assertIn('needs: [scope, positive, negative]',workflow)
@@ -419,11 +443,21 @@ class CIScope(unittest.TestCase):
             self.assertIn('needs: scope',block)
             self.assertIn('XUI_FRESH_GROUP: '+group,block)
         script=(ROOT/'tests/fresh/run.sh').read_text()
-        self.assertIn('--cpus=4',script);self.assertNotIn('--cpus=2',script)
-        self.assertIn('--memory=6g',script)
+        self.assertIn('--device=/dev/kvm',script)
+        self.assertNotIn('--cpus=',script);self.assertNotIn('--memory=',script)
+        self.assertNotIn('--privileged',script)
         self.assertIn('-e "XUI_FRESH_GROUP=$fresh_group"',script)
-        self.assertIn("'-smp', '2'",(ROOT/'tests/fresh/acceptance.py').read_text())
-        self.assertIn('-smp 2',(ROOT/'tests/systemd/boot.sh').read_text())
+        acceptance=(ROOT/'tests/fresh/acceptance.py').read_text()
+        self.assertIn("'-smp', '4'",acceptance)
+        self.assertIn("'-accel', 'kvm'",acceptance)
+        self.assertIn("'-m', '4096'",acceptance)
+        boot=(ROOT/'tests/systemd/boot.sh').read_text()
+        self.assertEqual(boot.count('-accel kvm -m 2048 -smp 4'),2)
+        self.assertIn('timeout 15m',boot);self.assertIn('timeout 4m',boot)
+        self.assertNotIn('accel=tcg',boot+acceptance)
+        systemd=(ROOT/'.github/workflows/stack-services.yml').read_text()
+        self.assertIn('--network none --device=/dev/kvm',systemd)
+        self.assertNotIn('--privileged',systemd)
         result=subprocess.run(['bash','tests/fresh/run.sh'],cwd=ROOT,text=True,capture_output=True,
                               env={**os.environ,'XUI_FRESH_GROUP':'unsupported','XUI_RESTORE_ACCEPTANCE':'0'})
         self.assertEqual(result.returncode,2);self.assertIn('Invalid fresh scenario group',result.stderr)

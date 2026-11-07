@@ -93,7 +93,7 @@ if args[-1:]==['AdGuardHome']:
         sys.exit(3)
 os.execv({str(original)!r},['systemctl',*args])
 ''');controller.chmod(0o755)
-        ss=f.bin/'ss';ss.write_text(ss.read_text()+f'\nsubprocess.run([{shutil.which("ss")!r},*args],check=True)\n')
+        ss=f.bin/'ss';ss.write_text(ss.read_text()+f'\nimport subprocess\nsubprocess.run([{shutil.which("ss")!r},*args],check=True)\n')
         old_curl=f.bin/'curl-fixture';(f.bin/'curl').rename(old_curl)
         old_curl.write_text(old_curl.read_text().replace('name = pathlib.Path(sys.argv[0]).name',"name = 'curl'"))
         (f.bin/'curl').write_text('#!'+sys.executable+'\n'+f'''import os,sys

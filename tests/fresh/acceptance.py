@@ -10,6 +10,9 @@ import subprocess
 import threading
 import time
 import traceback
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from kvm import preflight
 
 from diagnostics import VISION_STAGES, domain_failure, vision_detail, api_restart_metrics, api_restart_nginx_errors
 
@@ -52,8 +55,8 @@ def boot():
     kernel = (ROOT/'kernel.path').read_text().strip()
     report['kernel'] = Path(kernel).name
     extra_ssh = ',hostfwd=tcp:127.0.0.1:22221-:2222' if os.environ.get('XUI_RESTORE_ACCEPTANCE') == '1' else ''
-    vm = launch(['qemu-system-x86_64', '-machine', 'accel=tcg', '-cpu', 'max', '-m', '4096',
-        '-smp', '2', '-nodefaults', '-no-reboot', '-display', 'none', '-serial', 'stdio',
+    vm = launch(['qemu-system-x86_64', '-accel', 'kvm', '-cpu', 'max', '-m', '4096',
+        '-smp', '4', '-nodefaults', '-no-reboot', '-display', 'none', '-serial', 'stdio',
         '-monitor', 'none', '-drive', 'file=/pilot/disk.raw,format=raw,if=virtio',
         '-netdev', 'user,id=n0,hostfwd=tcp:127.0.0.1:22220-:22,hostfwd=tcp:127.0.0.1:18080-:80'+extra_ssh,
         '-device', 'virtio-net-pci,netdev=n0', '-kernel', kernel, '-initrd', '/pilot/initrd.img',
@@ -65,10 +68,15 @@ def boot():
             raise RuntimeError('QEMU exited during boot')
         try:
             ready = ssh('test "$(cat /proc/1/comm)" = systemd && systemctl is-active --quiet ssh '
-                        '&& systemctl is-active --quiet pilot-external-network', 10)
+                        '&& systemctl is-active --quiet pilot-external-network '
+                        '&& getconf _NPROCESSORS_ONLN && awk \'/^MemTotal:/ {print $2}\' /proc/meminfo', 10)
         except subprocess.TimeoutExpired:
             continue
         if ready.returncode == 0:
+            cpus, memory_kib = map(int, ready.stdout.split())
+            assert cpus == 4, 'Guest did not bring all four CPUs online'
+            report[phase+'_guest_online_cpus'] = cpus
+            report[phase+'_guest_memory_total_bytes'] = memory_kib*1024
             report[phase+'_boot_seconds'] = round(time.monotonic()-started, 2)
             return
         time.sleep(.5)
@@ -325,6 +333,9 @@ if __name__ == '__main__':
     try:
         report['image_prepare_seconds'] = int((ROOT/'images.ready').read_text())-int((ROOT/'started').read_text())
         report['disk_prepare_seconds'] = int((ROOT/'disk.ready').read_text())-int((ROOT/'images.ready').read_text())
+        report.update(preflight())
+        report['guest_cpus'] = 4
+        report['guest_memory_mib'] = 4096
         fixtures()
         if os.environ.get('XUI_RESTORE_ACCEPTANCE') == '1':
             restore_acceptance(ref)
@@ -357,6 +368,13 @@ if __name__ == '__main__':
         if events.exists():
             counters = dict(line.split() for line in events.read_text().splitlines())
             report['container_oom_events'] = {key:int(counters[key]) for key in ('oom','oom_kill') if key in counters}
+        for filename in ('cpu.max', 'memory.max'):
+            path = Path('/sys/fs/cgroup')/filename
+            if path.exists(): report['container_'+filename.replace('.', '_')] = path.read_text().strip()
+        cpu = Path('/sys/fs/cgroup/cpu.stat')
+        if cpu.exists():
+            counters = dict(line.split() for line in cpu.read_text().splitlines())
+            report['container_cpu_throttling'] = {k:int(counters[k]) for k in ('nr_periods','nr_throttled','throttled_usec') if k in counters}
         report['total_seconds'] = round(time.time()-float((ROOT/'started').read_text()), 2)
         (ROOT/'summary.json').write_text(json.dumps(report))
         print(json.dumps(report, sort_keys=True), flush=True)

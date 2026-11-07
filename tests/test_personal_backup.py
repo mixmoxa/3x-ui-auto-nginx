@@ -51,7 +51,7 @@ def function(name):
 
 # These stubs model outcomes/record calls, not production systemd or firewall.
 MOCK = r'''#!/usr/bin/env python3
-import json, os, pathlib, socket, subprocess, sys
+import json, os, pathlib, sys
 name = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
 root = pathlib.Path(os.environ['FIXTURE_ROOT'])
@@ -141,6 +141,7 @@ if name == 'systemctl':
                 fault()
                 with open(root/'commands','a') as log: log.write(json.dumps(['fault','missing-socket'])+'\n')
             if not os.environ.get('MISSING_SOCKET'):
+                import socket
                 s = socket.socket(socket.AF_UNIX)
                 s.bind(str(sock))
                 s.close()
@@ -223,7 +224,7 @@ elif name == 'apt-get':
 elif name in ('python3', 'gzip'):
     if name == 'python3' and args == ['-c', 'import configobj, cryptography'] and os.environ.get('FAIL_PYTHON_IMPORT'):
         sys.exit(1)
-    sys.exit(subprocess.call([os.environ['REAL_' + name.upper()], *args]))
+    os.execv(os.environ['REAL_' + name.upper()], [os.environ['REAL_' + name.upper()], *args])
 elif name == 'ufw':
     if args == ['status']:
         print('Status: ' + os.environ.get('UFW_STATE', 'inactive'))
@@ -236,19 +237,19 @@ elif name == 'nginx':
     if os.environ.get('FAIL_NGINX'):
         fault(); sys.exit(1)
     if os.environ.get('NGINX_BIN') and '-c' in args:
-        sys.exit(subprocess.call([os.environ['NGINX_BIN'], *args]))
+        os.execv(os.environ['NGINX_BIN'], [os.environ['NGINX_BIN'], *args])
     if os.environ.get('NGINX_BIN'):
-        sys.exit(subprocess.call([os.environ['NGINX_BIN'], *args, '-p', str(root) + '/',
-                                 '-c', str(root / 'etc/nginx/nginx.conf')]))
+        os.execv(os.environ['NGINX_BIN'], [os.environ['NGINX_BIN'], *args, '-p', str(root) + '/',
+                                 '-c', str(root / 'etc/nginx/nginx.conf')])
 elif name == 'cp':
     if os.environ.get('FAIL_AGH_COPY') and any(a == str(root / 'opt/AdGuardHome') for a in args):
         sys.exit(1)
     if os.environ.get('FAIL_COPY') and any(a == str(root / 'usr/local/x-ui') for a in args):
         sys.exit(1)
-    sys.exit(subprocess.call([os.environ['REAL_CP'], *args]))
+    os.execv(os.environ['REAL_CP'], [os.environ['REAL_CP'], *args])
 elif name == 'dd':
     # Real zero data with sparse allocation keeps repetitive fixture tests small.
-    sys.exit(subprocess.call([os.environ['REAL_DD'], *args, 'conv=sparse']))
+    os.execv(os.environ['REAL_DD'], [os.environ['REAL_DD'], *args, 'conv=sparse'])
 elif name == 'install':
     # Non-root runs keep real copy/mode semantics while skipping root chown.
     filtered = []
@@ -258,8 +259,9 @@ elif name == 'install':
             args.pop(0)
         else:
             filtered.append(arg)
-    sys.exit(subprocess.call([os.environ['REAL_INSTALL'], *filtered]))
+    os.execv(os.environ['REAL_INSTALL'], [os.environ['REAL_INSTALL'], *filtered])
 elif name == 'tar':
+    import subprocess
     result = subprocess.call([os.environ['REAL_TAR'], *args])
     if not result and args[0] == '-czf' and os.environ.get('CORRUPT_ARCHIVE'):
         pathlib.Path(args[1]).write_bytes(b'bad archive')
@@ -298,7 +300,9 @@ class PersonalBackup(unittest.TestCase):
             commands += ['chown', 'install']
         for name in commands:
             path = self.bin / name
-            path.write_text(MOCK.replace('#!/usr/bin/env python3', '#!' + sys.executable, 1))
+            # Only the stdlib mock skips site initialization; exec'd real Python
+            # keeps its normal dependencies and all fault/call recording stays.
+            path.write_text(MOCK.replace('#!/usr/bin/env python3', '#!' + sys.executable + ' -S', 1))
             path.chmod(0o755)
         sqlite = os.environ.get('SQLITE3_BIN') or shutil.which('sqlite3')
         if not sqlite:
@@ -390,6 +394,13 @@ class PersonalBackup(unittest.TestCase):
                                                           'certbot.timer': 'active', 'certbot.service': 'inactive'}))
         (self.root / 'enabled.json').write_text(json.dumps({name: True for name in
                                                           ('x-ui','nginx','mtr-backend','certbot.timer')}))
+
+    def test_mock_exec_preserves_real_python_dependencies_and_exit_status(self):
+        code=f'import sys,configobj; assert sys.executable=={sys.executable!r}; raise SystemExit(17)'
+        result=subprocess.run([str(self.bin/'python3'),'-c',code],env=self.env,
+                              text=True,capture_output=True,timeout=10)
+        self.assertEqual(result.returncode,17,result.stderr)
+        self.assertIn(['python3','-c',code],self.commands())
 
     def path(self, absolute):
         return self.root / absolute.lstrip('/')
@@ -1555,7 +1566,7 @@ class PersonalBackup(unittest.TestCase):
         self.write('/etc/x-ui/marker', 'unchanged')
         for name in ('python3', 'gzip'):
             wrapper = self.bin / name
-            wrapper.write_text(MOCK.replace('#!/usr/bin/env python3', '#!' + sys.executable, 1))
+            wrapper.write_text(MOCK.replace('#!/usr/bin/env python3', '#!' + sys.executable + ' -S', 1))
             wrapper.chmod(0o755)
         self.env.update(REAL_PYTHON3=sys.executable, REAL_GZIP=shutil.which('gzip'))
         for failed in (True, False):
