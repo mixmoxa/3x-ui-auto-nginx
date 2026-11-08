@@ -39,7 +39,35 @@ jobs:
         if: steps.scope.outputs.docs_only != 'true'
         env:
           NGINX_BIN: /usr/sbin/nginx
-        run: sudo --preserve-env=NGINX_BIN python3 tests/run_ci.py --suite root
+        run: |
+          set -euo pipefail
+          pids=()
+          for shard in 1 2 3 4; do
+            (
+              sudo --preserve-env=NGINX_BIN python3 tests/run_ci.py --suite root --root-shard "$shard" 2>&1 |
+                sed -u "s/^/[root-$shard] /"
+            ) &
+            pids+=("$!")
+          done
+          failed=0
+          for idx in "${!pids[@]}"; do
+            if wait "${pids[$idx]}"; then
+              printf 'Root shard %s: PASS\n' "$((idx + 1))"
+            else
+              printf 'Root shard %s: FAIL\n' "$((idx + 1))"
+              failed=1
+            fi
+          done
+          # ManagerBackup deliberately tests global peer locks and must not
+          # overlap the other fixture processes.
+          if sudo --preserve-env=NGINX_BIN python3 tests/run_ci.py --suite root --root-shard 5 2>&1 |
+             sed -u 's/^/[root-5] /'; then
+            printf 'Root shard 5: PASS\n'
+          else
+            printf 'Root shard 5: FAIL\n'
+            failed=1
+          fi
+          exit "$failed"
       - name: Whitespace validation
         if: steps.scope.outputs.docs_only != 'true'
         env:

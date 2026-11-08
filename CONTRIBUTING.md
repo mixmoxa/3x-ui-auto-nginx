@@ -45,6 +45,13 @@ git diff --check
 
 The canonical runner collects only TestCase classes defined in each `tests/test_*.py` module, so imported classes run once. Assign every new TestCase to exactly one suite in `tests/run_ci.py`; completeness fails for unassigned classes or stale/duplicate entries. New test methods in an existing class are included automatically. Do not use `unittest discover` as the CI entry point: existing imports would execute tests twice.
 
+The hosted Backup/Restore job runs four root-test shards concurrently, then
+runs the 14 `ManagerBackup` peer-lock tests exclusively. `--suite root --root-shard N`
+(N = 1..5) splits `PersonalBackup` between two shards, assigns `AuditRecovery`
+to the third, and the other non-lock root tests to the fourth; shard five
+isolates `ManagerBackup`. The canonical collector includes new methods, and any
+failed shard fails the job. Plain `--suite root` remains sequential for local use.
+
 The `nonroot`, `integration` and `services` suites require EUID != 0; the `root` suite requires EUID 0 for ownership/permission coverage. The `systemd` suite requires EUID 0 **inside its disposable VM**, with systemd as PID 1. Do not run non-root suites under sudo. Legacy entry commands remain available for compatibility but are not the canonical CI interface.
 
 CI checks every tracked shell script with `bash -n` and ShellCheck **error-only**. Existing warning/info/style findings are not suppressed or claimed clean. All tracked workflow YAML is checked with actionlint 1.7.12, downloaded from its official release with a pinned SHA-256 verified before extraction; the workflow records the exact download and checksum.

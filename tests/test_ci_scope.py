@@ -407,6 +407,26 @@ class CIScope(unittest.TestCase):
                     self.assertIn('Full Fresh E2E not executed',result.stdout)
                     self.assertNotIn('Full Fresh E2E: PASS',result.stdout)
 
+    def test_root_shards_cover_canonical_suite_once(self):
+        from run_ci import collect, root_shards
+        tests = collect()['root']
+        shards = root_shards(tests)
+        assigned = [case.id() for shard in shards for case in shard]
+        self.assertCountEqual(assigned, [case.id() for case in tests])
+        self.assertEqual(len(assigned), len(set(assigned)))
+        self.assertTrue(all(shards))
+        self.assertTrue(all(type(case).__name__ == 'AuditRecovery' for case in shards[2]))
+        self.assertTrue(all(type(case).__name__ == 'ManagerBackup' for case in shards[4]))
+        self.assertTrue(all(type(case).__name__ == 'PersonalBackup'
+                            for shard in shards[:2] for case in shard))
+        self.assertFalse(any(type(case).__name__ in ('PersonalBackup', 'AuditRecovery', 'ManagerBackup')
+                             for case in shards[3]))
+        rejected = subprocess.run(
+            ['python3', 'tests/run_ci.py', '--suite', 'nonroot', '--root-shard', '1'],
+            cwd=ROOT, text=True, capture_output=True)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn('--root-shard requires --suite root', rejected.stderr)
+
     def test_kvm_preflight_requires_actual_vm_creation(self):
         import importlib.util
         from unittest.mock import patch, mock_open
