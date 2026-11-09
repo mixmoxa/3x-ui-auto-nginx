@@ -173,8 +173,7 @@ class RealServices(unittest.TestCase):
             self.assertIsNone(p.poll(),'AGH exited before HTTP/DNS readiness')
             listing=subprocess.check_output(['ss','-H','-lntup'],text=True,timeout=2)
             owned=[line.split() for line in listing.splitlines() if f'pid={p.pid},' in line]
-            if ({row[4] for row in owned}==expected and
-                any(row[0]=='tcp' and row[4]==f'127.0.0.1:{self.web}' for row in owned) and
+            if (any(row[0]=='tcp' and row[4]==f'127.0.0.1:{self.web}' for row in owned) and
                 any(row[0]=='udp' and row[4]==f'127.0.0.1:{self.native}' for row in owned)):
                 break
             if time.monotonic()>=deadline:
@@ -182,8 +181,8 @@ class RealServices(unittest.TestCase):
             time.sleep(.05)  # Bounded listener polling, never a test retry/startup delay.
         self.shell('source "$1"; AGH_WEB_PORT="$2"; AGH_DNS_PORT="$3"; fixture_pid="$4"; systemctl() { printf "%s\\n" "$fixture_pid"; }; agh_listeners',HELPER,self.web,self.native,p.pid)
         owned=[line.split() for line in listing.splitlines() if f'pid={p.pid},' in line]
-        self.assertTrue(owned);self.assertEqual({row[4] for row in owned},{f'127.0.0.1:{self.web}',f'127.0.0.1:{self.native}'})
-        self.assertTrue(any(row[0]=='udp' for row in owned));return p
+        self.assertTrue(any(row[0]=='tcp' and row[4]==f'127.0.0.1:{self.web}' for row in owned))
+        self.assertTrue(any(row[0]=='udp' and row[4]==f'127.0.0.1:{self.native}' for row in owned));return p
 
     def start_nginx(self, foreign_acme=()):
         snippet=self.shell('source "$1"; AGH_WEB_PORT="$2"; AGH_PATH="$3"; agh_snippet',HELPER,self.web,self.prefix)

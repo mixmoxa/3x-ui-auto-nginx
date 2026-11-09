@@ -97,6 +97,9 @@ gpgv() {
 ss() {
     echo "tcp LISTEN 0 128 ${LISTEN_WEB:-127.0.0.1}:${AGH_WEB_PORT} 0.0.0.0:* users:((\"AdGuardHome\",pid=${LISTEN_PID:-12345},fd=5))"
     echo "${DNS_PROTOCOL:-udp} UNCONN 0 0 ${LISTEN_DNS:-127.0.0.1}:${AGH_DNS_PORT} 0.0.0.0:* users:((\"AdGuardHome\",pid=${LISTEN_PID:-12345},fd=6))"
+    if [[ -n "${EXTRA_AGH_UDP:-}" ]]; then
+        echo "udp UNCONN 0 0 ${EXTRA_AGH_UDP} 0.0.0.0:* users:((\"AdGuardHome\",pid=${LISTEN_PID:-12345},fd=51))"
+    fi
 }
 curl() {
     echo "curl $*" >> "$CALLS"
@@ -440,6 +443,11 @@ entrypoint "$@"
             return subprocess.run(['bash', '-eu', '-c', MOCK + '\nsource "$HELPER_FIXTURE"; ' + operation],
                                   env={**self.env, 'PYTHONOPTIMIZE': '1', **env}, capture_output=True, text=True)
         self.assertEqual(call('agh_health').returncode, 0)
+        # Outbound UDP lookups may create wildcard-bound ephemeral sockets.
+        for socket in ('*:34355', '0.0.0.0:35433'):
+            self.assertEqual(call('agh_config && agh_listeners', EXTRA_AGH_UDP=socket).returncode, 0)
+        # Public native DNS must still be refused, even as an extra socket.
+        self.assertNotEqual(call('agh_config && agh_listeners', EXTRA_AGH_UDP='*:53').returncode, 0)
         variants = [original_yaml.replace('address: 127.0.0.1:', 'address: 0.0.0.0:'),
                     original_yaml.replace('    - 127.0.0.1\n', '    - 0.0.0.0\n'),
                     original_yaml.replace('    - 127.0.0.1\n', '    - 127.0.0.2\n'),

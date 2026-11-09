@@ -281,15 +281,19 @@ agh_listeners() {
 import sys
 pid, web, dns, listing = sys.argv[1:]
 owned = [l.split() for l in listing.splitlines() if 'pid=' + pid + ',' in l]
-if not (owned):
+if not owned:
     raise ValueError('Invalid AGH owned listeners')
-if not (all(l[4].startswith('127.0.0.1:') for l in owned)):
+# ss -lu includes outbound UDP sockets bound to ephemeral wildcard ports.
+# Check TCP listeners and only UDP ports managed by AGH (plus public DNS/53).
+service = [l for l in owned if l[0].startswith('tcp') or
+           (l[0].startswith('udp') and l[4].rsplit(':', 1)[-1] in (web, dns, '53'))]
+if not all(l[4].startswith('127.0.0.1:') for l in service):
     raise ValueError('Invalid AGH loopback listeners')
-if not ({l[4] for l in owned} == {'127.0.0.1:' + web, '127.0.0.1:' + dns}):
+if {l[4] for l in service} != {'127.0.0.1:' + web, '127.0.0.1:' + dns}:
     raise ValueError('Invalid AGH listener endpoints')
-if not (any(l[0] == 'tcp' and l[4].endswith(':' + web) for l in owned)):
+if not any(l[0] == 'tcp' and l[4].endswith(':' + web) for l in service):
     raise ValueError('Invalid AGH TCP web socket')
-if not (any(l[0] == 'udp' and l[4].endswith(':' + dns) for l in owned)):
+if not any(l[0] == 'udp' and l[4].endswith(':' + dns) for l in service):
     raise ValueError('Invalid AGH UDP DNS socket')
 PY
 }
