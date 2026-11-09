@@ -3,6 +3,7 @@ import base64
 import errno
 import hashlib
 from http.cookies import SimpleCookie
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
@@ -162,8 +163,9 @@ class RealServices(unittest.TestCase):
             except OSError: time.sleep(.05)
         self.fail('Service readiness deadline expired on port '+str(number))
 
-    def start_agh(self):
-        p=self.launch([self.work/'AdGuardHome','-c',self.config,'-w',self.work,'--no-check-update'],'agh')
+    def start_agh(self, updates=False, env=None):
+        flags=[] if updates else ['--no-check-update']
+        p=self.launch([self.work/'AdGuardHome','-c',self.config,'-w',self.work,*flags],'agh',env=env)
         self.ready(p,self.web)
         expected={f'127.0.0.1:{self.web}',f'127.0.0.1:{self.native}'}
         deadline=time.monotonic()+5
@@ -314,6 +316,98 @@ location / {{ return 404; }} }}\n'''
         result=subprocess.run(['bash','-c',script,'fixture',str(HELPER),str(wrong),str(self.native),str(process.pid)],capture_output=True,timeout=15)
         self.assertNotEqual(result.returncode,0)
         self.assertIsNone(process.poll())
+
+    def test_real_native_updater_79_to_80_through_nginx(self):
+        # Official release builds ignore the custom-index environment variable.
+        # Use AGH's existing HTTP proxy setting and a private trusted TLS fixture
+        # for the upstream boundary. The actual updater and executables remain
+        # unmodified. This suite exercises exec, not native systemd management.
+        archive=self.root/'agh80.tar.gz'
+        cached=os.environ.get('SERVICES_ARTIFACTS')
+        if cached: shutil.copyfile(Path(cached)/'agh80.tar.gz',archive)
+        else: download('https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.80/AdGuardHome_linux_amd64.tar.gz',archive)
+        self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),
+                         '28593bc761d71469abdbc6f39ca42cbed763ec92b63082c729177b037ed51d18')
+        with tarfile.open(archive) as tar:
+            expected={name:tar.extractfile('./AdGuardHome/'+name).read() for name in ('AdGuardHome','AdGuardHome.sig')}
+        cert,key=self.root/'update.crt',self.root/'update.key'
+        subprocess.run(['openssl','req','-x509','-newkey','ec','-pkeyopt','ec_paramgen_curve:prime256v1',
+                        '-nodes','-days','2','-subj','/CN=static.adtidy.org','-addext','subjectAltName=DNS:static.adtidy.org',
+                        '-out',cert,'-keyout',key],check=True,capture_output=True,timeout=20)
+        context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.load_cert_chain(cert,key)
+        requests=[];package=archive.read_bytes()
+        class UpdateProxy(BaseHTTPRequestHandler):
+            def log_message(self,*args): pass
+            def finish(self):
+                try: super().finish()
+                finally: self.connection.close()
+            def do_CONNECT(self):
+                if self.path!='static.adtidy.org:443': self.send_error(403);return
+                self.send_response(200);self.end_headers()
+                self.connection=context.wrap_socket(self.connection,server_side=True)
+                self.rfile=self.connection.makefile('rb');self.wfile=self.connection.makefile('wb')
+                self.handle_one_request()
+            def do_GET(self):
+                requests.append(self.path)
+                if self.path=='/adguardhome/release/version.json':
+                    data=json.dumps(dict(version='v0.107.80',announcement='Fixture .79 to .80',
+                        announcement_url='https://static.adtidy.org/announcement',
+                        download_linux_amd64='https://static.adtidy.org/AdGuardHome_linux_amd64.tar.gz')).encode()
+                elif self.path=='/AdGuardHome_linux_amd64.tar.gz': data=package
+                else: self.send_error(404);return
+                self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+        server=ThreadingHTTPServer(('127.0.0.1',0),UpdateProxy)
+        threading.Thread(target=server.serve_forever,daemon=True).start()
+        self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
+        self.config.write_text(self.config.read_text()+f'http_proxy: http://127.0.0.1:{server.server_address[1]}\n')
+        environment={**os.environ,'SSL_CERT_FILE':str(cert)}
+        # First prove the historical flag blocks version checks via nginx.
+        process=self.start_agh(env=environment);self.start_nginx()
+        client_id,jar=self.register_doh_client()
+        api='/'+self.prefix+'/control/'
+        options=('-H','Content-Type: application/json','-b',jar)
+        status,body,_=self.request(api+'version.json',b'{"recheck_now":true}',options)
+        self.assertEqual(status,200);self.assertIs(json.loads(body)['disabled'],True)
+        self.assertFalse(requests)
+        stop(process)
+        process=self.start_agh(updates=True,env=environment)
+        # Preserve a custom rewrite, an actual registered client, and data bytes.
+        rewrite=dict(domain='saved.example.test',answer='198.51.100.42')
+        status,_,_=self.request(api+'rewrite/add',json.dumps(rewrite).encode(),options);self.assertEqual(status,200)
+        marker=self.work/'data/preserved.fixture';marker.parent.mkdir(exist_ok=True);marker.write_bytes(b'preserved data')
+        old_binary=(self.work/'AdGuardHome').read_bytes()
+        status,body,_=self.request(api+'version.json',b'{"recheck_now":true}',options)
+        self.assertEqual(status,200,body);self.assertEqual(json.loads(body)['new_version'],'v0.107.80')
+        self.assertIs(json.loads(body)['can_autoupdate'],True)
+        status,body,_=self.request(api+'update',b'{}',options);self.assertEqual(status,200,body)
+        deadline=time.monotonic()+15
+        expected_digest=hashlib.sha256(expected['AdGuardHome']).digest()
+        while time.monotonic()<deadline:
+            self.assertIsNone(process.poll(),'Official updater exited instead of exec')
+            try: image=Path('/proc',str(process.pid),'exe').read_bytes()
+            except FileNotFoundError:
+                # Linux briefly removes the old exe link during exec. Keep
+                # waiting for the image, while still refusing process exit.
+                self.assertIsNone(process.poll(),'Official updater process disappeared')
+                image=b''
+            if hashlib.sha256(image).digest()==expected_digest:
+                break
+            time.sleep(.05)
+        else: self.fail('Official updater did not exec the new binary')
+        self.ready(process,self.web)
+        status,body,_=self.request(api+'status',options=('-b',jar))
+        self.assertEqual(status,200);self.assertEqual(json.loads(body)['version'],'v0.107.80')
+        self.assertEqual((self.work/'AdGuardHome.sig').read_bytes(),expected['AdGuardHome.sig'])
+        self.assertEqual((self.work/'agh-backup/AdGuardHome').read_bytes(),old_binary)
+        self.assertEqual(marker.read_bytes(),b'preserved data')
+        status,body,_=self.request(api+'rewrite/list',options=('-b',jar))
+        self.assertEqual(status,200);self.assertIn({**rewrite,'enabled':True},json.loads(body))
+        self.doh_matrix(client_id,jar)
+        query=question('saved.example.test')
+        with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sock:
+            sock.settimeout(10);sock.sendto(query,('127.0.0.1',self.native));answer=sock.recv(65535)
+        self.dns_answer(query,answer)
+        self.assertIn('/AdGuardHome_linux_amd64.tar.gz',requests)
 
     def start_pebble(self):
         config=self.root/'pebble.json'

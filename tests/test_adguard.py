@@ -54,7 +54,7 @@ python3() {
 sha256sum() {
     [[ "${FAIL:-}" != checksum ]] || { echo wrong; return; }
     if [[ "$1" == *archive ]]; then
-        echo "c48f4a43000665484c5ec28177de11a004759b620dae8f77b2aabefc9ef3687f  $1"
+        echo "28593bc761d71469abdbc6f39ca42cbed763ec92b63082c729177b037ed51d18  $1"
     else command sha256sum "$@"; fi
 }
 systemctl() {
@@ -79,6 +79,21 @@ nginx() {
     echo nginx-test >> "$CALLS"
     [[ "${FAIL:-}" != nginx || ! -e "$ROOT/etc/nginx/snippets/x-ui-auto-optional/adguard.conf" ]]
 }
+gpg() {
+    if [[ "$*" == *--fingerprint* ]]; then
+        printf 'pub::::::::::\nfpr:::::::::28645AC9776EC4C00BCE2AFC0FE641E7235E2EC6:\n'
+        return
+    fi
+    [[ "$*" != *--import* || "${FAIL:-}" != key-import ]] || return 1
+    local prev='' key='' part
+    for part in "$@"; do [[ "$prev" != --keyring ]] || key=$part; prev=$part; done
+    [[ -n "$key" ]] || return 1
+    printf 'fixture-key' > "$key"
+}
+gpgv() {
+    [[ "${FAIL:-}" != signature ]] || return 1
+    [[ -f "$AGH_DIR/AdGuardHome.sig" && -f "$AGH_DIR/AdGuardHome-public.gpg" ]]
+}
 ss() {
     echo "tcp LISTEN 0 128 ${LISTEN_WEB:-127.0.0.1}:${AGH_WEB_PORT} 0.0.0.0:* users:((\"AdGuardHome\",pid=${LISTEN_PID:-12345},fd=5))"
     echo "${DNS_PROTOCOL:-udp} UNCONN 0 0 ${LISTEN_DNS:-127.0.0.1}:${AGH_DNS_PORT} 0.0.0.0:* users:((\"AdGuardHome\",pid=${LISTEN_PID:-12345},fd=6))"
@@ -95,6 +110,10 @@ curl() {
         prev=$arg
     done
     if [[ "$*" == *assets/adguard/managed.sh* ]]; then cp "$HELPER_FIXTURE" "$output"; return; fi
+    if [[ "$*" == *keys.openpgp.org* ]]; then
+        [[ "${FAIL:-}" != key-download ]] || return 1
+        printf 'fixture-key' > "$output"; return
+    fi
     if [[ "$*" == *AdGuardHome_linux_* ]]; then
         [[ "${FAIL:-}" != download ]] || return 1
         cp "$ARCHIVE_FIXTURE" "$output"; return
@@ -116,7 +135,7 @@ curl() {
         if [[ ! -s "$session" || "${FAIL:-}" == cookie-unusable || "${FAIL:-}" == auth-http ]]; then printf 401; return; fi
         if [[ "${FAIL:-}" == auth-json ]]; then printf invalid > "$output";
         elif [[ "${FAIL:-}" == auth-response ]]; then printf '{}' > "$output";
-        else printf '{"version":"v0.107.79","running":true,"http_port":%s,"dns_port":%s}' "$AGH_WEB_PORT" "$AGH_DNS_PORT" > "$output"; fi
+        else printf '{"version":"v0.107.80","running":true,"http_port":%s,"dns_port":%s}' "$AGH_WEB_PORT" "$AGH_DNS_PORT" > "$output"; fi
         printf 200; return
     fi
     if [[ "$url" == *login.html ]]; then
@@ -150,7 +169,9 @@ else exit 1; fi
 '''
 
 
-FIXTURE_BINARY_SHA = hashlib.sha256(BINARY.encode()).hexdigest()
+INSTALL_BINARY = BINARY.replace('v0.107.79', 'v0.107.80').replace(' -s run --no-check-update', ' -s run')
+FIXTURE_BINARY_SHA = hashlib.sha256(INSTALL_BINARY.encode()).hexdigest()
+LEGACY_FIXTURE_BINARY_SHA = hashlib.sha256(BINARY.encode()).hexdigest()
 
 
 class AdGuardInstaller(unittest.TestCase):
@@ -170,7 +191,7 @@ class AdGuardInstaller(unittest.TestCase):
         self.archive = self.root / 'archive.tar.gz'
         with tarfile.open(self.archive, 'w:gz') as tar:
             d = tarfile.TarInfo('./AdGuardHome'); d.type = tarfile.DIRTYPE; tar.addfile(d)
-            f = tarfile.TarInfo('./AdGuardHome/AdGuardHome'); b = BINARY.encode(); f.size = len(b); f.mode = 0o755; tar.addfile(f, io.BytesIO(b))
+            f = tarfile.TarInfo('./AdGuardHome/AdGuardHome'); b = INSTALL_BINARY.encode(); f.size = len(b); f.mode = 0o755; tar.addfile(f, io.BytesIO(b))
         self.env = {**os.environ, 'ROOT': str(self.root), 'CALLS': str(self.calls), 'HELPER_FIXTURE': str(self.helper),
                     'ARCHIVE_FIXTURE': str(self.archive), 'GITHUB_RAW': 'https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/' + 'a' * 40,
                     'domain': 'example.com', 'INSTALL_AGH': 'n'}
@@ -227,7 +248,7 @@ class AdGuardInstaller(unittest.TestCase):
         self.assertIn('bcrypt -niB -C 12 admin',log)
         self.assertIn(self.env['GITHUB_RAW'] + '/assets/adguard/managed.sh', log)
         self.assertLess(log.index('--check-config'),log.index('-s install'))
-        self.assertIn('--no-check-update -s install',log)
+        self.assertNotIn('--no-check-update',log)
         self.assertIn('--resolve example.com:443:127.0.0.1',log)
         snippet=(self.root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf').read_text()
         self.assertIn('location = /dns-query',snippet)
@@ -236,7 +257,7 @@ class AdGuardInstaller(unittest.TestCase):
         self.assertNotIn('releases/latest',log)
 
     def test_failure_matrix_rolls_back_without_false_success(self):
-        for failure in ('package','download','checksum','extraction','version','random','random-exit','path','bcrypt','config','service','start','nginx','reload','backend','public','admin','admin-body'):
+        for failure in ('package','key-download','key-import','download','checksum','extraction','version','random','random-exit','path','bcrypt','config','service','start','nginx','reload','backend','public','admin','admin-body'):
             with self.subTest(failure=failure):
                 self.calls.write_text(''); (self.root/'reload-failed').unlink(missing_ok=True)
                 r=self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'),
@@ -291,6 +312,75 @@ class AdGuardInstaller(unittest.TestCase):
             self.assertFalse((self.root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf').exists())
             if expected:self.assertLess(log.index('check_installation'),log.index('optional-AGH'))
 
+    def test_native_update_signature_and_unit_contract(self):
+        r = self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'), 'install_adguard')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        binary = self.root/'opt/AdGuardHome/AdGuardHome'
+        binary.write_text(INSTALL_BINARY.replace('v0.107.80', 'v0.107.81'))
+        (binary.parent/'AdGuardHome.sig').write_text('fixture-signature')
+        r = self.run_shell((), 'source "$HELPER_FIXTURE"; agh_config && agh_unit && echo updated')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('updated', r.stdout)
+        self.assertNotEqual(self.run_shell((), 'source "$HELPER_FIXTURE"; agh_config', FAIL='signature').returncode, 0)
+        (binary.parent/'AdGuardHome.sig').unlink()
+        self.assertNotEqual(self.run_shell((), 'source "$HELPER_FIXTURE"; agh_config').returncode, 0)
+
+    def test_legacy_binary_accepts_explicit_native_updates(self):
+        r = self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'), 'install_adguard')
+        self.assertEqual(r.returncode, 0, r.stdout+r.stderr)
+        root = self.root/'opt/AdGuardHome'
+        (root/'AdGuardHome').write_text(BINARY)
+        metadata = json.loads((root/'managed.json').read_text())
+        metadata.update(version='v0.107.79', updates_enabled=True)
+        (root/'managed.json').write_text(json.dumps(metadata))
+        self.helper.write_text(self.helper.read_text().replace(FIXTURE_BINARY_SHA, LEGACY_FIXTURE_BINARY_SHA))
+        r = self.run_shell((), 'source "$HELPER_FIXTURE"; agh_config && agh_unit')
+        self.assertEqual(r.returncode, 0, r.stdout+r.stderr)
+
+    def test_equivalent_service_option_spelling(self):
+        r = self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'), 'install_adguard')
+        self.assertEqual(r.returncode, 0, r.stdout+r.stderr)
+        unit = self.root/'etc/systemd/system/AdGuardHome.service'
+        original = unit.read_text()
+        for text in (original.replace(' -c ', ' --config=').replace(' -w ', ' --work-dir=').replace('-s run', '--service=run'),
+                     original.replace(' -s run', ' --service run'),
+                     original+'WorkingDirectory=/root\n'):
+            unit.write_text(text)
+            r = self.run_shell((), 'source "$HELPER_FIXTURE"; agh_config && agh_unit')
+            self.assertEqual(r.returncode, 0, r.stdout+r.stderr)
+
+    def test_cosmetic_yaml_indentation_and_comments(self):
+        r = self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'), 'install_adguard')
+        self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+        path=self.root/'opt/AdGuardHome/AdGuardHome.yaml'
+        text=re.sub(r'(?m)^( +)',lambda match:match[0]*2,path.read_text())
+        text=re.sub(r'(?m)^( +address: .*| +port: [0-9]+)$',r'\1 # unchanged endpoint',text)
+        path.write_text(text)
+        r=self.run_shell((), 'source "$HELPER_FIXTURE"; agh_config')
+        self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+
+    def test_enablement_entrypoint_never_falls_through_to_installation(self):
+        source = function('entrypoint')+'''
+enable_agh_updates() { echo enablement; return "${ENABLE_STATUS:-0}"; }
+run_installation() { echo UNEXPECTED_INSTALLATION; return 99; }
+msg_err() { echo "$*" >&2; }
+entrypoint "$@"
+'''
+        for arguments, expected in ((('--enable-agh-updates',),0),
+                                    (('--enable-agh-updates','-install','y'),2),
+                                    (('-install','y','--enable-agh-updates'),2)):
+            result = subprocess.run(['bash','-c',source,'fixture',*arguments],capture_output=True,text=True)
+            self.assertEqual(result.returncode,expected,result.stdout+result.stderr)
+            self.assertNotIn('UNEXPECTED_INSTALLATION',result.stdout)
+        result = subprocess.run(['bash','-c',source,'fixture','--enable-agh-updates'],
+                                env={**os.environ,'ENABLE_STATUS':'7'},capture_output=True,text=True)
+        self.assertEqual(result.returncode,7)
+        self.assertNotIn('UNEXPECTED_INSTALLATION',result.stdout)
+
+    def test_enablement_helper_hashes_match_this_tree(self):
+        for path in ('assets/adguard/managed.sh', 'assets/backup/x-ui-backup.sh'):
+            self.assertIn("'"+hashlib.sha256((ROOT/path).read_bytes()).hexdigest()+"'",INSTALLER)
+
     def test_optional_summary_and_unit_contract(self):
         for choice in ('n','y'):
             r=self.run_shell(('show_results',), ('AGH_RESULT=installed; ' if choice=='y' else 'AGH_RESULT=not_requested; ') + 'AGH_PATH=adg-ABCDEFGHIJKL; AGH_PASSWORD=single-secret; panel_path=panel; config_username=user; config_password=panel-pass; reality_domain=cover.example; ufw() { echo "Status: active"; }; show_results',INSTALL_AGH=choice)
@@ -301,8 +391,8 @@ class AdGuardInstaller(unittest.TestCase):
         r=self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'),'install_adguard')
         self.assertEqual(r.returncode,0,r.stderr)
         unit=self.root/'etc/systemd/system/AdGuardHome.service'
-        unit.write_text(unit.read_text().replace('--no-check-update',''))
-        r=subprocess.run(['bash','-c',MOCK+'\nsource "$HELPER_FIXTURE"; agh_unit'],text=True,capture_output=True,env=self.env)
+        unit.write_text(unit.read_text().replace('-s run','--no-check-update -s run'))
+        r=subprocess.run(['bash','-c',MOCK+'\nsource "$HELPER_FIXTURE"; agh_config && agh_unit'],text=True,capture_output=True,env=self.env)
         self.assertNotEqual(r.returncode,0)
 
     def test_optimization_preserves_archive_and_port_allocation_checks(self):
@@ -364,7 +454,7 @@ class AdGuardInstaller(unittest.TestCase):
         yaml.write_text(original_yaml)
         m = json.loads(original_meta)
         for key, value in (('web_port', 443), ('dns_port', 53), ('dns_port', m['web_port']),
-                           ('web_port', '18081'), ('version', 'bad'), ('arch', 'bad'),
+                           ('web_port', '18081'), ('version', 'bad'), ('updates_enabled', 'true'), ('arch', 'bad'),
                            ('path', 'bad'), ('domain', 'bad..domain')):
             with self.subTest(key=key, value=value):
                 metadata.write_text(json.dumps({**m, key: value}))
@@ -372,12 +462,12 @@ class AdGuardInstaller(unittest.TestCase):
         metadata.write_text('invalid JSON')
         self.assertNotEqual(call('agh_config').returncode, 0)
         metadata.write_text(original_meta)
-        for invalid in (original_unit.replace('--no-check-update', ''),
+        for invalid in (original_unit.replace('-s run', '--no-check-update -s run'),
                         original_unit.replace('-s run', '-s install'),
                         original_unit.replace(' -w ', ' --wrong-flag ')):
             with self.subTest(unit=invalid):
                 unit.write_text(invalid)
-                self.assertNotEqual(call('agh_unit').returncode, 0)
+                self.assertNotEqual(call('agh_config && agh_unit').returncode, 0)
         unit.write_text(original_unit)
         for env in ({'LISTEN_WEB': '0.0.0.0'}, {'LISTEN_DNS': '0.0.0.0'}, {'LISTEN_DNS': '127.0.0.2'},
                     {'LISTEN_PID': '7777'}, {'DNS_PROTOCOL': 'tcp'}):
@@ -486,7 +576,7 @@ main
         r = self.final_result(True)
         self.assertEqual(r.returncode, 0, r.stdout+r.stderr)
         self.assert_core_credentials(r)
-        self.assertIn('[✓] AdGuard Home           Running (v0.107.79)', r.stdout)
+        self.assertIn('[✓] AdGuard Home           Running (v0.107.80)', r.stdout)
         self.assertIn('[✓] DNS-over-HTTPS         Ready', r.stdout)
         self.assertIn('AdGuard Home:\n https://example.com/adg-'+'A'*12+'/', r.stdout)
         self.assertEqual(r.stdout.count('Password: '+'A'*32), 1)

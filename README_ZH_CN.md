@@ -239,6 +239,12 @@ DoH 地址格式示例：
 
 请使用较长的随机标识符。参见 [AdGuard Home 官方安全建议](https://adguard-dns.io/kb/adguard-home/running-securely/)。
 
+从 **v2.4.1** 开始，全新安装的 AdGuard Home 可直接在网页界面中检查并安装更新。如果你使用本安装脚本的旧版本安装了 AdGuard Home，可以在 VPS 上运行一条命令来启用更新：
+
+```bash
+sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "$d"'\'' EXIT; cd "$d"; u=https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.1; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh" -o x-ui-latest.sh; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh.sha256" -o x-ui-latest.sh.sha256; sha256sum --check --strict x-ui-latest.sh.sha256; bash ./x-ui-latest.sh --enable-agh-updates'
+```
+
 </details>
 
 ---

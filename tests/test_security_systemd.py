@@ -283,7 +283,7 @@ apt_system() {
             for name in ('save_backup_services','load_restored_services','restore_service_states','prepare_stopped_adguard_service'):
                 code+=function(name,source)+'\n'
             code=code.replace('/etc/systemd/system/AdGuardHome.service',str(paths['AdGuardHome']))
-            env={**os.environ,'AGH_DIR':str(agh),'STAGING':str(root)}
+            env={**os.environ,'AGH_DIR':str(agh),'AGH_UPDATES_ENABLED':'no','STAGING':str(root)}
             def apply(command):
                 return subprocess.run(['bash','-c',code+'\n'+command],env=env,text=True,capture_output=True,timeout=45)
             result=apply('prepare_stopped_adguard_service')

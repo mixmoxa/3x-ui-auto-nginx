@@ -22,7 +22,7 @@ cp /repo/assets/security/managed.py root/root/pilot/current-security.py
 if [[ -f old-security.py ]]; then cp old-security.py root/root/pilot/old-security.py; fi
 PYTHONPATH=/repo/tests python3 -c 'import json; from release_contract import baseline; b=baseline(); print(json.dumps({"version":b["version"],"xray":b["xray"]}))' > root/root/pilot/baseline.json
 cp /run/proxy-ca.pem root/usr/local/share/ca-certificates/pilot-proxy.crt
-openssl req -x509 -newkey rsa:2048 -nodes -days 3 -keyout fixture.key -out fixture.crt -subj /CN=pilot-fixture -addext 'subjectAltName=DNS:localhost,IP:10.0.2.2,DNS:one.one.one.one,DNS:dns.google,DNS:dns.cloudflare.com,DNS:dns.quad9.net,DNS:adguardteam.github.io' >/pilot/cert-prep.log 2>&1
+openssl req -x509 -newkey rsa:2048 -nodes -days 3 -keyout fixture.key -out fixture.crt -subj /CN=pilot-fixture -addext 'subjectAltName=DNS:localhost,IP:10.0.2.2,DNS:one.one.one.one,DNS:dns.google,DNS:dns.cloudflare.com,DNS:dns.quad9.net,DNS:adguardteam.github.io,DNS:static.adtidy.org' >/pilot/cert-prep.log 2>&1
 cp fixture.crt fixture.key root/root/pilot/
 cp fixture.crt root/usr/local/share/ca-certificates/pilot-fixture.crt
 test -f ssh-key || ssh-keygen -t ed25519 -N '' -f ssh-key >/dev/null

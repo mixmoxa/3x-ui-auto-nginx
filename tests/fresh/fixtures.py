@@ -19,7 +19,7 @@ def answer(packet, pebble=False):
         n=packet[off];off+=1;labels.append(packet[off:off+n].decode());off+=n
     name='.'.join(labels)
     if name.endswith('.example.test'): address='127.0.0.1' if pebble else '10.0.2.15'
-    elif name in ('dns.cloudflare.com','dns.google','dns.quad9.net','adguardteam.github.io'):address='10.0.2.2'
+    elif name in ('dns.cloudflare.com','dns.google','dns.quad9.net','adguardteam.github.io','static.adtidy.org'):address='10.0.2.2'
     elif name in ('cloudflare.com','debian.org','www.example.com') or name.startswith('cold-'):
         address='203.0.113.7'
     else:
@@ -74,6 +74,13 @@ class HTTPS(BaseHTTPRequestHandler):
             self.send_response(200);self.send_header('Content-Type','application/dns-message')
         elif url.path=='/HostlistsRegistry/assets/filter_1.txt':
             data=b'! Isolated acceptance filter fixture\n';self.send_response(200)
+        elif url.path=='/adguardhome/release/version.json':
+            # Only the version announcement is controlled. The native updater
+            # downloads the real official release package over verified HTTPS.
+            data=json.dumps(dict(version='v0.107.80',announcement='AGH acceptance .79 to .80',
+                announcement_url='https://github.com/AdguardTeam/AdGuardHome/releases/tag/v0.107.80',
+                download_linux_amd64='https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.80/AdGuardHome_linux_amd64.tar.gz')).encode()
+            self.send_response(200)
         else: data=b'';self.send_response(404)
         self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
     def do_POST(self):

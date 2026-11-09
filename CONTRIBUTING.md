@@ -60,7 +60,7 @@ Every confirmed bug must follow: **reproducing RED regression test → fix → s
 
 Fast regression (`nonroot`/`root`) uses fixtures, fault injection and negative paths. Real integration uses nginx, pinned/checksummed Xray from the verified 3x-ui baseline, the real private-state x-ui subscription backend and Mihomo. The integration suite downloads verified official binaries automatically; there are no silent missing-binary skips or repository secrets. For offline runs, `INTEGRATION_ARTIFACTS` may point to downloaded `x-ui.tar.gz`, `x-ui.sha256` and `mihomo.gz`, plus each `x-ui-linux-armv5/armv6/armv7.tar.gz` archive and its `.sha256` sidecar for the verified-baseline ARM checks; the same hash verification remains mandatory. All listeners and state stay local/temporary, and child processes have bounded cleanup. Most GitHub jobs have 25-minute deadlines; the full fresh-install Ubuntu 26.04 job has a 60-minute deadline, including three Change Domains operations with full Backup v3.
 
-Real services (`services`) runs on native `ubuntu-24.04` and `ubuntu-26.04` hosted runners. It verifies pinned official AdGuard Home v0.107.79, loopback DNS, nginx TLS DoH/admin, and Certbot HTTP-01 issuance/renewal against pinned Pebble v2.10.1 with validation enabled and local DNS. No public DNS, Let's Encrypt or secrets are used. Both native jobs also run the pinned official panel’s embedded AmneziaWG TCP/UDP, client export, restart and cryptographic-negative test; no kernel module or external VPN server is installed. `SERVICES_ARTIFACTS` can supply `agh.tar.gz` and `pebble.tar.gz` offline; both pinned hashes are still checked before execution.
+Real services (`services`) runs on native `ubuntu-24.04` and `ubuntu-26.04` hosted runners. The existing service fixtures cover historical official AdGuard Home v0.107.79 and loopback DNS, nginx TLS DoH/admin, and Certbot HTTP-01 issuance/renewal against pinned Pebble v2.10.1 with validation enabled and local DNS. No public DNS, Let's Encrypt or secrets are used. Both native jobs also run the pinned official panel’s embedded AmneziaWG TCP/UDP, client export, restart and cryptographic-negative test; no kernel module or external VPN server is installed. `SERVICES_ARTIFACTS` can supply `agh.tar.gz`, `agh80.tar.gz` and `pebble.tar.gz` offline; the pinned hashes are still checked before execution. The same service suite also performs a real `.79 → .80` native updater/re-exec through nginx, retaining DNS, DoH, administrator access, ClientID, rewrite, data and the official signature file. Its TLS index fixture only controls the upstream announcement/download boundary; this process-level test does not claim native systemd recovery. Full Fresh separately exercises the historical released helpers, enablement, old-archive Restore, the actual systemd updater and signed `.80` Backup/Restore/Change Domains in the existing guest.
 
 The private Backup v3 fixture restores real files and runs the verified AGH binary, DNS/DoH/admin and certificate checks. It uses sudo only for private archived ownership checks; all managed paths are relocated into temporary directories. Systemd, Xray, firewall and other core service management remain controlled fixtures, so this is **PARTIAL Restore integration**, not a full real-system recovery claim. The deploy-hook test uses actual nginx validation/reload and renewed TLS certificates; x-ui restart and systemd state are controlled fixtures.
 
@@ -199,6 +199,24 @@ python3 tests/upstream_canary.py report --directory /tmp/xui-canary
 ```
 
 Promote upstream only in a separate reviewed PR: independently confirm all official archive pins, update the single baseline, run all five required checks, and record full installer/live acceptance. Canary **integration PASS is not full installer acceptance**: systemd lifecycle, public ACME/DNS, kernel UFW, reboot/recovery and non-amd64 behavior still require their own acceptance. Canary failures must be investigated, not hidden by changing assertions or silently substituting baseline binaries.
+
+## AdGuard Home maintenance
+
+Fresh installation pins official v0.107.80 and enables native web updates.
+`--enable-agh-updates` is a separate maintenance entry point for recognized
+historical v0.107.79 installations; Installation remains a destructive rebuild.
+The migration refuses implicit `main`, pins both helper hashes from one exact
+release source, preserves the installed binary/configuration and service state,
+and uses the shared operation lock. See [the AGH update contract and future
+release command](docs/ADGUARD_UPDATES.md).
+
+When changing either `assets/adguard/managed.sh` or `assets/backup/x-ui-backup.sh`,
+refresh the two SHA-256 payload pins in `enable_agh_updates()`; the regression
+test verifies their agreement with the tree. Do not remove signature validation
+or execute an archived helper to make a new version pass Restore. Acceptance
+must distinguish a version notification from an actual upstream `.79 → .80`
+update/re-exec; require the final HEAD Full Fresh and native service results.
+Future upstream format/API changes may require a separately reviewed fix.
 
 ## Public Git metadata
 

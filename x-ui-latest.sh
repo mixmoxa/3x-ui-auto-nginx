@@ -2593,10 +2593,10 @@ adguard_admin_probe() {
             -o "$directory/status.json" -w '%{http_code}' \
             "https://${domain}/${AGH_PATH}/control/status") || exit 1
         [[ "$result" == 200 ]] || exit 1
-        python3 - "$directory/status.json" "$AGH_WEB_PORT" "$AGH_DNS_PORT" <<'PY'
+        python3 - "$directory/status.json" "$AGH_WEB_PORT" "$AGH_DNS_PORT" "$AGH_VERSION" <<'PY'
 import json, pathlib, sys
 status = json.loads(pathlib.Path(sys.argv[1]).read_text())
-if not isinstance(status, dict) or status.get('version') != 'v0.107.79' or status.get('running') is not True:
+if not isinstance(status, dict) or status.get('version') != sys.argv[4] or status.get('running') is not True:
     raise ValueError('Invalid authenticated AGH status')
 for key, expected in (('http_port', sys.argv[2]), ('dns_port', sys.argv[3])):
     if type(status.get(key)) is not int or status[key] != int(expected):
@@ -2612,7 +2612,7 @@ adguard_stage() {
     install -o root -g root -m 0600 "$AGH_TEMP/helper" /usr/local/lib/3x-ui-pro/managed-adguard.sh || return 1
     . /usr/local/lib/3x-ui-pro/managed-adguard.sh
     agh_release "$(uname -m)" || return 1
-    apt-get install -y --no-install-recommends apache2-utils || return 1
+    apt-get install -y --no-install-recommends apache2-utils gnupg || return 1
     curl -fsSL --connect-timeout 15 --max-time 180 \
         "https://github.com/AdguardTeam/AdGuardHome/releases/download/${AGH_VERSION}/AdGuardHome_linux_${AGH_ARCH}.tar.gz" \
         -o "$AGH_TEMP/archive" || return 1
@@ -2719,10 +2719,11 @@ EOFAGH
 import json, sys
 file, domain, path, web, dns, arch = sys.argv[1:]
 with open(file, 'w') as out:
-    json.dump(dict(version='v0.107.79', domain=domain, path=path, web_port=int(web), dns_port=int(dns), arch=arch), out)
+    json.dump(dict(version='v0.107.80', updates_enabled=True, domain=domain, path=path, web_port=int(web), dns_port=int(dns), arch=arch), out)
 PY
     [[ $? == 0 ]] || return 1
     chmod 0600 /opt/AdGuardHome/managed.json || return 1
+    agh_install_trust_key || return 1
     agh_install_service || return 1
     agh_snippet > "$AGH_TEMP/candidate" || return 1
     install -o root -g root -m 0600 "$AGH_TEMP/candidate" /etc/nginx/snippets/x-ui-auto-optional/adguard.conf || return 1
@@ -2864,7 +2865,7 @@ show_results() {
     esac
     case "${AGH_RESULT:-not_requested}" in
         installed)
-            msg_ok "$(ui_text ' [✓] AdGuard Home           Running (v0.107.79)' ' [✓] AdGuard Home           Работает (v0.107.79)')"
+            msg_ok "$(ui_text ' [✓] AdGuard Home           Running (v0.107.80)' ' [✓] AdGuard Home           Работает (v0.107.80)')"
             msg_ok "$(ui_text ' [✓] DNS-over-HTTPS         Ready' ' [✓] DNS-over-HTTPS         Готов')" ;;
         failed_rolled_back)
             msg_warn "$(ui_text ' [!] AdGuard Home           Failed — rolled back' ' [!] AdGuard Home           Ошибка — выполнен откат')"
@@ -3925,7 +3926,157 @@ manager_menu() {
     done
 }
 
+enable_agh_updates() (
+    # Deliberately separate from run_installation(), including all error paths.
+    acquire_stack_lock || exit $?
+    local pending
+    for pending in /var/lib/3x-ui-auto-nginx /var/lib/3x-ui-auto-nginx/change-domains; do
+        [[ ! -L "$pending" ]] || exit 1
+    done
+    for pending in /var/lib/3x-ui-auto-nginx/change-domains/journal.json; do
+        [[ ! -e "$pending" && ! -L "$pending" ]] || {
+            msg_err 'Finish Change Domains recovery before enabling AGH updates.'; exit 1;
+        }
+    done
+    [[ ${PROJECT_REF:-} =~ ^[a-fA-F0-9]{40}$ || ${PROJECT_REF:-} =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+        msg_err 'AGH update enablement requires a fixed release asset or exact source SHA.'; exit 1;
+    }
+    pin_project_source || exit 1
+    local AGH_TEMP changed=0 success=0 was_active state fragment drops index path
+    local -a targets=(/usr/local/lib/3x-ui-pro/managed-adguard.sh /usr/local/bin/x-ui-backup
+                      /opt/AdGuardHome/managed.json /etc/systemd/system/AdGuardHome.service
+                      /opt/AdGuardHome/AdGuardHome-public.gpg)
+    AGH_TEMP=$(mktemp -d /run/xui-agh-updates.XXXXXXXX) || exit 1
+    trap 'rm -rf -- "$AGH_TEMP"' EXIT
+    chmod 0700 "$AGH_TEMP" || exit 1
+    # No archived/installed shell code is sourced to establish managed identity.
+    python3 - "${targets[@]:0:4}" /opt/AdGuardHome/AdGuardHome /opt/AdGuardHome/AdGuardHome.yaml \
+        /etc/nginx/snippets/x-ui-auto-optional/adguard.conf <<'PY' || { rm -rf "$AGH_TEMP"; exit 1; }
+import pathlib, stat, sys
+for name in sys.argv[1:]:
+    path = pathlib.Path(name)
+    for item in (*reversed(path.parents), path):
+        info = item.lstat()
+        if stat.S_ISLNK(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise ValueError('Unsafe managed AGH ownership')
+    if not path.is_file():
+        raise ValueError('Incomplete managed AGH installation')
+PY
+    state=$(systemctl is-active AdGuardHome) || true
+    case "$state" in active) was_active=1 ;; inactive) was_active=0 ;; *) rm -rf "$AGH_TEMP"; exit 1 ;; esac
+    fragment=$(systemctl show -p FragmentPath --value AdGuardHome) || exit 1
+    drops=$(systemctl show -p DropInPaths --value AdGuardHome) || exit 1
+    [[ "$fragment" == /etc/systemd/system/AdGuardHome.service && -z "$drops" ]] || exit 1
+    # Hashes are part of this release's installer; both helpers use one source.
+    curl -q -fsSL --connect-timeout 10 --max-time 45 "$GITHUB_RAW/assets/adguard/managed.sh" -o "$AGH_TEMP/helper" &&
+    curl -q -fsSL --connect-timeout 10 --max-time 45 "$GITHUB_RAW/assets/backup/x-ui-backup.sh" -o "$AGH_TEMP/backup" || exit 1
+    printf '%s  %s\n' 'bd045bbdb2a59e019f2ac6ec0eb34a2a04e98c2f4a01cb3e9907bd6fe4d94a17' "$AGH_TEMP/helper" '74ebc80e2a34475de0842c77f863ea5f0b7c0d7febddcdd7f9ef1f5e130fc72d' "$AGH_TEMP/backup" |
+        sha256sum --check --status || exit 1
+    bash -n "$AGH_TEMP/helper" && bash -n "$AGH_TEMP/backup" || exit 1
+    # Only the authenticated new helper is executed, before replacing anything.
+    . "$AGH_TEMP/helper"
+    agh_config && agh_unit || exit 1
+    command -v gpg >/dev/null && command -v gpgv >/dev/null || {
+        # Only the signature-verification dependency; no dist-upgrade or stack
+        # component update is part of this separate maintenance operation.
+        apt-get install -y --no-install-recommends gnupg gpgv || exit 1
+    }
+    local snippet
+    snippet=$(cat "$AGH_SNIPPET") || exit 1
+    [[ "$snippet" == "$(agh_snippet)" || "$snippet" == "$(agh_snippet legacy)" ]] || exit 1
+    [[ "$AGH_ARCH" == "$(dpkg --print-architecture)" ]] || exit 1
+    if (( was_active )); then agh_health && agh_dns_probe || exit 1; fi
+    if [[ -e "${targets[4]}" || -L "${targets[4]}" ]]; then
+        [[ $(stat -c '%u:%g:%a' "${targets[4]}") == 0:0:600 ]] && agh_trusted_key || exit 1
+        cp -a "${targets[4]}" "$AGH_TEMP/key" || exit 1
+    else
+        mkdir "$AGH_TEMP/trust" || exit 1
+        ( AGH_DIR="$AGH_TEMP/trust"; agh_install_trust_key ) || exit 1
+        cp -a "$AGH_TEMP/trust/AdGuardHome-public.gpg" "$AGH_TEMP/key" || exit 1
+    fi
+    # All candidates and original bytes exist before the first replacement.
+    python3 - "$AGH_TEMP" <<'PY' || exit 1
+import json, pathlib, shlex, sys
+stage = pathlib.Path(sys.argv[1])
+metadata = json.loads(pathlib.Path('/opt/AdGuardHome/managed.json').read_text())
+metadata['updates_enabled'] = True
+(stage/'metadata').write_text(json.dumps(metadata)+'\n')
+unit = pathlib.Path('/etc/systemd/system/AdGuardHome.service').read_text()
+lines = unit.splitlines(keepends=True)
+for index, line in enumerate(lines):
+    if line.startswith('ExecStart='):
+        args = shlex.split(line.split('=', 1)[1])
+        args = [arg for arg in args if arg != '--no-check-update' and not arg.startswith('--no-check-update=')]
+        lines[index] = 'ExecStart='+shlex.join(args)+'\n'
+(stage/'unit').write_text(''.join(lines))
+PY
+    local -a candidates=(helper backup metadata unit key) modes=(0600 0755 0600 0644 0600)
+    local needs_change=0
+    for index in "${!targets[@]}"; do
+        cmp -s "$AGH_TEMP/${candidates[index]}" "${targets[index]}" || needs_change=1
+    done
+    if (( ! needs_change )); then
+        msg_ok 'AGH native updates are already enabled.'
+        exit 0
+    fi
+    for index in "${!targets[@]}"; do
+        path=${targets[index]}
+        if [[ -e "$path" ]]; then cp -a "$path" "$AGH_TEMP/original-$index" || exit 1; fi
+    done
+    finish_agh_enablement() {
+        local status=$? rollback=0
+        trap - EXIT HUP INT TERM
+        if (( changed && ! success )); then
+            for index in "${!targets[@]}"; do
+                if [[ -e "$AGH_TEMP/original-$index" ]]; then
+                    cp -a "$AGH_TEMP/original-$index" "${targets[index]}" || rollback=1
+                else rm -f -- "${targets[index]}" || rollback=1; fi
+            done
+            systemctl daemon-reload || rollback=1
+            if (( was_active )); then
+                systemctl restart AdGuardHome && systemctl is-active --quiet AdGuardHome || rollback=1
+                for attempt in {1..20}; do agh_listeners 2>/dev/null && break; sleep 0.25; done
+                agh_health && agh_dns_probe || rollback=1
+            else
+                systemctl stop AdGuardHome || rollback=1
+                [[ $(systemctl is-active AdGuardHome) == inactive ]] || rollback=1
+                agh_config && agh_unit || rollback=1
+            fi
+            status=1
+        fi
+        if (( rollback )); then
+            msg_err "AGH rollback could not be verified; private originals retained: $AGH_TEMP"
+        else rm -rf -- "$AGH_TEMP"; fi
+        exit "$status"
+    }
+    trap finish_agh_enablement EXIT
+    trap 'exit 1' HUP INT TERM
+    changed=1
+    for index in "${!targets[@]}"; do
+        install -o root -g root -m "${modes[index]}" "$AGH_TEMP/${candidates[index]}" "${targets[index]}" || exit 1
+    done
+    systemctl daemon-reload && agh_config && agh_unit || exit 1
+    if (( was_active )); then systemctl restart AdGuardHome || exit 1
+    else systemctl start AdGuardHome || exit 1; fi
+    local attempt
+    for attempt in {1..20}; do agh_listeners 2>/dev/null && break; sleep 0.25; done
+    agh_health && agh_dns_probe || exit 1
+    if (( ! was_active )); then
+        systemctl stop AdGuardHome || exit 1
+        [[ $(systemctl is-active AdGuardHome) == inactive ]] || exit 1
+    fi
+    success=1
+    msg_ok 'AGH native updates enabled. The installed AGH version and user settings were preserved.'
+)
+
 entrypoint() {
+    local argument
+    for argument in "$@"; do
+        if [[ "$argument" == --enable-agh-updates ]]; then
+            (( $# == 1 )) || { msg_err 'Use --enable-agh-updates alone.'; return 2; }
+            enable_agh_updates; return $?
+        fi
+    done
     if (( $# )); then run_installation "$@"; return $?; fi
     if [[ ! -t 0 || ! -t 1 ]]; then
         printf 'Use an interactive TTY (SSH: ssh -t), or explicit installation flags: bash x-ui-latest.sh -install y\n' >&2

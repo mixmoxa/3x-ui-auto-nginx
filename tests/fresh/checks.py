@@ -609,7 +609,7 @@ def manager_backup():
             'AGH_upstreams_and_nonempty_rewrite_preserved':True}
 
 
-def change_domains():
+def change_domains(single=False, panel_target='panel-next.example.test'):
     """Same installed VM: actual menu, Backup, Pebble, SQL and real consumers."""
     import hashlib, pty, select
     env={**os.environ,**json.loads((ROOT/'environment.json').read_text()),'TERM':'dumb','NO_COLOR':'1'}
@@ -633,9 +633,10 @@ def change_domains():
     panel,reality='panel.example.test','reality.example.test'
     core_enable(False)
     before=database()
-    for choice,new_panel,new_reality in (('1','panel-next.example.test',reality),
-                                         ('2','panel-next.example.test','reality-next.example.test'),
-                                         ('3','panel-final.example.test','reality-final.example.test')):
+    operations = (('1',panel_target,reality),
+                  ('2',panel_target,'reality-next.example.test'),
+                  ('3','panel-final.example.test','reality-final.example.test'))
+    for choice,new_panel,new_reality in (operations[:1] if single else operations):
         marker=json.loads(Path('/etc/x-ui/auto-nginx-managed.json').read_text());roles=marker['inbound_roles']
         old_certificates={name:hashlib.sha256((Path('/etc/letsencrypt/live')/name/'fullchain.pem').read_bytes()).hexdigest() for name in (panel,reality)}
         original=set(Path('/var/backups/x-ui').glob('*.tar.gz'))
@@ -720,12 +721,158 @@ def change_domains():
             'real_Pebble_and_native_services':True,'post_switch_real_consumers':True}
 
 
+def native_agh_update():
+    """Same real systemd guest: historical AGH, enablement, upstream update, v3."""
+    import hashlib, shlex, tarfile
+    env={**os.environ,**json.loads((ROOT/'environment.json').read_text())}
+    os.environ.update(env)
+    directory=ROOT/'agh-update-acceptance';directory.mkdir(mode=0o700)
+    agh=Path('/opt/AdGuardHome');metadata=agh/'managed.json'
+    expected80=hashlib.sha256((agh/'AdGuardHome').read_bytes()).digest()
+    def digest(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    protected=['/usr/local/x-ui/x-ui','/usr/bin/x-ui','/usr/sbin/nginx','/usr/bin/certbot']
+    # Native setEnable/restart regenerates this startup snapshot; component
+    # executables and all other bin assets must remain byte-identical.
+    protected += [str(p) for p in Path('/usr/local/x-ui/bin').glob('*') if p.is_file() and p.name!='config.json']
+    unchanged={path:digest(path) for path in protected}
+    def download(url,target,sha):
+        subprocess.run(['curl','-fLsS','--connect-timeout','15','--max-time','180',url,'-o',str(target)],
+                       check=True,capture_output=True,env=env,timeout=190)
+        assert digest(target)==sha,'Acceptance download checksum mismatch'
+    def private_command(name,args,input=None,timeout=180):
+        with (directory/(name+'.private.log')).open('wb') as log:
+            result=subprocess.run(args,input=input,stdout=log,stderr=subprocess.STDOUT,env=env,timeout=timeout)
+        assert result.returncode==0,'AGH acceptance operation failed: '+name
+    download('https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.79/AdGuardHome_linux_amd64.tar.gz',
+             directory/'legacy.tar.gz','c48f4a43000665484c5ec28177de11a004759b620dae8f77b2aabefc9ef3687f')
+    old_ref='994414f54322712ba30fc03af21bee0a2c2c4f5f'  # published v2.4.0
+    for name,path,sha in (
+        ('assets/adguard/managed.sh','/usr/local/lib/3x-ui-pro/managed-adguard.sh','7180bab258be58f9d670c786268ef21d63369d9cb8fefa9dea18ba962a10916e'),
+        ('assets/backup/x-ui-backup.sh','/usr/local/bin/x-ui-backup','4ddb3fe8b08ac43648181a7fa3ca5595099a67fadb4dc07cdc03e8ce0bef8fa5')):
+        download('https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/'+old_ref+'/'+name,
+                 directory/Path(path).name,sha)
+    run('systemctl','stop','AdGuardHome')
+    with tarfile.open(directory/'legacy.tar.gz') as archive:
+        for name in ('AdGuardHome','AdGuardHome.sig'):
+            (agh/name).write_bytes(archive.extractfile('./AdGuardHome/'+name).read())
+    (agh/'AdGuardHome').chmod(0o755)
+    assert digest(agh/'AdGuardHome')=='7e247573e63ce771a5925d16ca4ca9344e6e888673244289dc302f0fdfdfbf4e'
+    (agh/'AdGuardHome-public.gpg').unlink()
+    state=json.loads(metadata.read_text());state['version']='v0.107.79';state.pop('updates_enabled',None)
+    metadata.write_text(json.dumps(state)+'\n')
+    unit=Path('/etc/systemd/system/AdGuardHome.service')
+    lines=unit.read_text().splitlines(keepends=True)
+    for index,line in enumerate(lines):
+        if line.startswith('ExecStart='):
+            args=shlex.split(line.split('=',1)[1]);args.append('--no-check-update')
+            lines[index]='ExecStart='+shlex.join(args)+'\n'
+    unit.write_text(''.join(lines))
+    for path,mode in (('/usr/local/lib/3x-ui-pro/managed-adguard.sh',0o600),('/usr/local/bin/x-ui-backup',0o755)):
+        Path(path).write_bytes((directory/Path(path).name).read_bytes());Path(path).chmod(mode)
+    run('systemctl','daemon-reload');run('systemctl','start','AdGuardHome');installed()
+    user_state=adguard_state()
+    # A genuine old-helper Backup/Restore and Change Domains precede enablement.
+    # Restore preserves later certificates as foreign state but restores the
+    # old ownership manifest. Each independent scenario needs a fresh target;
+    # do not bypass the production refusal of an unowned existing lineage.
+    change_domains(single=True,panel_target='panel-legacy.example.test')
+    historical_archive=Path((ROOT/'before-domains-archive').read_text())
+    historical_digest=digest(historical_archive)
+    restore_before_domains()
+    enabled_before=run('systemctl','is-enabled','AdGuardHome')
+    run('systemctl','stop','AdGuardHome')
+    private_command('enable-stopped',['bash',str(ROOT/'x-ui-latest.sh'),'--enable-agh-updates'])
+    inactive=subprocess.run(['systemctl','is-active','AdGuardHome'],capture_output=True,text=True)
+    assert inactive.stdout.strip()=='inactive' and inactive.returncode==3
+    assert run('systemctl','is-enabled','AdGuardHome')==enabled_before
+    run('systemctl','start','AdGuardHome');installed()
+    for name in ('enable-first','enable-repeat'):
+        private_command(name,['bash',str(ROOT/'x-ui-latest.sh'),'--enable-agh-updates'])
+        assert run(str(agh/'AdGuardHome'),'--version')=='AdGuard Home, version v0.107.79\n'
+        assert json.loads(metadata.read_text())['version']=='v0.107.79'
+        assert json.loads(metadata.read_text())['updates_enabled'] is True
+        assert '--no-check-update' not in unit.read_text()
+        assert adguard_state()==user_state
+    change_domains(single=True,panel_target='panel-enabled.example.test');restore_before_domains()
+    # Restore an archive created before enablement with the current trusted tool.
+    private_command('restore-historical',['bash','-c','source "$1"; backup_action restore','fixture',str(ROOT/'x-ui-latest.sh')],
+                    input=(str(historical_archive)+'\nn\nn\nYES\n').encode(),timeout=480)
+    assert digest(historical_archive)==historical_digest
+    assert json.loads(metadata.read_text()).get('updates_enabled',False) is False
+    assert '--no-check-update' in unit.read_text() and adguard_state()==user_state
+    restored_core_flags=core_flags()
+    assert restored_core_flags==dict(reality=False,hysteria2=False,xhttp=False)
+    private_command('enable-after-restore',['bash',str(ROOT/'x-ui-latest.sh'),'--enable-agh-updates'])
+    # The actual API is reached only through the managed nginx admin prefix.
+    state=json.loads(metadata.read_text())
+    log=re.sub(r'\x1b\[[0-9;]*m','',(ROOT/'installer.raw.log').read_text())
+    password=re.search(r'Login: admin\n Password: (\S+)',log)[1]
+    headers={'Authorization':'Basic '+base64.b64encode(('admin:'+password).encode()).decode(),'Content-Type':'application/json'}
+    def request(path,body=None):
+        req=urllib.request.Request('https://panel.example.test/'+state['path']+'/control/'+path,
+            data=json.dumps(body).encode() if body is not None else None,headers=headers)
+        with urllib.request.urlopen(req,timeout=120) as response:
+            assert response.status==200
+            data=response.read()
+        if path=='update':
+            assert data==b'OK\n'
+            return None
+        return json.loads(data) if data else None
+    version=request('version.json',{'recheck_now':True})
+    assert version['new_version']=='v0.107.80' and version['can_autoupdate'] is True
+    pid=int(run('systemctl','show','AdGuardHome','-p','MainPID','--value'))
+    request('update',{})
+    deadline=time.monotonic()+15
+    while time.monotonic()<deadline:
+        try: image=Path('/proc',str(pid),'exe').read_bytes()
+        except FileNotFoundError:
+            assert Path('/proc',str(pid)).exists(),'Native updater process disappeared'
+            image=b''  # The exe link can be absent during the exec transition.
+        if hashlib.sha256(image).digest()==expected80: break
+        time.sleep(.05)
+    else: raise AssertionError('Native AGH updater did not exec official .80')
+    assert int(run('systemctl','show','AdGuardHome','-p','MainPID','--value'))==pid
+    private_command('signed-updated-health',['bash','-c',
+        'source /usr/local/lib/3x-ui-pro/managed-adguard.sh; agh_config && agh_unit && agh_health && agh_dns_probe'])
+    # This archive deliberately contains disabled core inbounds. AGH's signed
+    # health gate above checks its real listeners/DNS/DoH; preserve Disable
+    # here. The final Restore consumer phase explicitly enables core roles and
+    # performs the unchanged strict installed() check.
+    assert core_flags()==restored_core_flags
+    assert request('status')['version']=='v0.107.80' and adguard_state()==user_state
+    negative=directory/'signed-negative';negative.mkdir(mode=0o700)
+    for name in ('AdGuardHome','AdGuardHome.sig','AdGuardHome-public.gpg'):
+        shutil.copy2(agh/name,negative/name)
+    def verify_negative():
+        return subprocess.run(['bash','-c',
+            'source /usr/local/lib/3x-ui-pro/managed-adguard.sh; AGH_DIR=$1; agh_verify_binary amd64',
+            'fixture',str(negative)],capture_output=True,timeout=30).returncode
+    assert verify_negative()==0
+    signature=(negative/'AdGuardHome.sig').read_bytes()
+    (negative/'AdGuardHome.sig').write_bytes(signature[:-1]+bytes([signature[-1]^1]))
+    assert verify_negative()!=0,'Invalid real vendor signature was accepted'
+    (negative/'AdGuardHome.sig').write_bytes(signature)
+    with (negative/'AdGuardHome').open('ab') as binary: binary.write(b'altered')
+    assert verify_negative()!=0,'Altered real executable was accepted'
+    change_domains(single=True,panel_target='panel-updated.example.test');restore_before_domains()
+    updated_archive=Path((ROOT/'before-domains-archive').read_text())
+    assert json.loads(run('bash','/usr/local/bin/x-ui-backup','inspect',str(updated_archive)))['adguard_home'] is True
+    with tarfile.open(updated_archive) as saved:
+        assert json.load(saved.extractfile('meta.json'))['adguard_version']=='v0.107.80'
+    assert {path:digest(path) for path in protected}==unchanged
+    return dict(historical_79_Backup_Restore_Change_Domains=True,enablement_idempotent_and_binary_unchanged=True,
+                stopped_service_and_autostart_preserved=True,
+                historical_archive_restores_disabled_updates=True,native_79_to_80_systemd_exec_and_signed_health=True,
+                updated_80_Backup_Restore_Change_Domains=True,unrelated_component_binaries_unchanged=True,
+                invalid_real_signature_and_binary_refused_before_execution=True)
+
+
 def restore_before_domains():
     """Restore the real pre-switch archive on the same installed, switched VM."""
     import hashlib,tarfile
     archive=Path((ROOT/'before-domains-archive').read_text())
     digest=hashlib.sha256(archive.read_bytes()).hexdigest()
-    source=ROOT/'before-domains-sqlite';source.mkdir(mode=0o700)
+    source=Path(tempfile.mkdtemp(prefix='before-domains-sqlite-',dir=ROOT))
     with tarfile.open(archive) as saved:
         for suffix in ('','-wal','-shm'):
             try:member=saved.extractfile('files/etc/x-ui/x-ui.db'+suffix)

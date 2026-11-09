@@ -26,7 +26,7 @@ The permanent primary URL is `https://github.com/xPROMSx/3x-ui-auto-nginx/releas
 
 - `x-ui-latest.sh`: interactive manager; Installation is a destructive fresh install / full rebuild, not an in-place updater. **Never execute Installation on the development machine.** Existing deployment reinstall and uninstall require exact uppercase `YES`. Preserve foreign state and ownership checks.
 - `assets/domains/managed.py`: bounded local SQLite/nginx-stream Change Domains, full Backup v3 before changes, exact role/Host ownership and durable private `prepared`/`switching`/`committed` recovery. Preserve client state and Vision; never use fresh-install templates or archived code for recovery.
-- `assets/adguard/managed.sh`: managed AdGuard Home config, nginx snippet and health/cleanup contract; pinned v0.107.79, schema 34.
+- `assets/adguard/managed.sh`: managed AdGuard Home config, nginx snippet and health/cleanup contract; pinned initial v0.107.80, native web updates for fresh installations, verified vendor signatures on updated binaries at Backup/Restore; legacy v0.107.79 archives remain compatible, initial schema 34.
 - `assets/amneziawg/managed.py`: official panel API/session and optional embedded AmneziaWG 3.1, UDP/8443; preserve administrator firewall rules on failure.
 - `assets/vision/managed.py`: optional VLESS TLS/XTLS Vision with a third, distinct domain, native panel API, TLS fallback, owned nginx/hook state and rollback.
 - `assets/client/managed.py`: optional native initial-client creation, attachment checks and official RAW/JSON/export validation; no custom production subscription generator.

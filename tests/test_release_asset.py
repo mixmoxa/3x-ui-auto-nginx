@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -93,6 +94,36 @@ save()
 
 
 class ReleaseAsset(unittest.TestCase):
+    def test_future_agh_command_checks_checksum_before_single_operation(self):
+        document=(ROOT/'docs/ADGUARD_UPDATES.md').read_text()
+        command=re.search(r'```bash\n(.*?)\n```',document,re.S)[1]
+        words=shlex.split(command)
+        self.assertEqual(words[:3],['sudo','bash','-c']);self.assertEqual(len(words),4)
+        self.assertEqual(subprocess.run(['bash','-n','-c',words[3]],capture_output=True).returncode,0)
+        with tempfile.TemporaryDirectory(prefix='agh-release-command-') as directory:
+            root=Path(directory);binary=root/'bin';binary.mkdir()
+            payload=b'#!/bin/bash\nprintf "%s\\n" "$@" > "$COMMAND_RESULT"\n'
+            (root/'script').write_bytes(payload)
+            sidecar=root/'checksum'
+            sidecar.write_text(hashlib.sha256(payload).hexdigest()+'  x-ui-latest.sh\n')
+            downloader=binary/'curl'
+            downloader.write_text('#!/usr/bin/env python3\nimport os,pathlib,shutil,sys\n'
+                'args=sys.argv[1:];url=next(a for a in args if a.startswith("https://"))\n'
+                'assert url.startswith("https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.1/")\n'
+                'source="checksum" if url.endswith(".sha256") else "script"\n'
+                'shutil.copyfile(pathlib.Path(os.environ["COMMAND_FIXTURE"])/source,args[args.index("-o")+1])\n')
+            downloader.chmod(0o755)
+            marker=root/'result'
+            env={**os.environ,'PATH':str(binary)+os.pathsep+os.environ['PATH'],
+                 'COMMAND_FIXTURE':str(root),'COMMAND_RESULT':str(marker)}
+            result=subprocess.run(['bash','-c',words[3]],env=env,capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertEqual(marker.read_text(),'--enable-agh-updates\n')
+            marker.unlink();sidecar.write_text('0'*64+'  x-ui-latest.sh\n')
+            result=subprocess.run(['bash','-c',words[3]],env=env,capture_output=True,text=True)
+            self.assertNotEqual(result.returncode,0)
+            self.assertFalse(marker.exists(),'Checksum failure executed the downloaded script')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='release-asset-')
         self.addCleanup(self.temp.cleanup)

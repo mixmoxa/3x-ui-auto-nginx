@@ -7,7 +7,7 @@ from pathlib import Path
 import tarfile
 import unittest
 from certificate_fixtures import relocate
-from test_adguard import BINARY, HELPER, OFFICIAL_AMD64_SHA, FIXTURE_BINARY_SHA
+from test_adguard import BINARY, HELPER, OFFICIAL_AMD64_SHA, LEGACY_FIXTURE_BINARY_SHA
 
 
 # Exact pre-ClientID project snippet; preflight never executes archive helpers.
@@ -44,6 +44,131 @@ EOFNG
 }'''
 
 class AdGuardBackup(unittest.TestCase):
+    def enablement_fixture(self, active=True, legacy=False):
+        import hashlib, re, subprocess
+        from unittest.mock import patch
+        from test_adguard import AdGuardInstaller, MOCK, INSTALLER, FIXTURE_BINARY_SHA
+        fixture = AdGuardInstaller('runTest')
+        # Real root ownership checks, including every ancestor, in private /run.
+        with patch('tempfile.tempdir', '/run'):
+            fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        result = fixture.run_shell(('cleanup_adguard','adguard_stage','install_adguard'), 'install_adguard')
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        root = fixture.root
+        (root/'usr/local/bin').mkdir(parents=True)
+        backup = root/'usr/local/bin/x-ui-backup'
+        backup.write_text('#!/bin/bash\nexit 0\n'); backup.chmod(0o755)
+        agh = root/'opt/AdGuardHome'
+        (agh/'AdGuardHome').write_text(BINARY)
+        (agh/'AdGuardHome-public.gpg').unlink()
+        meta = json.loads((agh/'managed.json').read_text())
+        meta.update(version='v0.107.79', updates_enabled=False)
+        (agh/'managed.json').write_text(json.dumps(meta))
+        unit = root/'etc/systemd/system/AdGuardHome.service'
+        unit.write_text(unit.read_text().replace(' -s run', ' --no-check-update -s run'))
+        fixture.helper.write_text(fixture.helper.read_text().replace(FIXTURE_BINARY_SHA, LEGACY_FIXTURE_BINARY_SHA) + '\nagh_dns_probe() { echo native-dns-probe >> \"$CALLS\"; }\n')
+        if legacy:
+            result=fixture.run_shell((), 'source "$HELPER_FIXTURE"; agh_config >/dev/null; agh_snippet legacy')
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            (root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf').write_text(result.stdout)
+        if not active: (root/'active').unlink()
+        (root/'release-backup').write_bytes((Path(__file__).resolve().parents[1]/'assets/backup/x-ui-backup.sh').read_bytes())
+        body = re.search(r'^enable_agh_updates\(\) \(\n.*?^\)', INSTALLER, re.M|re.S)[0]
+        # Only private relocation and the corresponding fixture-byte digests.
+        body = relocate(body, root).replace('/run/xui-agh-updates.XXXXXXXX', str(root)+'/stage.XXXXXXXX')
+        pins = re.findall(r"'[0-9a-f]{64}'", body)
+        self.assertEqual(len(pins), 2)
+        for old, path in zip(pins, (fixture.helper, root/'release-backup')):
+            body = body.replace(old, "'"+hashlib.sha256(path.read_bytes()).hexdigest()+"'")
+        mocks = MOCK.replace('; return\n', '; return 0\n').replace('systemctl() {', 'fixture_systemctl() {').replace('curl() {', 'fixture_curl() {')
+        source = mocks+'\n'+body+'''
+acquire_stack_lock() { echo shared-lock >> "$CALLS"; }
+pin_project_source() { PROJECT_SOURCE_SHA=$PROJECT_REF; }
+dpkg() { echo amd64; }
+systemctl() {
+    case "$*" in
+        'show -p DropInPaths --value AdGuardHome') return 0 ;;
+        'is-active AdGuardHome')
+            if [[ -e "$ROOT/active" ]]; then echo active; else echo inactive; return 3; fi ;;
+        'start AdGuardHome'|'restart AdGuardHome') touch "$ROOT/active" ;;
+        *) fixture_systemctl "$@" ;;
+    esac
+}
+curl() {
+    if [[ "$*" == *assets/backup/x-ui-backup.sh* ]]; then cp "$ROOT/release-backup" "${@: -1}";
+    else fixture_curl "$@"; fi
+}
+original_install=$(declare -f install)
+eval "${original_install/install ()/fixture_install ()}"
+install() {
+    if [[ "${ENABLE_FAULT:-}" == files && "${@: -1}" == "$ROOT/usr/local/bin/x-ui-backup" && ! -e "$ROOT/fault-used" ]]; then
+        touch "$ROOT/fault-used"; return 1
+    fi
+    fixture_install "$@"
+}
+PROJECT_REF=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+enable_agh_updates
+'''
+        def run(**env):
+            return subprocess.run(['bash','-c',source],env={**fixture.env,**env},capture_output=True,text=True)
+        return fixture, run
+
+    def test_enablement_preserves_legacy_version_data_and_service_state(self):
+        for active,legacy in ((True,False),(False,False),(True,True)):
+            with self.subTest(active=active,legacy=legacy):
+                fixture, run = self.enablement_fixture(active,legacy)
+                root = fixture.root; agh = root/'opt/AdGuardHome'
+                before = {name:(agh/name).read_bytes() for name in ('AdGuardHome','AdGuardHome.yaml')}
+                snippet=root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf'
+                original_snippet=snippet.read_bytes()
+                for _ in range(2):
+                    result = run()
+                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                    self.assertEqual({name:(agh/name).read_bytes() for name in before},before)
+                    self.assertEqual(snippet.read_bytes(),original_snippet)
+                    self.assertEqual((root/'active').exists(),active)
+                    meta = json.loads((agh/'managed.json').read_text())
+                    self.assertEqual(meta['version'],'v0.107.79'); self.assertIs(meta['updates_enabled'],True)
+                    self.assertNotIn('--no-check-update',(root/'etc/systemd/system/AdGuardHome.service').read_text())
+                    self.assertFalse(list(root.glob('stage.*')), result.stdout+result.stderr)
+
+    def test_enablement_file_failure_restores_only_touched_state(self):
+        for active in (True, False):
+            with self.subTest(active=active):
+                fixture, run = self.enablement_fixture(active)
+                root = fixture.root
+                paths = ('opt/AdGuardHome/managed.json','etc/systemd/system/AdGuardHome.service',
+                         'usr/local/lib/3x-ui-pro/managed-adguard.sh','usr/local/bin/x-ui-backup',
+                         'opt/AdGuardHome/AdGuardHome','opt/AdGuardHome/AdGuardHome.yaml')
+                before = {name:(root/name).read_bytes() for name in paths}
+                result = run(ENABLE_FAULT='files')
+                self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
+                self.assertEqual({name:(root/name).read_bytes() for name in before},before)
+                self.assertEqual((root/'active').exists(),active)
+                self.assertFalse((root/'opt/AdGuardHome/AdGuardHome-public.gpg').exists())
+                self.assertFalse(list(root.glob('stage.*')), result.stdout+result.stderr)
+
+    def test_enablement_refuses_incomplete_corrupt_or_unverified_payloads(self):
+        for failure in ('missing-config', 'binary', 'download'):
+            with self.subTest(failure=failure):
+                fixture, run = self.enablement_fixture()
+                root = fixture.root
+                if failure == 'missing-config': (root/'opt/AdGuardHome/AdGuardHome.yaml').unlink()
+                elif failure == 'binary':
+                    (root/'opt/AdGuardHome/AdGuardHome').write_text('#!/bin/sh\necho UNTRUSTED_EXECUTED\n')
+                else: fixture.helper.write_text(fixture.helper.read_text()+'\n# corrupt download\n')
+                paths = ('opt/AdGuardHome/managed.json','etc/systemd/system/AdGuardHome.service',
+                         'usr/local/lib/3x-ui-pro/managed-adguard.sh','usr/local/bin/x-ui-backup')
+                before = {name:(root/name).read_bytes() for name in paths}
+                result = run()
+                self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
+                self.assertNotIn('UNTRUSTED_EXECUTED',result.stdout+result.stderr)
+                self.assertEqual({name:(root/name).read_bytes() for name in before},before)
+                self.assertTrue((root/'active').exists())
+                self.assertFalse((root/'opt/AdGuardHome/AdGuardHome-public.gpg').exists())
+                self.assertFalse(list(root.glob('stage.*')),result.stdout+result.stderr)
+
     def setUp(self):
         # Instantiate the fixture, without inheriting/rerunning its 22 tests.
         from test_personal_backup import PersonalBackup
@@ -52,7 +177,7 @@ class AdGuardBackup(unittest.TestCase):
         self.root=self.fixture.root
         self.fixture.env.update(ROOT=str(self.root), CALLS=str(self.root/'binary-calls'))
         # Private trusted fixture digest; actual sha256sum remains unstubbed.
-        self.fixture.script.write_text(self.fixture.script.read_text().replace(OFFICIAL_AMD64_SHA, FIXTURE_BINARY_SHA))
+        self.fixture.script.write_text(self.fixture.script.read_text().replace(OFFICIAL_AMD64_SHA, LEGACY_FIXTURE_BINARY_SHA))
 
     def install_fixture(self, active=True, legacy=False):
         f=self.fixture
@@ -84,7 +209,7 @@ schema_version: 34
             yaml=f.path('/opt/AdGuardHome/AdGuardHome.yaml')
             yaml.write_text(yaml.read_text().replace('      - POST /dns-query\n',
                 '      - POST /dns-query\n      - GET /dns-query/{ClientID}\n      - POST /dns-query/{ClientID}\n'))
-        f.write('/usr/local/lib/3x-ui-pro/managed-adguard.sh',relocate(helper,self.root).replace(OFFICIAL_AMD64_SHA, FIXTURE_BINARY_SHA),0o600)
+        f.write('/usr/local/lib/3x-ui-pro/managed-adguard.sh',relocate(helper,self.root).replace(OFFICIAL_AMD64_SHA, LEGACY_FIXTURE_BINARY_SHA),0o600)
         # Generate the exact snippet from the same managed helper.
         import subprocess
         r=subprocess.run(['bash','-c','source "$1"; AGH_WEB_PORT=18081; AGH_PATH=adg-ABCDEFGHIJKL; agh_snippet','fixture',str(f.path('/usr/local/lib/3x-ui-pro/managed-adguard.sh'))],capture_output=True,text=True)
@@ -296,7 +421,7 @@ schema_version: 34
             start = source.index(name + '() {')
             end = source.index('\nEOFNG\n}', start) + len('\nEOFNG\n}') if name == 'agh_snippet' else source.index('\n}\n', start) + 2
             return source[start:end]
-        for name in ('agh_binary_hash', 'agh_verify_binary', 'agh_binary', 'agh_config', 'agh_snippet'):
+        for name in ('agh_binary_hash', 'agh_trusted_key', 'agh_verify_binary', 'agh_binary', 'agh_config', 'agh_snippet'):
             self.assertEqual(function(SOURCE, name), function(HELPER, name))
         start = SOURCE.index('preflight_staged_adguard()')
         preflight = SOURCE[start:SOURCE.index('\n)\n', start) + 2]

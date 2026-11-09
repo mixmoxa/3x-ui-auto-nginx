@@ -114,7 +114,7 @@ def invoke(expression, result_name, timeout=180, tty=False):
         report[phase+'_dns_probes'] = probes
     if result.returncode:
         failure_location(result.stdout+result.stderr)
-        if phase == 'change-domains':
+        if phase in ('change-domains', 'native-agh-update'):
             private = ssh('cat /root/pilot/domains-[123].private.log', 15)
             if private.returncode == 0:
                 failure = domain_failure(private.stdout.decode(errors='replace'), (REPO/'assets/domains/managed.py').read_text())
@@ -295,6 +295,8 @@ def fresh_acceptance(ref, group='all'):
         invoke('checks.change_domains()', 'change-domains', 1200, tty=True)
         phase = 'restore-before-domains'
         invoke('checks.restore_before_domains()', 'restore-before-domains', 600, tty=True)
+        phase = 'native-agh-update'
+        invoke('checks.native_agh_update()', 'native-agh-update', 1200, tty=True)
         poweroff()
     if group in ('all','negative'):
         phase = 'mandatory-dependency-negative'

@@ -297,6 +297,32 @@ class DomainFixture:
 
 
 class Domains(unittest.TestCase):
+    def test_current_adguard_helper_builds_valid_domain_checks(self):
+        # Exercise the real generator: standalone bash -n on each download
+        # cannot detect a missing separator between concatenated shell files.
+        with tempfile.TemporaryDirectory(prefix='domains-tools-') as directory:
+            source = function('prepare_domains_tools').replace('/run/xui-domains.XXXXXXXX', directory+'/tools.XXXXXXXX')
+            body = '''
+set -eu
+PROJECT_REF=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+PROJECT_SOURCE_SHA=$PROJECT_REF
+GITHUB_RAW=https://fixture
+LEGACY_CERTBOT_CRON=fixture
+backup_helper_compatible() { return 0; }
+curl() {
+    local url=${@: -3:1} target=${@: -1}
+    cp "$REPOSITORY/${url#https://fixture/}" "$target"
+}
+'''
+            names = ('check_certificate_identity', 'check_webroot_lineage', 'check_no_legacy_certbot_cron',
+                     'check_acme_http', 'check_certificate_renewal', 'render_certificate_hook',
+                     'check_xray_runtime', 'check_configured_xray_runtime', 'check_installation',
+                     'check_awg_reinstall_owner', 'ui_text', 'msg_err')
+            body += '\n'.join(function(name) for name in names)+'\n'+source+'\nprepare_domains_tools\n'
+            result = subprocess.run(['bash', '-c', body], capture_output=True, text=True,
+                                    env={**os.environ, 'REPOSITORY': str(ROOT)})
+            self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+
     def test_hysteria_static_backend_unknown_objects_refuse_before_backup(self):
         for fault in ('root','proxy','host','backup','primary','link'):
             with self.subTest(fault=fault):

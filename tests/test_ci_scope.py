@@ -333,13 +333,13 @@ class CIScope(unittest.TestCase):
         self.fail('DNS negative unexpectedly passed')
 
 
-    def test_fresh_scenario_groups_preserve_all_thirteen_phases(self):
+    def test_fresh_scenario_groups_preserve_all_phases_and_native_agh_update(self):
         import ast
         from types import SimpleNamespace
         tree=ast.parse((ROOT/'tests/fresh/acceptance.py').read_text())
         function=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='fresh_acceptance')
         positive=['maximum-install','manager-backup','transport-consumers','AWG-payload','tech0-RED-GREEN',
-                  'installed-renewal-hooks','cold-boot','cold-transport-consumers','change-domains','restore-before-domains']
+                  'installed-renewal-hooks','cold-boot','cold-transport-consumers','change-domains','restore-before-domains','native-agh-update']
         negative=['mandatory-dependency-negative','DoT-outage-partial-install','DoT-outage-core-consumers']
         with tempfile.TemporaryDirectory() as directory:
             for group,expected,disks in (('all',positive+negative,3),('positive',positive,1),('negative',negative,2)):
@@ -359,7 +359,7 @@ class CIScope(unittest.TestCase):
                     'checks.amneziawg()','checks.search_domain_regression()','checks.renewal()',
                     'checks.disabled_cold_boot(prepare=True)','checks.disabled_cold_boot()',
                     'checks.installed(cold=True)','checks.transports()','checks.change_domains()',
-                    'checks.restore_before_domains()']
+                    'checks.restore_before_domains()','checks.native_agh_update()']
                 negative_calls=['dependency','dot-outage','checks.transports(vision=False)']
                 self.assertEqual(calls,(positive_calls if group!='negative' else [])+
                                        (negative_calls if group!='positive' else []))
