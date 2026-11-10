@@ -817,7 +817,8 @@ server {{
     if kind == 'webroot':
         paths = params.get('webroot_path')
         if isinstance(paths,str): paths = [paths.rstrip(',')]
-        require(has_acme and paths == [webroot] and params.get('webroot_map', {host:webroot}) == {host:webroot})
+        mapping = params.get('webroot_map')
+        require(has_acme and paths == [webroot] and (not mapping or mapping == {host:webroot}))
     else:
         require(not has_acme and not params.get('webroot_path') and not params.get('webroot_map'))
     for other in (certs/'renewal').iterdir():

@@ -656,6 +656,30 @@ class PersonalBackup(unittest.TestCase):
         for path in ('/usr/bin/x-ui','/etc/systemd/system/x-ui.service','/etc/systemd/system/mtr-backend.service'):
             self.path(path).unlink()
 
+    def test_twpm_webroot_empty_map_and_foreign_map(self):
+        for kind, accepted in (('empty', True), ('foreign', False)):
+            with self.subTest(kind=kind):
+                f=PersonalBackup('runTest'); f.setUp()
+                try:
+                    f.seed_telemt(True, 'site', modern=True, manifest=True, site_port=18082)
+                    renewal=f.path('/etc/letsencrypt/renewal/telegram.example.com.conf')
+                    cfg=ConfigObj(str(renewal))
+                    cfg['renewalparams']['webroot_map'] = ({} if kind == 'empty' else
+                        {'foreign.example.com': str(f.path('/var/lib/telemt-web-manager-acme'))})
+                    cfg.write()
+                    live=f.telemt_live_state()
+                    result=f.run_tool('backup')
+                    self.assertEqual(result.returncode == 0, accepted, result.stdout+result.stderr)
+                    if accepted:
+                        archive=next(f.path('/var/backups/x-ui').glob('*.tar.gz'))
+                        with tarfile.open(archive) as bundle:
+                            self.assertFalse(any('telemt-web-manager' in name or 'telegram.example.com' in name
+                                                 for name in bundle.getnames()))
+                    else:
+                        self.assertIn('private staging refused', result.stderr)
+                    self.assertEqual(f.telemt_live_state(),live)
+                finally: f.doCleanups()
+
     def test_twpm_site_origin_ports_and_independence(self):
         for port, accepted in ((18090, True), (18080, False), (18091, False)):
             with self.subTest(port=port):

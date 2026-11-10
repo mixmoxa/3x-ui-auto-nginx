@@ -3997,7 +3997,7 @@ PY
     # Hashes are part of this release's installer; both helpers use one source.
     curl -q -fsSL --connect-timeout 10 --max-time 45 "$GITHUB_RAW/assets/adguard/managed.sh" -o "$AGH_TEMP/helper" &&
     curl -q -fsSL --connect-timeout 10 --max-time 45 "$GITHUB_RAW/assets/backup/x-ui-backup.sh" -o "$AGH_TEMP/backup" || exit 1
-    printf '%s  %s\n' '65532acbfed33542ea2cfa66ddb9fb9649de2955c3e8ed1e766126aa31a62400' "$AGH_TEMP/helper" 'fbb6c6f7e874978c43d02d72015f0ab1edebbd164d0a21486097847ffe7704db' "$AGH_TEMP/backup" |
+    printf '%s  %s\n' '65532acbfed33542ea2cfa66ddb9fb9649de2955c3e8ed1e766126aa31a62400' "$AGH_TEMP/helper" 'f7b184744503eb0f995dca27b0521bd95a63ba4bb11b7bf8e244d89c8257f4c9' "$AGH_TEMP/backup" |
         sha256sum --check --status || exit 1
     bash -n "$AGH_TEMP/helper" && bash -n "$AGH_TEMP/backup" || exit 1
     # Only the authenticated new helper is executed, before replacing anything.
