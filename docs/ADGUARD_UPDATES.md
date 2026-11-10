@@ -32,16 +32,14 @@ AGH с fingerprint `28645AC9776EC4C00BCE2AFC0FE641E7235E2EC6`.
 Installation — новая установка или полная переустановка, а не обновление
 существующего VPS. Не используйте её для разблокировки AGH.
 
-## Команда для будущего релиза
+## Команда для включения обновлений
 
-Ниже подготовлен пример для **будущего v2.4.1**. Этот документ не создаёт и не
-публикует релиз. Владелец должен выбрать окончательный тег после аудита и
-merge; если выбран другой тег, заменить его в release notes. До публикации
-соответствующих assets команда недоступна. Исторический v2.4.0 не содержит
-этой операции.
+Для существующей управляемой установки используйте опубликованный релиз
+**v2.4.2**. Версия v2.4.1 содержит ошибку проверки сетевых сокетов AdGuard Home,
+а историческая v2.4.0 не поддерживает эту операцию.
 
 ```bash
-sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "$d"'\'' EXIT; cd "$d"; u=https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.1; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh" -o x-ui-latest.sh; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh.sha256" -o x-ui-latest.sh.sha256; sha256sum --check --strict x-ui-latest.sh.sha256; bash ./x-ui-latest.sh --enable-agh-updates'
+sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "$d"'\'' EXIT; cd "$d"; u=https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.2; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh" -o x-ui-latest.sh; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh.sha256" -o x-ui-latest.sh.sha256; sha256sum --check --strict x-ui-latest.sh.sha256; bash ./x-ui-latest.sh --enable-agh-updates'
 ```
 
 Оба файла загружаются по HTTPS из одного фиксированного релиза. Проверка

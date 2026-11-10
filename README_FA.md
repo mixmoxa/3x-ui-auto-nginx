@@ -242,7 +242,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 از نسخهٔ **v2.4.1**، در نصب‌های جدید می‌توانید به‌روزرسانی‌های AdGuard Home را مستقیماً از رابط وب آن بررسی و نصب کنید. اگر AdGuard Home را با نسخهٔ قدیمی‌تر این نصب‌کننده راه‌اندازی کرده‌اید، با یک دستور روی VPS به‌روزرسانی را فعال کنید:
 
 ```bash
-sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "$d"'\'' EXIT; cd "$d"; u=https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.1; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh" -o x-ui-latest.sh; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh.sha256" -o x-ui-latest.sh.sha256; sha256sum --check --strict x-ui-latest.sh.sha256; bash ./x-ui-latest.sh --enable-agh-updates'
+sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "$d"'\'' EXIT; cd "$d"; u=https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.2; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh" -o x-ui-latest.sh; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh.sha256" -o x-ui-latest.sh.sha256; sha256sum --check --strict x-ui-latest.sh.sha256; bash ./x-ui-latest.sh --enable-agh-updates'
 ```
 
 </details>
