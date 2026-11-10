@@ -465,6 +465,8 @@ class Operation:
         require('{domain}' not in vhost and '{site_digest}' not in vhost, 'Unexpanded Telemt HTTPS vhost markers.')
         canonical = re.sub(r'(?m)^(# TWPM original site v0\.3 sha256: )[0-9a-f]{64}$',
                            r'\1{site_digest}', vhost.replace(host, '{domain}'))
+        canonical = re.sub(r'(?m)^    listen 127\.0\.0\.1:(?:1808[1-9]|18090);$',
+                           '    listen 127.0.0.1:18081;', canonical)
         vhost_digest = digest(canonical.encode())
         require(vhost_digest in TELEMT_VHOST_DIGESTS, 'Changed or inconsistent Telemt HTTPS vhost.')
         paths = [TELEMT_FILES[0]] + (list(TELEMT_FILES[2:]) if included else [])

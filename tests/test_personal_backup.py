@@ -432,7 +432,7 @@ class PersonalBackup(unittest.TestCase):
     def member(self, path):
         return 'files/' + str(self.path(path)).lstrip('/')
 
-    def seed_telemt(self, includes=False, layout='legacy', modern=False, manifest=False):
+    def seed_telemt(self, includes=False, layout='legacy', modern=False, manifest=False, site_port=18081):
         from telemt_fixtures import VHOSTS, ACME, HOOK
         from test_personal_xhttp import render, legacy_hysteria_source
         stream = render('cat > /etc/nginx/stream-enabled/stream.conf',source=INSTALLER if modern else legacy_hysteria_source(),
@@ -453,7 +453,10 @@ class PersonalBackup(unittest.TestCase):
         nginx.write_text('load_module /usr/lib/nginx/modules/ngx_stream_module.so;\n' +
             nginx.read_text().replace('http {', 'http { include '+str(self.path('/etc/nginx/conf.d/*.conf'))+';') +
             '\nstream { include '+str(self.path('/etc/nginx/stream-enabled/*.conf'))+'; }\n')
-        self.write('/etc/nginx/conf.d/telemt-web-manager.conf', relocated(VHOSTS[layout], self.root))
+        vhost = VHOSTS[layout]
+        if layout == 'site':
+            vhost = vhost.replace('    listen 127.0.0.1:18081;', f'    listen 127.0.0.1:{site_port};')
+        self.write('/etc/nginx/conf.d/telemt-web-manager.conf', relocated(vhost, self.root))
         self.write('/etc/nginx/conf.d/telemt-web-manager-acme.conf', relocated(ACME, self.root))
         self.write('/etc/letsencrypt/renewal-hooks/deploy/telemt-web-manager', HOOK, 0o755)
         # Real key/certificate and ordinary Certbot versioned archive/link layout.
@@ -578,7 +581,8 @@ class PersonalBackup(unittest.TestCase):
                     f=PersonalBackup('runTest'); f.setUp()
                     try:
                         f.seed_hysteria_cover()
-                        f.seed_telemt(includes, layout, modern=True, manifest=True)
+                        f.seed_telemt(includes, layout, modern=True, manifest=True,
+                                     site_port=18082 if layout == 'site' and includes else 18081)
                         stream=f.path('/etc/nginx/stream-enabled/stream.conf')
                         if layout == 'site' and includes:
                             # One combined optional-profile case, not a matrix.
@@ -651,6 +655,43 @@ class PersonalBackup(unittest.TestCase):
             shutil.rmtree(self.path(path))
         for path in ('/usr/bin/x-ui','/etc/systemd/system/x-ui.service','/etc/systemd/system/mtr-backend.service'):
             self.path(path).unlink()
+
+    def test_twpm_site_origin_ports_and_independence(self):
+        for port, accepted in ((18090, True), (18080, False), (18091, False)):
+            with self.subTest(port=port):
+                f=PersonalBackup('runTest'); f.setUp()
+                try:
+                    f.seed_telemt(True, 'site', modern=True, manifest=True, site_port=port)
+                    original=f.telemt_live_state()
+                    result=f.run_tool('backup')
+                    self.assertEqual(result.returncode == 0, accepted, result.stdout+result.stderr)
+                    if accepted:
+                        with tarfile.open(next(f.path('/var/backups/x-ui').glob('*.tar.gz'))) as bundle:
+                            self.assertFalse(any('telemt-web-manager' in p or 'telegram.example.com' in p
+                                                 for p in bundle.getnames()))
+                    else:
+                        self.assertIn('private staging refused', result.stderr)
+                    self.assertEqual(f.telemt_live_state(), original)
+                finally: f.doCleanups()
+        for fault in ('manifest', 'foreign-port-reference'):
+            with self.subTest(fault=fault):
+                f=PersonalBackup('runTest'); f.setUp()
+                try:
+                    f.seed_telemt(True, 'site', modern=True, manifest=True, site_port=18082)
+                    if fault == 'manifest':
+                        marker=f.path('/var/lib/telemt-web-manager/manifest.json')
+                        state=json.loads(marker.read_text())
+                        state['nginx_sha256']='0'*64
+                        marker.write_text(json.dumps(state))
+                    else:
+                        f.write('/etc/nginx/conf.d/foreign.conf',
+                                'server { listen 11080; location / { proxy_pass http://127.0.0.1:18082; } }\n')
+                    original=f.telemt_live_state()
+                    result=f.run_tool('backup')
+                    self.assertNotEqual(result.returncode, 0, result.stdout+result.stderr)
+                    self.assertIn('private staging refused', result.stderr)
+                    self.assertEqual(f.telemt_live_state(), original)
+                finally: f.doCleanups()
 
     def test_twpm_new_layouts_refuse_unconfirmed_ownership(self):
         cases=('keepalive','csp','digest','manifest-hash','missing-keepalive-manifest','missing-site-manifest',

@@ -109,7 +109,7 @@ class ReleaseAsset(unittest.TestCase):
             downloader=binary/'curl'
             downloader.write_text('#!/usr/bin/env python3\nimport os,pathlib,shutil,sys\n'
                 'args=sys.argv[1:];url=next(a for a in args if a.startswith("https://"))\n'
-                'assert url.startswith("https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.1/")\n'
+                'assert url.startswith("https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.2/")\n'
                 'source="checksum" if url.endswith(".sha256") else "script"\n'
                 'shutil.copyfile(pathlib.Path(os.environ["COMMAND_FIXTURE"])/source,args[args.index("-o")+1])\n')
             downloader.chmod(0o755)

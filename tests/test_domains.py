@@ -144,7 +144,7 @@ class DomainFixture:
         path = self.p(name); path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content); path.chmod(mode)
 
-    def telemt(self, includes=False, layout='legacy', site_digest=None):
+    def telemt(self, includes=False, layout='legacy', site_digest=None, origin_port=18081):
         from telemt_fixtures import VHOSTS, ACME, HOOK, SITE_DIGEST
         domain = 'telegram.example'
         self.cert(domain)
@@ -161,6 +161,7 @@ class DomainFixture:
         renewal.write()
         vhost=VHOSTS[layout].replace('telegram.example.com',domain)
         if site_digest is not None: vhost=vhost.replace(SITE_DIGEST,site_digest)
+        if layout=='site': vhost=vhost.replace('    listen 127.0.0.1:18081;', f'    listen 127.0.0.1:{origin_port};')
         self.write('/etc/nginx/conf.d/telemt-web-manager.conf',vhost)
         self.write('/etc/nginx/conf.d/telemt-web-manager-acme.conf',ACME.replace('telegram.example.com',domain))
         self.write('/etc/letsencrypt/renewal-hooks/deploy/telemt-web-manager',HOOK,0o755)
@@ -497,7 +498,8 @@ curl() {
                 for mode in ('panel','reality','both'):
                     with self.subTest(layout=layout,includes=includes,mode=mode):
                         f=self.fixture()
-                        owned=f.telemt(includes,layout,site_digest='0123456789abcdef'*4 if includes and layout=='site' else None)
+                        owned=f.telemt(includes,layout,site_digest='0123456789abcdef'*4 if includes and layout=='site' else None,
+                                      origin_port=18082 if includes and layout=='site' else 18081)
                         before=f.state(); stream=f.p(f.module.STREAM).read_text()
                         f.change('new-panel.example' if mode!='reality' else None,
                                  'new-cover.example' if mode!='panel' else None)
@@ -518,6 +520,30 @@ curl() {
                     self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
                     self.assertTrue(all(value=='active' for value in f.services.values()))
                     self.assertFalse(any('restore' in args for _,args in f.calls))
+
+    def test_twpm_site_origin_port_range_and_manifest(self):
+        for port, accepted in ((18090, True), (18080, False), (18091, False)):
+            with self.subTest(port=port):
+                f=self.fixture()
+                owned=f.telemt(True,'site',origin_port=port)
+                before=f.state()
+                if accepted:
+                    f.change('new-panel.example',None)
+                    self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned)
+                else:
+                    with self.assertRaises(f.module.Refusal): f.change('new-panel.example',None)
+                    self.assertEqual(f.state(),before)
+                    self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] for _,args in f.calls))
+        f=self.fixture()
+        owned=f.telemt(True,'site',origin_port=18082)
+        before=f.state()
+        marker=f.p('/var/lib/telemt-web-manager/manifest.json')
+        data=json.loads(marker.read_text())
+        data['nginx_sha256']='0'*64
+        marker.write_text(json.dumps(data))
+        with self.assertRaises(f.module.Refusal): f.change('new-panel.example',None)
+        self.assertEqual(f.state(),before)
+        self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] for _,args in f.calls))
 
     def test_twpm_vhost_digest_headers_and_manifest_refuse_before_backup(self):
         cases=(('keepalive','unknown'),('site','extra-header'),('site','csp'),('site','digest-invalid'),

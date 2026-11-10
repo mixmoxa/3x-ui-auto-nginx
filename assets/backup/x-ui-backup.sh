@@ -692,6 +692,8 @@ server {{
 }
 ''', 1).replace('proxy_pass http://127.0.0.1:18080;', 'proxy_pass http://twpm_web_backend;', 1)
     digest = re.search(r'^# TWPM original site v0\.3 sha256: ([0-9a-f]{64})$', content, re.M)
+    site_port = re.findall(r'(?m)^    listen 127\.0\.0\.1:(1808[1-9]|18090);$', content)
+    require(not digest or len(site_port) == 1)
     site = cached.replace(header, header + '# TWPM original site v0.3 sha256: ' + digest[1] + '\n', 1) + '''server {
     listen 127.0.0.1:18081;
     server_name _;
@@ -716,6 +718,8 @@ server {{
     location / { try_files $uri $uri/ =404; }
 }
 ''' if digest else None
+    if site:
+        site = site.replace('    listen 127.0.0.1:18081;', f'    listen 127.0.0.1:{site_port[0]};')
     require(content in (expected, cached, site))
     require(mode != 'backup' or content == expected or has_manifest)
     require(text(hook) == '#!/bin/sh\nset -eu\n/usr/sbin/nginx -t\n/usr/bin/systemctl reload nginx\n')
@@ -783,7 +787,7 @@ server {{
             continue
         remaining = edits.get(path, saved)
         words = [t[0] for t in tokens(remaining)]
-        ports = r'(?:^|:)(?:7444|18080' + ('|18081' if digest else '') + r')(?:$|/)'
+        ports = r'(?:^|:)(?:7444|18080' + ('|' + site_port[0] if digest else '') + r')(?:$|/)'
         require(not any('twm_frontend' in w.lower() or 'twpm_web_backend' in w.lower() or uses_host(w) or
                         'telemt-web-manager' in w or re.search(ports, w) for w in words))
     for path in aliases:
