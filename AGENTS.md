@@ -1,111 +1,78 @@
-# Codex project and development guidance
+# AGENTS.md - rules for Codex and any other coding agent
 
-This guide is authoritative for Codex; [CLAUDE.md](CLAUDE.md) provides equally authoritative guidance for Claude Code.
+This is the single shared rules file for this repository. CLAUDE.md only points here.
+Do not edit AGENTS.md or CLAUDE.md unless the owner's task says so.
 
-## Purpose, sources and licensing
+## 1. What this project is (threat model)
 
-This project automates deployment of the official 3x-ui panel, bundled Xray and supporting nginx/VPS infrastructure. Supported systems are Ubuntu 24.04, Ubuntu 26.04 and Debian 13; verify `check_os()` before changing that claim.
+- A tool for ONE administrator on THEIR OWN VPS. Not a multi-user service. Not military data.
+- A Backup archive is created and restored by the same administrator: it is a TRUSTED input.
+  Detect corruption, wrong OS or wrong architecture. Do not defend against a hostile archive author.
+- The goal is: it works, and it is easy to maintain. Fewer lines beat more checks.
 
-Development is independent of the reference-only fork origin [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro). Do not auto-sync upstream. Preserve attribution to mozaroc and [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui), and previous authors' rights. Original xPROMSx developments/modifications are GPL-3.0-only within [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); do not claim repository-wide relicensing or clearance for inherited material. Preserve LibreSpeed's existing LGPL notices.
+## 2. Simplicity rules (highest priority, above "be careful")
 
-The current verified baseline is 3x-ui v3.11.0 / bundled Xray 26.10.21. **Read `verified_panel_release()` in `x-ui-latest.sh` for the authoritative versions and archive pins** rather than copying this snapshot into code or tests. Production/default integration must use that single source. Archive integrity across supported architectures is not proof of functional compatibility everywhere: full transport integration is amd64; ARMv5/v6/v7 have additional QEMU CLI/key/config checks. Other architecture acceptance remains separate.
+1. Before adding code ask: can I delete or simplify instead? A PR that only removes
+   redundant checks is a valid PR.
+2. A new check, guard, validation or fail-closed branch is allowed ONLY for a defect
+   reproduced on a real case or a fixture (RED test), cited in the PR.
+   "It could theoretically happen" is not a reason.
+3. Whose data is it?
+   - OWN data (created by this project): validate as needed.
+   - FOREIGN data (other software on the VPS: Telegram Web Proxy Manager, the admin's own
+     certificates, nginx rules, hooks): NEVER block the operation. Recognize by name or marker,
+     then skip or exclude. No byte-exact comparison of foreign generated output.
+     No pinned digests of foreign files.
+4. One failure = one specific message: which check, which file, which value.
+   No generic "incomplete / changed / shared" text covering many checks.
+5. One source of truth. Do not create a second copy of a contract (renderer, list of
+   versions, expected config text). If a second copy already exists, prefer removing it.
+6. No hash or version pins of this project's own files inside this project's own code.
+7. No new compatibility layers for old archive or config formats without the owner's approval.
+8. If two PRs in a row fixed the same function, STOP. Do not write a third patch.
+   Report that the mechanism itself should be simplified and propose a deletion.
+9. If a diff adds more lines than it removes, explain why in the report.
 
-Project-owned assets use `GITHUB_RAW`, derived from validated `PROJECT_REF="${XUI_AUTO_REF:-main}"`: `main`, an exact 40-hex commit SHA, or a stable `vMAJOR.MINOR.PATCH` tag. The default raw base is `https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main`; all assets must follow the same selected tree. Do not introduce individual fallbacks to main. Official upstream archives use their own validated release contract; `-version` is explicit stable selection, not promotion. Never run downloaded executables before integrity/layout checks.
+## 3. Keep (these protect real data, do not remove)
 
-## Installer release assets
+- Secrets (panel credentials, client UUIDs, keys, tokens, subscription URLs, Backup contents)
+  never go to logs, argv, commits, PR text or screenshots. The repository is public.
+- Private files stay private (0600 / 0700, root-owned).
+- Backup archive integrity, SQLite quick_check, nginx -t before replacing config,
+  restoring previous service states on failure, minimal tar path hygiene (no "..", no absolute paths).
+- Installation is destructive: never run it on the development machine.
+- Never touch a production VPS.
 
-Development source retains the main default above. Published `x-ui-latest.sh` assets must instead default to the exact 40-hex release commit; use `tools/prepare_release.py` with an existing stable tag and matching SHA. It reads Git content, validates Bash/source initialization, and writes a separate reproducible asset plus SHA-256 sidecar without changing the working source. Explicit `XUI_AUTO_REF` remains supported; every project-owned helper follows that same selected tree. Never mix versions or add a hidden fallback to main.
+## 4. Workflow
 
-After independent audit, required acceptance and merge, the owner uses **Actions → Prepare Release → Run workflow**, selects `main` and enters only a new stable version (for example `v2.1.5`). The manual-only workflow verifies the current protected main SHA and exact checkout, rejects existing tags/releases, creates a lightweight tag, reuses the builder, creates a **Draft Release** with **`x-ui-latest.sh`** and its checksum, and downloads both attachments to verify their bytes/checksum and source. Its summary links to the verified Draft. Only the preparation job has `contents: write` through the standard `GITHUB_TOKEN`; no PAT/additional secret, required check, heavy acceptance run or release-note generation is added.
+- Work only from the owner's task: Goal / Context / Do / Do NOT / Criterion / Report.
+  Do not widen scope. If the task seems to need more, say so in the report instead of doing it.
+- Feature branch, focused PR, created as Draft. Local git identity (not global):
+  user.name=Proms, user.email=102687702+xPROMSx@users.noreply.github.com.
+  Verify author and committer of every new commit.
+- Mark the PR Ready for review only after the final commit is pushed and local checks pass.
+  If another commit is needed, return to Draft first.
+- NEVER, without explicit owner permission: merge, create tags or releases, run Prepare Release,
+  change GitHub settings or rulesets, force-push, rewrite history, operate any VPS.
+- Bug fix: reproducing RED test -> minimal fix -> same test GREEN -> full suite GREEN.
+  Do not weaken assertions, add retries or skip tests to get green.
+- When removing a check, remove only the tests that assert the removed behaviour, and list them
+  (names and why) in the report. Keep every other test green.
+- Tests: run through tests/run_ci.py only (never unittest discover). Register every new test class
+  and run --check-completeness. Exact commands are in CONTRIBUTING.md.
+- Protected CI job names must stay exactly: "Stack XHTTP and security", "Stack Backup and restore",
+  "Real services (ubuntu-24.04)", "Real services (ubuntu-26.04)", "Full fresh installer (ubuntu-26.04)".
+- Changes to AGENTS.md, CLAUDE.md, tests and workflows always run full CI.
+- Report honestly: exact HEAD, CI state per job as PASS / FAIL / IN PROGRESS / NOT RUN,
+  what was read, what was not.
 
-The workflow never publishes, overwrites or deletes resources. A failed/partial run stays failed; an existing tag or release makes a repeat stop without modifying it. The owner inspects any partial unpublished resources instead of blindly rerunning. After successful preparation the owner writes/approves user-facing release notes and clicks **Publish release** as stable Latest. Do not dispatch the workflow or create actual tags/releases during development without explicit permission. Before declaring publication successful verify Latest/asset existence, checksum and exact source ref under CONTRIBUTING's release rules; preserve historical tags/assets without repacking or redirects.
+## 5. Project facts that must not drift
 
-The permanent primary URL is `https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh`: it selects the latest published stable release, whose installer asset pins its exact source SHA. Version-specific `releases/download/vX.Y.Z/...` must remain that version. The only fallback is Raw GitHub from `main`, inside localized `<details>`; it may differ from the latest release. Do not add CDN or version-pinned README fallbacks, telemetry or a download badge. Future releases need no README command updates. Release notes describe user-visible project changes and compatibility, not CI, README edits or internal repository infrastructure.
-
-## Production components and lifecycle
-
-- `x-ui-latest.sh`: interactive manager; Installation is a destructive fresh install / full rebuild, not an in-place updater. **Never execute Installation on the development machine.** Existing deployment reinstall and uninstall require exact uppercase `YES`. Preserve foreign state and ownership checks.
-- `assets/domains/managed.py`: bounded local SQLite/nginx-stream Change Domains, full Backup v3 before changes, exact role/Host ownership and durable private `prepared`/`switching`/`committed` recovery. Preserve client state and Vision; never use fresh-install templates or archived code for recovery.
-- `assets/adguard/managed.sh`: managed AdGuard Home config, nginx snippet and health/cleanup contract; pinned initial v0.107.80, native web updates for fresh installations, verified vendor signatures on updated binaries at Backup/Restore; legacy v0.107.79 archives remain compatible, initial schema 34.
-- `assets/amneziawg/managed.py`: official panel API/session and optional embedded AmneziaWG 3.1, UDP/8443; preserve administrator firewall rules on failure.
-- `assets/vision/managed.py`: optional VLESS TLS/XTLS Vision with a third, distinct domain, native panel API, TLS fallback, owned nginx/hook state and rollback.
-- `assets/client/managed.py`: optional native initial-client creation, attachment checks and official RAW/JSON/export validation; no custom production subscription generator.
-- `assets/security/managed.py`: optional Fail2ban, unattended-upgrades/timers, strict system DoT and scoped rollback. Host-specific Security state is not portable Backup v3 data.
-- `assets/backup/x-ui-backup.sh`: private Backup/Restore v3, staged migrations/preflights, target snapshot, replacement and verified rollback.
-- `assets/clash/clash.yaml`, `assets/diagnostics/`, `assets/cover-sites/`: public consumer template, authenticated diagnostics and static camouflage sites.
-
-Change Domains is separate from Installation. The shared fd-9 lock and unfinished-journal interlock cover every modifying manager action and standalone Backup/Restore. Recovery data stays outside Restore trees at `/var/lib/3x-ui-auto-nginx/change-domains`; verified committed state is never rolled back for cleanup failure. Old certificates/lineages are retained. Known manifest-free v2.1.7 layouts can be adopted only after limited read-only agreement checks; unknown layouts/storage/SNI overrides fail before switching.
-
-Read actual lifecycle code before changing it. Release/option/domain preflights and download verification precede managed destructive cleanup. Base OS preparation includes a mandatory initial full upgrade; it may restart services and leave installed packages behind. Strict DNS preparation has a private rollback checkpoint. Optional 1 GiB swap is best-effort and skips unsuitable conditions. Do not infer that preflight is completely free of package/system preparation.
-
-Core mandatory health gates precede optional feature configuration. Fresh transport health stays strict; maintenance reads enable flags of the known local REALITY/Hysteria2/XHTTP roles, preserves Disable and refuses absent/unknown roles. New-layout Change Domains binds Hysteria2 to REALITY; Panel-only leaves it unchanged. Preserve existing option results and rollback verification: requested failure must yield nonzero even when the restored core is healthy. After initial core readiness, the final result must still show generated panel credentials on optional failure, without claiming an unverified feature is ready or printing failed AGH credentials. A required initial reboot is manual; no automatic successful full-stack reboot acceptance is implied.
-
-## Network and trust boundaries
-
-- Public TCP/443 belongs to nginx stream SNI routing: REALITY to loopback 8443, panel TLS to loopback 7443, optional Vision to its distinct loopback listener. REALITY camouflage target is TLS 127.0.0.1:9443 with a static site, not a second panel proxy. Fresh Hysteria2 uses UDP/443 with the REALITY domain/certificate and a static-only nginx Unix backend at `/run/3x-ui-hysteria-cover.sock`, serving the existing cover-reality site. Fresh REALITY stream routing has 9443 backup with `max_fails=0`; preserve its trusted PROXY contract. No migration of existing deployments.
-- XHTTP uses production stream-up and its Unix socket; WS and Trojan gRPC are optional profiles with exact known paths/fixed backend ports. Preserve public Host/SNI/ALPN, credentials, PROXY semantics and the split gRPC method contract. Never add request-selected `/<port>/...` localhost proxies or arbitrary localhost-port forwarding.
-- The panel listens on loopback HTTPS behind nginx; subscriptions use their configured loopback TLS backend. Keep RAW, JSON and Clash/Mihomo public endpoints free of internal listener ports and loopback addresses. The native Hysteria2 JSON may retain its server masquerade with the fixed, nonsecret cover UDS path; do not add a subscription rewriter. Preserve the panel-domain HTTPS API-token/multi-node path and native node mTLS behavior.
-- nginx's stream proxy supplies PROXY information to intended trusted backends. HTTP real-IP handling trusts loopback only; Vision terminates native TLS and forwards fallback HTTP with PROXY to a restricted static nginx listener. Do not accept untrusted client-supplied forwarding headers as verified identity.
-- AGH HTTP/native DNS stay loopback-only, native TLS off, with nginx TLS termination on the existing panel domain. Keep exact DoH plus validated single-segment ClientID routing, GET/POST limits, random `/adg-.../` admin path, cookie path/Secure policy and functional authenticated install probe. Never open public TCP/UDP :53 or bypass admin authentication.
-- VPS Security's strict `systemd-resolved` DoT is separate from AGH's upstreams. Preserve no plaintext fallback, scoped project drop-ins, effective policy checks and verified failure recovery; do not rewrite unrelated host network/SSH policy. UFW preserves existing rules/policy; enabling inactive UFW requires detected/allowed SSH access. Restore never activates UFW.
-
-## Certificates, Backup and stable paths
-
-Certbot uses `/var/www/acme` webroot and distro `certbot.timer`; nginx remains online during renewal. Managed deploy hooks restart x-ui for the applicable panel/Vision certificate only. Preserve official lineage validation/reconfigure rules, timer/active transaction coordination, foreign certificates/hooks/accounts and exact legacy-project-cron cleanup. Do not introduce standalone renewal or stop nginx to issue certificates.
-
-Keep `/etc/x-ui`, `/usr/local/x-ui`, `/usr/bin/x-ui`, `/etc/nginx`, `/etc/letsencrypt`, `/root/cert`, `/opt/AdGuardHome` and existing project systemd/website paths consistent with Backup ownership. Historical identifiers `/usr/local/lib/3x-ui-pro`, `/etc/sysctl.d/99-3x-ui-pro.conf`, test names and `personal-v*` releases remain compatibility identifiers. Do not rename or broaden managed paths without an explicitly designed Backup/Restore migration.
-
-Backup v3 requires matching OS ID/version and architecture, trusted archives under administrator control, and presence-aware managed state. Restore validation detects incompatibility/corruption; it does not authenticate archive provenance. Never source an archived helper to establish its trust. Preserve staged DB/TLS/AGH validation, authenticated pinned AGH binary before execution, private effective-nginx validation without live-host resource fallback, target snapshot readiness before replacement and post-restore core health. Migrations change only staging, preserve source archive bytes and custom state, and fail rather than guess ambiguous managed identity. Rollback must restore prior service states; retain private recovery material if health cannot be verified. Full real-host recovery is not established by private fixtures.
-
-## Credentials and disclosure
-
-Panel credentials, client UUIDs/passwords/keys, API sessions/tokens, subscription IDs/URLs, TLS keys and backup contents are private. Do not put them in commits, PR bodies, logs, screenshots or CI artifacts. Keep plaintext out of process argv, use private temporary files/stdin, and clean session material on success/failure. Preserve native CSRF/session/API validation and initial-client reconciliation instead of blindly repeating creation. Diagnostics require panel-session authentication and restricted local backends; report only safe validation stage/exit information, not private API bodies or command payloads.
-
-Public documented examples and funding addresses/QR codes are intentional; do not rotate or rewrite them. Report suspected actual exposure privately under [SECURITY.md](SECURITY.md), without quoting values publicly. Credential rotation, production remediation and history rewriting require separate authorization; scanning the current tree is not a complete history/security audit.
-
-## CI, tests and review
-
-[CONTRIBUTING.md](CONTRIBUTING.md) defines exact dependency/local commands. Use a disposable Ubuntu environment; test processes/listeners/files must be private, bounded and cleaned up. Confirmed bugs require **reproducing RED regression → minimal fix → same test PASS → full suite PASS**. Do not mask failures with retries, weaker assertions or silent missing-binary skips.
-
-`tests/run_ci.py` collects only defining TestCase classes, assigned once in its explicit registry. Every new class must be registered; new methods are automatic. Run `--check-completeness`; never use `unittest discover` as the suite entry point. Privilege contexts:
-
-| Suite | Context / coverage |
-| --- | --- |
-| `nonroot` | EUID != 0; fast static/fixture/fault regressions |
-| `root` | EUID 0; private Backup/ownership/recovery fixtures |
-| `integration` | EUID != 0; real pinned x-ui/Xray/nginx/Mihomo, transport and consumer contracts |
-| `services` | EUID != 0; real AGH/DNS/DoH and Certbot/Pebble, private partial Restore |
-| `systemd` | EUID 0 **inside disposable QEMU guest**, PID 1 systemd; native host-service checks |
-
-Required protected job names must remain exactly:
-
-- `Stack XHTTP and security`: all tracked shell Bash syntax, ShellCheck error-only, actionlint 1.7.12, PR Git identity, completeness, nonroot and integration.
-- `Stack Backup and restore`: completeness and root fixtures.
-- `Real services (ubuntu-24.04)` and `Real services (ubuntu-26.04)`: native service suites and selected Vision/client API/AWG tests.
-- `Full fresh installer (ubuntu-26.04)`: final-stage fresh install/cold boot after Draft → Ready.
-
-Create every new PR as **Draft**. Codex may mark its own PR **Ready for review** once implementation is complete, the final commit is pushed, necessary local checks pass, and no further changes are planned. Do not wait for long-running GitHub CI before this transition; it starts the existing final-stage check. Waiting for Full Fresh in the working session is unnecessary: report the exact HEAD and actual CI states (**PASS**, **FAIL**, **IN PROGRESS**, **NOT RUN**) at handoff. Only a verified docs-only diff uses the lightweight documentation smoke; never report Full Fresh PASS when it did not run. If another commit is needed after launch, return to Draft during edits and repeat Ready on the new final HEAD. Merge, actual tags/releases, Prepare Release dispatch, Settings/Rulesets and VPS operations require separate owner authorization.
-
-`tests/ci_scope.py` is the shared conservative exception: the listed root READMEs, Markdown under `docs/` and PNG under `assets/support/` only. Unknown scope, mixed changes, agent/development guidance, tests, workflows and other code keep full CI; manual dispatch is always full. Keep the same five protected contexts and strict protection. Docs-mode success certifies scope, UTF-8/PNG/local-reference/whitespace checks, not installation. Do not add job skips or path filters that leave required checks pending.
-
-`stack-services.yml` also runs Debian 13 native API/Vision/AWG and three systemd userspace guests with a common CI kernel. Preserve their execution model and privilege split. Check all tracked `*.sh`, all workflow YAML and `git diff --check` / `git show --check`. Run applicable suites; merge requires green jobs on the **exact final HEAD**. Handoff may precede CI completion with honest statuses; earlier results do not certify later changes.
-
-Upstream Canary is daily/manual, non-required, reuses real integration with the candidate's own official archive/bundled Xray and does not update production pins. Cached tested results follow candidate digest/test fingerprint; preparation failures are not cached as compatibility failures. Promotion requires a separate reviewed PR. Integration PASS is not full installer acceptance: public DNS/Let's Encrypt, actual provider/kernel UFW, full reboot and whole-system disaster recovery still need explicitly authorized live acceptance. Required PR CI uses read-only permissions/free hosted runners without repository secrets; the separate release-only Telegram notification workflow uses its bot secret and must not expose it to PR code.
-
-## Git identity and operational boundaries
-
-Use feature branches and focused PRs to protected `main`; no unrelated changes or automatic upstream sync. Before commits set **repository-local**, not global, `user.name=Proms` and `user.email=102687702+xPROMSx@users.noreply.github.com`. Verify effective author/committer for every new commit and again after PR creation. The public `xPROMSx` alias with that same email is also approved; preserve historical upstream identities without rewriting existing commit objects.
-
-The PR metadata checker validates only new PR commits against the event's actual base/head SHAs. It accepts the maintainer pair, public GitHub login/noreply pairs, narrowly formed bot identities and GitHub web committers. Rejected metadata must not be echoed. Push/manual events explicitly skip this PR-only check; shallow/invalid/unavailable/empty/oversized PR ranges fail. See [CONTRIBUTING.md](CONTRIBUTING.md) for local use and limits.
-
-Do not merge, tag, publish releases, operate a VPS, change GitHub protection/settings, force-push or rewrite published history without explicit task authorization. Preserve `personal`, historical branches, tags and releases. Use repair PRs; emergency protection changes described in CONTRIBUTING are maintainer-only actions, not standing agent permission.
-
-## Documentation and authoritative references
-
-`README.md` is the maintainer-reviewed Russian source and default GitHub page; `README_EN.md` is the complete English adaptation. Arabic, Persian, Simplified Chinese, Spanish and Turkish are full translations; `README_RU.md` is the old-link pointer. Keep all seven full languages semantically aligned, exact commands/warnings/requirements and legacy anchors intact. User benefits/installation precede concise technical details. Do not promote unverified guarantees, change funding data or alter visual presentation during maintenance.
-
-Retain [Telegram Web Proxy Manager](https://github.com/xPROMSx/telegram-web-proxy-manager) as a companion, not an automatically installed or guaranteed conflict-free component. Project release versions are separate from upstream versions. [docs/V2_AUDIT.md](docs/V2_AUDIT.md) records historical feature/acceptance boundaries, not the current pin source or proof of full live deployment. AGENTS.md and CLAUDE.md are equally authoritative, self-contained agent guides with matching security/operational constraints; consult both plus CONTRIBUTING, SECURITY and license notices, and verify actual source when documentation may be historical.
-
-The interactive main menu option 4 downloads the official Telegram Web Proxy Manager bootstrap from current main on every launch, trusting GitHub HTTPS and that branch instead of an immutable bootstrap checksum. Existing launchers must still be root-owned regular 0755 files without symlinks; option 4 does not execute them directly or fall back to them on error. First installation alone requires Ubuntu/working-stack preflight and default-No consent. The official bootstrap owns current-SHA selection, pair validation/update, compatibility and recovery; no --version or automatic Telemt engine update is requested. No stack lock is held while the companion runs; pending Change Domains recovery still precedes menu actions. Ordinary companion updates need no 3X-UI PR while public interfaces remain compatible.
-
-New installs generate independent static Panel/REALITY covers once from the six supplied templates; Vision uses a different B template. Assets are extracted from one pinned project source archive before cleanup. Public roots and private selections are documented in [docs/COVER_SITES.md](docs/COVER_SITES.md). Legacy sites are not migrated. These pages are not a proven DPI/probing or IP-blocking defense.
+- Project-owned assets follow one selected ref (PROJECT_REF: main, a 40-hex SHA, or vX.Y.Z tag).
+  No per-file fallback to main.
+- Panel and Xray versions: read verified_panel_release() in x-ui-latest.sh. Do not copy them elsewhere.
+- Keep attribution and licenses (mozaroc/3x-ui-pro, MHSanaei/3x-ui, LibreSpeed LGPL, GPL-3.0-only notices).
+- Historical identifiers (/usr/local/lib/3x-ui-pro, personal-v* releases) are not renamed.
+- README.md is the Russian source; the other language files stay semantically aligned.
+- Architecture description: docs/ARCHITECTURE.md. Release process and local commands: CONTRIBUTING.md.
+  Vulnerability reports: SECURITY.md.
