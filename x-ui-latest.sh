@@ -1966,11 +1966,19 @@ install_backup_tool() {
            $(stat -c '%u:%g:%a' /usr/local/bin/x-ui-backup) == 0:0:755 ]] || return 1
     fi
     temporary=$(mktemp /usr/local/bin/.x-ui-backup.XXXXXX) || return 1
-    if ! curl -fsSL "${GITHUB_RAW}/assets/backup/x-ui-backup.sh" -o "$temporary" ||
-       ! bash -n "$temporary" || [[ $(bash "$temporary" capabilities) != 'xui-backup:1 inspect backup-json lock-fd9' ]]; then
+    if ! curl -q -fsSL --connect-timeout 10 --max-time 45 "${GITHUB_RAW}/assets/backup/x-ui-backup.sh" -o "$temporary"; then
         rm -f "$temporary"
-        msg_err "$(ui_text 'Failed to download a valid backup tool.' 'Не удалось загрузить корректную утилиту Backup.')"
+        [[ ${1:-} == optional ]] || msg_err "$(ui_text 'Failed to download a valid backup tool.' 'Не удалось загрузить корректную утилиту Backup.')"
+        return 69
+    fi
+    if ! bash -n "$temporary" || [[ $(bash "$temporary" capabilities) != 'xui-backup:1 inspect backup-json lock-fd9' ]]; then
+        rm -f "$temporary"
+        msg_err "$(ui_text 'Downloaded Backup tool failed validation.' 'Загруженная утилита Backup не прошла проверку.')"
         return 1
+    fi
+    if [[ -f /usr/local/bin/x-ui-backup ]] && cmp -s "$temporary" /usr/local/bin/x-ui-backup; then
+        rm -f "$temporary"
+        return 0
     fi
     if ! chown root:root "$temporary" || ! chmod 0755 "$temporary" ||
        ! backup_helper_compatible "$temporary" ||
@@ -3418,14 +3426,17 @@ PYSTATE
 pin_project_source() {
     local revision=$PROJECT_REF temporary response
     if [[ ! "$revision" =~ ^[a-fA-F0-9]{40}$ ]]; then
-        response=$(curl -q -fsSL --connect-timeout 10 --max-time 30 "https://api.github.com/repos/xPROMSx/3x-ui-auto-nginx/commits/$revision") || return 1
+        response=$(curl -q -fsSL --connect-timeout 10 --max-time 30 "https://api.github.com/repos/xPROMSx/3x-ui-auto-nginx/commits/$revision") || return 69
         revision=$(printf '%s' "$response" | python3 -c 'import json,re,sys; value=json.load(sys.stdin)["sha"]; print(value) if isinstance(value,str) and re.fullmatch("[0-9a-f]{40}",value) else sys.exit("Invalid project source revision")') || return 1
     fi
     [[ "$revision" =~ ^[a-fA-F0-9]{40}$ ]] || { msg_err 'Cannot resolve project source revision.'; return 1; }
     temporary=$(mktemp -d) || return 1
     if ! curl -q -fsSL --connect-timeout 10 --max-time 30 \
-        "${GITHUB_RAW%/*}/$revision/x-ui-latest.sh" -o "$temporary/source" ||
-       ! sed '/^PROJECT_REF=/c\PROJECT_REF=normalized' "$temporary/source" > "$temporary/expected" ||
+        "${GITHUB_RAW%/*}/$revision/x-ui-latest.sh" -o "$temporary/source"; then
+        rm -rf "$temporary"
+        return 69
+    fi
+    if ! sed '/^PROJECT_REF=/c\PROJECT_REF=normalized' "$temporary/source" > "$temporary/expected" ||
        ! sed '/^PROJECT_REF=/c\PROJECT_REF=normalized' "${BASH_SOURCE[0]}" > "$temporary/actual" ||
        ! cmp -s "$temporary/expected" "$temporary/actual"; then
         rm -rf -- "$temporary"
@@ -3451,9 +3462,25 @@ backup_helper_compatible() {
 
 prepare_backup_helper() {
     backup_helper_path_safe || return 1
-    backup_helper_compatible && return 0
-    [[ -n ${PROJECT_SOURCE_SHA:-} && $PROJECT_SOURCE_SHA == "${PROJECT_REF:-}" ]] || pin_project_source || return 1
-    install_backup_tool || return 1
+    local installed_ok=0 status=0
+    backup_helper_compatible && installed_ok=1
+    if [[ -z ${PROJECT_SOURCE_SHA:-} || $PROJECT_SOURCE_SHA != "${PROJECT_REF:-}" ]]; then
+        pin_project_source || status=$?
+        if (( status )); then
+            if (( status == 69 && installed_ok )); then
+                msg_warn "$(ui_text 'Cannot check Backup helper updates; using the installed compatible version.' 'Не удалось проверить обновления Backup-helper; используется установленная совместимая версия.')"
+                return 0
+            fi
+            return "$status"
+        fi
+    fi
+    status=0
+    install_backup_tool optional || status=$?
+    if (( status == 69 && installed_ok )); then
+        msg_warn "$(ui_text 'Cannot download Backup helper; using the installed compatible version.' 'Не удалось загрузить Backup-helper; используется установленная совместимая версия.')"
+        return 0
+    fi
+    (( status == 0 )) || return "$status"
     backup_helper_compatible || { msg_err 'Backup helper protocol verification failed.'; return 1; }
 }
 

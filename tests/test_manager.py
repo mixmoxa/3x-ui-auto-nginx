@@ -836,6 +836,27 @@ manager_menu
         result=subprocess.run(['bash','-c',code,'fixture',str(dbpath)],capture_output=True,text=True)
         self.assertNotEqual(result.returncode,0);self.assertEqual(marker.read_bytes(),old)
 
+    def test_compatible_backup_helper_is_refreshed_from_selected_source(self):
+        from test_personal_backup import function, relocated
+        lock=self.lock_script('acquire_stack_lock || exit $?')
+        helpers='\n'.join(relocated(function(n),self.f.root) for n in
+                         ('backup_helper_path_safe','backup_helper_compatible','install_backup_tool','prepare_backup_helper'))
+        candidate=self.f.script
+        old=self.f.path('/usr/local/bin/x-ui-backup')
+        old.parent.mkdir(parents=True,exist_ok=True)
+        old.write_bytes(candidate.read_bytes()+b'\n# older compatible helper\n')
+        old.chmod(0o755)
+        self.assertNotEqual(old.read_bytes(),candidate.read_bytes())
+        setup=('ui_text() { printf "%s" "$1"; }; msg_err() { echo "$*" >&2; }; msg_warn() { echo "$*" >&2; }; '
+               'pin_project_source() { PROJECT_SOURCE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; '
+               'PROJECT_REF=$PROJECT_SOURCE_SHA; GITHUB_RAW=https://source.invalid/$PROJECT_SOURCE_SHA; }; '
+               'curl() { command cp "$SOURCE_HELPER" "${@: -1}"; };')
+        result=subprocess.run(['bash','-c',lock+'\n'+helpers+'\n'+setup+'\nprepare_backup_helper'],
+                              capture_output=True,text=True,env={**os.environ,'SOURCE_HELPER':str(candidate)})
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(old.read_bytes(),candidate.read_bytes(),
+                         'Compatible but outdated helper was not refreshed')
+
     def test_legacy_helper_upgrade_offline_reuse_download_and_replace_failure(self):
         from test_personal_backup import function, relocated
         # Keep the real /proc view in the common lock routine.
@@ -846,7 +867,7 @@ manager_menu
         old.write_text('#!/bin/bash\nexit 0\n');old.chmod(0o755);original=old.read_bytes()
         # Candidate is the actual relocated utility, not a mocked capability string.
         candidate=self.f.script
-        setup='msg_err() { echo "$*" >&2; }; pin_project_source() { GITHUB_RAW=https://source.invalid/exact; };\n'
+        setup='ui_text() { printf "%s" "$1"; }; msg_err() { echo "$*" >&2; }; msg_warn() { echo "$*" >&2; }; pin_project_source() { GITHUB_RAW=https://source.invalid/exact; };\n'
         def invoke(extra):
             return subprocess.run(['bash','-c',lock+'\n'+helpers+'\n'+setup+extra+'\nprepare_backup_helper'],capture_output=True,text=True)
         failed=invoke('curl() { return 22; };')
@@ -856,8 +877,32 @@ manager_menu
         self.assertNotEqual(failed.returncode,0);self.assertEqual(old.read_bytes(),original)
         result=invoke(download)
         self.assertEqual(result.returncode,0,result.stderr)
-        result=invoke('curl() { echo UNEXPECTED_DOWNLOAD >&2; return 22; }; pin_project_source() { return 9; };')
-        self.assertEqual(result.returncode,0,result.stderr);self.assertNotIn('UNEXPECTED_DOWNLOAD',result.stderr)
+        self.assertEqual(old.read_bytes(),candidate.read_bytes())
+        # No needless replacement when the downloaded helper is unchanged.
+        result=invoke(download+'\nmv() { echo UNEXPECTED_REPLACE >&2; return 1; };')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertNotIn('UNEXPECTED_REPLACE',result.stderr)
+        # Offline emergency Restore/Backup can use the already compatible helper.
+        result=invoke('curl() { return 22; };')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn('installed compatible version',result.stderr)
+        result=invoke('pin_project_source() { return 69; }; curl() { echo UNEXPECTED_DOWNLOAD >&2; return 22; };')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertNotIn('UNEXPECTED_DOWNLOAD',result.stderr)
+        # A source-verification mismatch is not treated as an offline condition.
+        result=invoke('pin_project_source() { return 1; }; curl() { echo UNEXPECTED_DOWNLOAD >&2; return 22; };')
+        self.assertNotEqual(result.returncode,0)
+        self.assertNotIn('UNEXPECTED_DOWNLOAD',result.stderr)
+        bad=self.f.root/'invalid-helper';bad.write_text('#!/bin/bash\nif malformed\n')
+        result=invoke('curl() { command cp "'+str(bad)+'" "${@: -1}"; };')
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(old.read_bytes(),candidate.read_bytes())
+        # A failed replacement is not hidden by the installed helper.
+        old.write_bytes(candidate.read_bytes()+b'\n# stale revision\n')
+        stale=old.read_bytes()
+        result=invoke(download+'\nmv() { return 1; };')
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(old.read_bytes(),stale)
 
     def test_legacy_running_peer_and_unsafe_lock_target(self):
         script=self.f.root/'x-ui-backup';ready=self.f.root/'ready'

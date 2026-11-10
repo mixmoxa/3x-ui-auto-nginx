@@ -576,7 +576,8 @@ def manager_backup():
     existing=set(Path('/var/backups/x-ui').glob('*.tar.gz'))
     master,slave=pty.openpty()
     proc=subprocess.Popen(['bash',str(ROOT/'x-ui-latest.sh')],stdin=slave,stdout=slave,stderr=slave,
-                          env={**os.environ,'TERM':'dumb','NO_COLOR':'1'})
+                          env={**os.environ,**json.loads((ROOT/'environment.json').read_text()),
+                               'TERM':'dumb','NO_COLOR':'1'})
     os.close(slave); output=bytearray();deadline=time.monotonic()+120
     os.write(master,b'1\n3\n1\n2\n0\n0\n')
     try:

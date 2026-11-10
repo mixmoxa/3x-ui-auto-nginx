@@ -1189,8 +1189,8 @@ class PersonalBackup(unittest.TestCase):
         self.assertRegex(function('main'), r'    install_backup_tool \|\| \{ msg_err [^\n]*; exit 1; \}')
         download = Path(self.temp.name) / 'download.sh'
         download.write_text('#!/bin/bash\necho \"xui-backup:1 inspect backup-json lock-fd9\"\n')
-        mock = ('backup_helper_compatible() { :; }; curl() { [[ "$2" == "$GITHUB_RAW/assets/backup/x-ui-backup.sh" ]] || return 9; '
-                'cp "$DOWNLOAD" "$4"; }\nmsg_err() { echo "$*" >&2; }\n')
+        mock = ('backup_helper_compatible() { :; }; curl() { [[ "$*" == *"$GITHUB_RAW/assets/backup/x-ui-backup.sh"* ]] || return 9; '
+                'cp "$DOWNLOAD" "${@: -1}"; }\nmsg_err() { echo "$*" >&2; }\n')
         install = relocated(function('backup_helper_path_safe')+'\n'+tool, self.root)
         result = subprocess.run(['bash', '-eu', '-c', mock + install + '\ninstall_backup_tool\n'],
                                 env={**self.env, 'GITHUB_RAW': 'https://fixture.example/personal', 'DOWNLOAD': str(download)},
