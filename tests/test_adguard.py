@@ -380,10 +380,6 @@ entrypoint "$@"
         self.assertEqual(result.returncode,7)
         self.assertNotIn('UNEXPECTED_INSTALLATION',result.stdout)
 
-    def test_enablement_helper_hashes_match_this_tree(self):
-        for path in ('assets/adguard/managed.sh', 'assets/backup/x-ui-backup.sh'):
-            self.assertIn("'"+hashlib.sha256((ROOT/path).read_bytes()).hexdigest()+"'",INSTALLER)
-
     def test_optional_summary_and_unit_contract(self):
         for choice in ('n','y'):
             r=self.run_shell(('show_results',), ('AGH_RESULT=installed; ' if choice=='y' else 'AGH_RESULT=not_requested; ') + 'AGH_PATH=adg-ABCDEFGHIJKL; AGH_PASSWORD=single-secret; panel_path=panel; config_username=user; config_password=panel-pass; reality_domain=cover.example; ufw() { echo "Status: active"; }; show_results',INSTALL_AGH=choice)

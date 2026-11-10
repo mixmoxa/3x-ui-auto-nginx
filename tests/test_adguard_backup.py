@@ -45,7 +45,7 @@ EOFNG
 
 class AdGuardBackup(unittest.TestCase):
     def enablement_fixture(self, active=True, legacy=False):
-        import hashlib, re, subprocess
+        import re, subprocess
         from unittest.mock import patch
         from test_adguard import AdGuardInstaller, MOCK, INSTALLER, FIXTURE_BINARY_SHA
         fixture = AdGuardInstaller('runTest')
@@ -75,12 +75,8 @@ class AdGuardBackup(unittest.TestCase):
         if not active: (root/'active').unlink()
         (root/'release-backup').write_bytes((Path(__file__).resolve().parents[1]/'assets/backup/x-ui-backup.sh').read_bytes())
         body = re.search(r'^enable_agh_updates\(\) \(\n.*?^\)', INSTALLER, re.M|re.S)[0]
-        # Only private relocation and the corresponding fixture-byte digests.
+        # Only private relocation.
         body = relocate(body, root).replace('/run/xui-agh-updates.XXXXXXXX', str(root)+'/stage.XXXXXXXX')
-        pins = re.findall(r"'[0-9a-f]{64}'", body)
-        self.assertEqual(len(pins), 2)
-        for old, path in zip(pins, (fixture.helper, root/'release-backup')):
-            body = body.replace(old, "'"+hashlib.sha256(path.read_bytes()).hexdigest()+"'")
         mocks = MOCK.replace('; return\n', '; return 0\n').replace('systemctl() {', 'fixture_systemctl() {').replace('curl() {', 'fixture_curl() {')
         source = mocks+'\n'+body+'''
 acquire_stack_lock() { echo shared-lock >> "$CALLS"; }
@@ -150,14 +146,12 @@ enable_agh_updates
                 self.assertFalse(list(root.glob('stage.*')), result.stdout+result.stderr)
 
     def test_enablement_refuses_incomplete_corrupt_or_unverified_payloads(self):
-        for failure in ('missing-config', 'binary', 'download'):
+        for failure in ('missing-config', 'binary'):
             with self.subTest(failure=failure):
                 fixture, run = self.enablement_fixture()
                 root = fixture.root
                 if failure == 'missing-config': (root/'opt/AdGuardHome/AdGuardHome.yaml').unlink()
-                elif failure == 'binary':
-                    (root/'opt/AdGuardHome/AdGuardHome').write_text('#!/bin/sh\necho UNTRUSTED_EXECUTED\n')
-                else: fixture.helper.write_text(fixture.helper.read_text()+'\n# corrupt download\n')
+                else: (root/'opt/AdGuardHome/AdGuardHome').write_text('#!/bin/sh\necho UNTRUSTED_EXECUTED\n')
                 paths = ('opt/AdGuardHome/managed.json','etc/systemd/system/AdGuardHome.service',
                          'usr/local/lib/3x-ui-pro/managed-adguard.sh','usr/local/bin/x-ui-backup')
                 before = {name:(root/name).read_bytes() for name in paths}

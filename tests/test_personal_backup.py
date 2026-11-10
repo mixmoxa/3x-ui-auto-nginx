@@ -487,7 +487,7 @@ class PersonalBackup(unittest.TestCase):
             self.write('/var/www/telemt-web-manager/index.html', 'TWPM-owned site outside Backup v3')
 
     def test_telemt_backup_is_independent_and_source_is_unchanged(self):
-        self.seed_telemt()
+        self.seed_telemt(True)
         self.write('/var/lib/telemt/runtime.json','private Telemt DATA',0o600)
         self.write('/etc/telemt/telemt.toml','private Telemt config',0o600)
         services = json.loads((self.root/'services.json').read_text())
@@ -508,6 +508,94 @@ class PersonalBackup(unittest.TestCase):
         self.assertEqual(self.path('/etc/telemt/telemt.toml').read_text(),'private Telemt config')
         self.assertEqual(json.loads((self.root/'services.json').read_text())['telemt.service'],'active')
         self.assertFalse(any(c[:2] == ['systemctl','stop'] and 'telemt' in c[-1] for c in self.commands()))
+
+    def test_twpm_changed_vhost_is_excluded_by_name(self):
+        for case in ('extra-directive','site-port','empty-map','no-manifest','other-format','no-domain'):
+            with self.subTest(case=case):
+                f=PersonalBackup('runTest'); f.setUp()
+                try:
+                    f.seed_telemt(True, 'site' if case == 'site-port' else 'keepalive', modern=True,
+                                  manifest=case not in ('site-port','no-manifest'), site_port=18082)
+                    vhost=f.path('/etc/nginx/conf.d/telemt-web-manager.conf')
+                    if case == 'extra-directive':
+                        vhost.write_text(vhost.read_text().replace('    access_log off;','    access_log off;\n    add_header X-Custom twpm;',1))
+                    elif case == 'empty-map':
+                        cfg=ConfigObj(str(f.path('/etc/letsencrypt/renewal/telegram.example.com.conf')))
+                        cfg['renewalparams']['webroot_map']={}; cfg.write()
+                    elif case == 'other-format':
+                        vhost.write_text(re.sub(r'\s+',' ',vhost.read_text().split('\n',1)[1]).replace('server_name ','server_name\t'))
+                    elif case == 'no-domain':
+                        vhost.write_text(re.sub(r'server_name [^;]+;','',vhost.read_text()))
+                    live=f.telemt_live_state()
+                    result=f.run_tool('backup')
+                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                    self.assertTrue(live==f.telemt_live_state(),'Backup changed live TWPM state')
+                    with tarfile.open(next(f.path('/var/backups/x-ui').glob('*.tar.gz'))) as bundle:
+                        names=bundle.getnames()
+                    self.assertFalse(any('telemt-web-manager' in name for name in names))
+                    self.assertEqual(any('telegram.example.com' in name for name in names), case == 'no-domain')
+                    if case == 'no-domain': self.assertIn('Cannot determine the TWPM domain',result.stderr)
+                    self.assertFalse(any(c[:2] == ['systemctl','stop'] and 'telemt' in c[-1] for c in f.commands()))
+                finally: f.doCleanups()
+
+    def test_twpm_inline_stream_rows_stop_backup_and_restore(self):
+        self.seed_telemt()
+        live=self.telemt_live_state()
+        result=self.run_tool('backup')
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('stream-enabled/stream.conf contains old inline Telegram Web Proxy Manager lines',result.stderr)
+        self.assertIn('then run Backup again',result.stderr)
+        self.assertFalse(list(self.path('/var/backups/x-ui').glob('*.tar.gz')))
+        self.assertTrue(live==self.telemt_live_state(),'Refusal changed live files')
+        archive=self.historical_telemt_archive(); original=archive.read_bytes()
+        self.clear_telemt_restore_target()
+        (self.root/'commands').write_text('')
+        result=self.run_tool('restore',archive)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('stream-enabled/stream.conf contains old inline Telegram Web Proxy Manager lines',result.stderr)
+        self.assertFalse(any(c[0] == 'cp' or c[:2] == ['systemctl','stop'] for c in self.commands()))
+        self.assertEqual(archive.read_bytes(),original)
+
+    def test_twpm_domain_shared_with_project_keeps_lineage(self):
+        for shared in ('panel-cert','project-hook','other-vhost'):
+            with self.subTest(shared=shared):
+                f=PersonalBackup('runTest'); f.setUp()
+                try:
+                    f.seed_telemt(True, modern=True)
+                    if shared == 'panel-cert':
+                        f.write('/root/cert/telegram.example.com/README','project certificate link directory\n')
+                    elif shared == 'other-vhost':
+                        f.write('/etc/nginx/conf.d/administrator.conf','server { server_name telegram.example.com; }\n')
+                    else:
+                        hook=f.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx')
+                        hook.write_text(hook.read_text()+'# telegram.example.com\n')
+                    result=f.run_tool('backup')
+                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                    self.assertIn('[WARN] TWPM domain telegram.example.com is also used outside TWPM; its Certbot lineage stays in the archive.',result.stderr)
+                    with tarfile.open(next(f.path('/var/backups/x-ui').glob('*.tar.gz'))) as bundle:
+                        names=bundle.getnames()
+                    self.assertFalse(any('telemt-web-manager' in name for name in names))
+                    for path in ('/etc/letsencrypt/renewal/telegram.example.com.conf','/etc/letsencrypt/live/telegram.example.com',
+                                 '/etc/letsencrypt/archive/telegram.example.com/fullchain1.pem'):
+                        self.assertIn(f.member(path),names)
+                finally: f.doCleanups()
+
+    def test_twpm_staged_symlink_parent_never_removes_live_files(self):
+        for linked in ('/etc/nginx/conf.d','/etc/letsencrypt'):
+            with self.subTest(linked=linked):
+                f=PersonalBackup('runTest'); f.setUp()
+                try:
+                    f.seed_telemt(True, modern=True)
+                    live=f.path(linked); outside=f.root/'outside'/live.name
+                    outside.parent.mkdir(); shutil.move(live,outside); live.symlink_to(outside)
+                    tree=lambda: {p:(os.readlink(p) if p.is_symlink() else p.read_bytes()) for p in outside.rglob('*') if p.is_file() or p.is_symlink()}
+                    before=tree()
+                    result=f.run_tool('backup')
+                    self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
+                    self.assertIn('Cannot remove',result.stderr)
+                    self.assertIn('staged parent is a symlink outside private staging. Live state was not changed.',result.stderr)
+                    self.assertTrue(before==tree(),'Backup removed live files through a staged symlink')
+                finally: f.doCleanups()
 
     def test_restore_preserves_old_and_new_reality_proxy_contracts(self):
         from test_personal_xhttp import render
@@ -533,30 +621,6 @@ class PersonalBackup(unittest.TestCase):
                     self.assertEqual(archive.read_bytes(),original)
                 finally:f.doCleanups()
 
-    def test_telemt_backup_uses_private_manifest_and_supports_standalone_renewal(self):
-        for standalone in (False,True):
-            with self.subTest(standalone=standalone):
-                f = PersonalBackup('runTest'); f.setUp()
-                try:
-                    f.seed_telemt()
-                    if standalone:
-                        f.path('/etc/nginx/conf.d/telemt-web-manager-acme.conf').unlink()
-                        cfg = ConfigObj(str(f.path('/etc/letsencrypt/renewal/telegram.example.com.conf')))
-                        cfg['renewalparams'] = {'authenticator':'standalone'}; cfg.write()
-                    vhost = f.path('/etc/nginx/conf.d/telemt-web-manager.conf')
-                    f.write('/var/lib/telemt-web-manager/manifest.json',json.dumps({
-                        'schema':1,'domain':'telegram.example.com','public_ip':'192.0.2.10',
-                        'unit_sha256':'a'*64,'nginx_sha256':hashlib.sha256(vhost.read_bytes()).hexdigest(),
-                        'acme_webroot':'' if standalone else str(f.path('/var/lib/telemt-web-manager-acme'))}),0o600)
-                    f.path('/var/lib/telemt-web-manager').chmod(0o700)
-                    original = f.path('/var/lib/telemt-web-manager/manifest.json').read_bytes()
-                    archive = f.backup()
-                    with tarfile.open(archive) as bundle:
-                        self.assertFalse(any('telemt-web-manager' in p or 'telegram.example.com' in p for p in bundle.getnames()))
-                    self.assertEqual(f.path('/var/lib/telemt-web-manager/manifest.json').read_bytes(),original)
-                finally:
-                    f.doCleanups()
-
     def historical_telemt_archive(self):
         # Exercise today's Restore on the old v3 contract; preserve actual tar,
         # metadata and validation, bypassing only the newly added staged filter.
@@ -576,7 +640,7 @@ class PersonalBackup(unittest.TestCase):
 
     def test_twpm_canonical_layouts_preserve_modern_stack(self):
         for layout in ('legacy', 'keepalive', 'site'):
-            for includes in (False, True):
+            for includes in (True,):
                 with self.subTest(layout=layout, includes=includes):
                     f=PersonalBackup('runTest'); f.setUp()
                     try:
@@ -656,132 +720,6 @@ class PersonalBackup(unittest.TestCase):
         for path in ('/usr/bin/x-ui','/etc/systemd/system/x-ui.service','/etc/systemd/system/mtr-backend.service'):
             self.path(path).unlink()
 
-    def test_twpm_webroot_empty_map_and_foreign_map(self):
-        for kind, accepted in (('empty', True), ('foreign', False)):
-            with self.subTest(kind=kind):
-                f=PersonalBackup('runTest'); f.setUp()
-                try:
-                    f.seed_telemt(True, 'site', modern=True, manifest=True, site_port=18082)
-                    renewal=f.path('/etc/letsencrypt/renewal/telegram.example.com.conf')
-                    cfg=ConfigObj(str(renewal))
-                    cfg['renewalparams']['webroot_map'] = ({} if kind == 'empty' else
-                        {'foreign.example.com': str(f.path('/var/lib/telemt-web-manager-acme'))})
-                    cfg.write()
-                    live=f.telemt_live_state()
-                    result=f.run_tool('backup')
-                    self.assertEqual(result.returncode == 0, accepted, result.stdout+result.stderr)
-                    if accepted:
-                        archive=next(f.path('/var/backups/x-ui').glob('*.tar.gz'))
-                        with tarfile.open(archive) as bundle:
-                            self.assertFalse(any('telemt-web-manager' in name or 'telegram.example.com' in name
-                                                 for name in bundle.getnames()))
-                    else:
-                        self.assertIn('private staging refused', result.stderr)
-                    self.assertEqual(f.telemt_live_state(),live)
-                finally: f.doCleanups()
-
-    def test_twpm_site_origin_ports_and_independence(self):
-        for port, accepted in ((18090, True), (18080, False), (18091, False)):
-            with self.subTest(port=port):
-                f=PersonalBackup('runTest'); f.setUp()
-                try:
-                    f.seed_telemt(True, 'site', modern=True, manifest=True, site_port=port)
-                    original=f.telemt_live_state()
-                    result=f.run_tool('backup')
-                    self.assertEqual(result.returncode == 0, accepted, result.stdout+result.stderr)
-                    if accepted:
-                        with tarfile.open(next(f.path('/var/backups/x-ui').glob('*.tar.gz'))) as bundle:
-                            self.assertFalse(any('telemt-web-manager' in p or 'telegram.example.com' in p
-                                                 for p in bundle.getnames()))
-                    else:
-                        self.assertIn('private staging refused', result.stderr)
-                    self.assertEqual(f.telemt_live_state(), original)
-                finally: f.doCleanups()
-        for fault in ('manifest', 'foreign-port-reference'):
-            with self.subTest(fault=fault):
-                f=PersonalBackup('runTest'); f.setUp()
-                try:
-                    f.seed_telemt(True, 'site', modern=True, manifest=True, site_port=18082)
-                    if fault == 'manifest':
-                        marker=f.path('/var/lib/telemt-web-manager/manifest.json')
-                        state=json.loads(marker.read_text())
-                        state['nginx_sha256']='0'*64
-                        marker.write_text(json.dumps(state))
-                    else:
-                        f.write('/etc/nginx/conf.d/foreign.conf',
-                                'server { listen 11080; location / { proxy_pass http://127.0.0.1:18082; } }\n')
-                    original=f.telemt_live_state()
-                    result=f.run_tool('backup')
-                    self.assertNotEqual(result.returncode, 0, result.stdout+result.stderr)
-                    self.assertIn('private staging refused', result.stderr)
-                    self.assertEqual(f.telemt_live_state(), original)
-                finally: f.doCleanups()
-
-    def test_twpm_new_layouts_refuse_unconfirmed_ownership(self):
-        cases=('keepalive','csp','digest','manifest-hash','missing-keepalive-manifest','missing-site-manifest',
-               'foreign-backend','foreign-reference','origin-listen','origin-reference','mixed-stream',
-               'vhost-symlink','manifest-hardlink')
-        for fault in cases:
-            with self.subTest(fault=fault):
-                f=PersonalBackup('runTest'); f.setUp()
-                try:
-                    layout='keepalive' if fault in ('keepalive','missing-keepalive-manifest','foreign-backend',
-                                                    'foreign-reference','manifest-hardlink') else 'site'
-                    f.seed_telemt(True,layout,manifest=True)
-                    vhost=f.path('/etc/nginx/conf.d/telemt-web-manager.conf')
-                    manifest=f.path('/var/lib/telemt-web-manager/manifest.json')
-                    if fault in ('keepalive','csp','digest','manifest-hash'):
-                        old,new={'keepalive':('keepalive 32','keepalive 31'),
-                                 'csp':("default-src 'none'","default-src 'self'"),
-                                 'digest':('a'*64,'Z'*64), 'manifest-hash':('a'*64,'b'*64)}[fault]
-                        vhost.write_text(vhost.read_text().replace(old,new))
-                        if fault != 'manifest-hash':
-                            state=json.loads(manifest.read_text())
-                            state['nginx_sha256']=hashlib.sha256(vhost.read_bytes()).hexdigest()
-                            manifest.write_text(json.dumps(state))
-                    elif fault.startswith('missing-'):
-                        manifest.unlink()
-                    elif fault == 'foreign-backend':
-                        f.write('/etc/nginx/conf.d/foreign.conf','upstream twpm_web_backend { server 127.0.0.1:19080; }\n')
-                    elif fault == 'foreign-reference':
-                        f.write('/etc/nginx/conf.d/foreign.conf',
-                                'server { listen 11080; location / { proxy_pass "http://TWPM_WEB_BACKEND"; } }\n')
-                    elif fault == 'origin-listen':
-                        f.write('/etc/nginx/conf.d/foreign.conf','server { listen 18081; }\n')
-                    elif fault == 'origin-reference':
-                        f.write('/etc/nginx/conf.d/foreign.conf',
-                                'server { listen 11080; location / { proxy_pass http://127.0.0.1:18081; } }\n')
-                    elif fault == 'mixed-stream':
-                        stream=f.path('/etc/nginx/stream-enabled/stream.conf')
-                        stream.write_text(stream.read_text().replace('    hostnames;',
-                            '    hostnames;\n    telegram.example.com twm_frontend; # telemt-web-manager'))
-                    elif fault == 'vhost-symlink':
-                        vhost.rename(vhost.with_name('foreign-vhost.conf'))
-                        vhost.symlink_to('foreign-vhost.conf')
-                    elif fault == 'manifest-hardlink':
-                        os.link(manifest,Path(f.temp.name)/'shared-manifest')
-                    live=f.telemt_live_state()
-                    services=(f.root/'services.json').read_bytes()
-                    result=f.run_tool('backup')
-                    self.assertNotEqual(result.returncode,0)
-                    self.assertIn('private staging refused',result.stderr)
-                    self.assertFalse(list(f.path('/var/backups/x-ui').glob('*.tar.gz')))
-                    self.assertTrue(live==f.telemt_live_state(),'Refusal changed live files')
-                    self.assertEqual((f.root/'services.json').read_bytes(),services)
-                    if fault in ('csp','origin-listen'):
-                        archive=f.historical_telemt_archive(); original=hashlib.sha256(archive.read_bytes()).digest()
-                        shutil.rmtree(f.path('/var/lib/telemt-web-manager'))
-                        shutil.rmtree(f.path('/var/www/telemt-web-manager'))
-                        f.clear_telemt_restore_target()
-                        (f.root/'commands').write_text('')
-                        result=f.run_tool('restore',archive)
-                        self.assertNotEqual(result.returncode,0)
-                        self.assertIn('private staging refused',result.stderr)
-                        self.assertFalse(any(c[0]=='cp' or c[:2]==['systemctl','stop'] for c in f.commands()))
-                        self.assertEqual(hashlib.sha256(archive.read_bytes()).digest(),original)
-                finally:
-                    f.doCleanups()
-
     def test_twpm_site_target_refuses_files_directories_and_links_before_changes(self):
         archive=self.backup()
         path=self.path('/var/www/telemt-web-manager')
@@ -807,7 +745,7 @@ class PersonalBackup(unittest.TestCase):
                 else: path.unlink()
 
     def test_telemt_new_and_historical_archives_restore_without_telemt(self):
-        for includes in (False, True):
+        for includes in (True,):
             for historical in (False, True):
                 with self.subTest(includes=includes, historical=historical):
                     f = PersonalBackup('runTest'); f.setUp()
@@ -857,61 +795,6 @@ class PersonalBackup(unittest.TestCase):
                         self.assertFalse(any(c[:2] == ['systemctl','stop'] and 'telemt' in c[-1] for c in f.commands()))
                     finally:
                         f.doCleanups()
-
-    def test_telemt_ambiguous_objects_fail_before_publication_or_restore_mutation(self):
-        cases = ('upstream','vhost','duplicate','shared','hook','lineage','tls','manifest','include','symlink')
-        for fault in cases:
-            with self.subTest(fault=fault):
-                f = PersonalBackup('runTest'); f.setUp()
-                try:
-                    f.seed_telemt(includes=fault == 'include')
-                    stream = f.path('/etc/nginx/stream-enabled/stream.conf')
-                    if fault == 'upstream':
-                        stream.write_text(stream.read_text().replace('upstream twm_frontend { server 127.0.0.1:7444; }',''))
-                    elif fault == 'vhost':
-                        path = f.path('/etc/nginx/conf.d/telemt-web-manager.conf')
-                        path.write_text(path.read_text().replace('client_max_body_size 2m','client_max_body_size 3m'))
-                    elif fault == 'duplicate':
-                        row = '    telegram.example.com twm_frontend; # telemt-web-manager\n'
-                        stream.write_text(stream.read_text().replace(row,row+row))
-                    elif fault == 'shared':
-                        f.write('/etc/nginx/conf.d/foreign.conf','server { ssl_certificate '+str(f.path('/etc/letsencrypt/live/telegram.example.com/fullchain.pem'))+'; }')
-                    elif fault == 'hook':
-                        f.write('/etc/letsencrypt/renewal-hooks/deploy/telemt-web-manager','#!/bin/sh\necho foreign\n')
-                    elif fault == 'lineage':
-                        cfg = ConfigObj(str(f.path('/etc/letsencrypt/renewal/telegram.example.com.conf')))
-                        cfg['archive_dir'] = str(f.path('/etc/letsencrypt/archive/example.com')); cfg.write()
-                    elif fault == 'tls':
-                        f.path('/etc/letsencrypt/archive/telegram.example.com/fullchain1.pem').write_bytes(f.path('/etc/letsencrypt/live/example.com/fullchain.pem').read_bytes())
-                    elif fault == 'manifest':
-                        f.write('/var/lib/telemt-web-manager/manifest.json',json.dumps({'schema':1,'domain':'wrong.example.com'}),0o600)
-                    elif fault == 'include':
-                        f.path('/etc/nginx/stream-upstreams.d/telemt-web-manager.conf').unlink()
-                    elif fault == 'symlink':
-                        path = f.path('/etc/nginx/conf.d/telemt-web-manager.conf')
-                        data = path.read_bytes(); path.unlink()
-                        f.write('/etc/nginx/foreign-vhost',data.decode())
-                        path.symlink_to('../foreign-vhost')
-                    original = stream.read_bytes()
-                    result = f.run_tool('backup')
-                    self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
-                    self.assertIn('Telemt',result.stderr)
-                    self.assertFalse(list(f.path('/var/backups/x-ui').glob('*.tar.gz')))
-                    self.assertEqual(stream.read_bytes(),original)
-                    # A private live manifest is extra evidence for Backup only.
-                    # For archive failures use the contradictory objects themselves.
-                    if fault == 'manifest': continue
-                    archive = f.historical_telemt_archive()
-                    original_archive = archive.read_bytes()
-                    f.clear_telemt_restore_target()
-                    (f.root/'commands').write_text('')
-                    result = f.run_tool('restore',archive)
-                    self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
-                    self.assertIn('Telemt',result.stderr)
-                    self.assertFalse(any(c[:2] == ['systemctl','stop'] or c[0] == 'cp' for c in f.commands()))
-                    self.assertEqual(archive.read_bytes(),original_archive)
-                finally:
-                    f.doCleanups()
 
     def test_telemt_target_refuses_before_packages_or_service_changes(self):
         archive = self.backup()

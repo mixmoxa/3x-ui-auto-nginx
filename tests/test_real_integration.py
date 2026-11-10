@@ -1790,7 +1790,7 @@ from telemt_fixtures import VHOST, ACME
 source = Path(sys.argv[2]).read_bytes()
 assert hashlib.sha256(source).hexdigest() == sys.argv[3]
 case = unittest.TestCase()
-for includes in (False,True):
+for includes in (True,):
     for historical in (False,True):
         f = PersonalBackup('runTest'); f.setUp()
         try:

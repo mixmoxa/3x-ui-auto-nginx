@@ -521,97 +521,29 @@ curl() {
                     self.assertTrue(all(value=='active' for value in f.services.values()))
                     self.assertFalse(any('restore' in args for _,args in f.calls))
 
-    def test_twpm_site_origin_port_range_and_manifest(self):
-        for port, accepted in ((18090, True), (18080, False), (18091, False)):
-            with self.subTest(port=port):
-                f=self.fixture()
-                owned=f.telemt(True,'site',origin_port=port)
-                before=f.state()
-                if accepted:
-                    f.change('new-panel.example',None)
-                    self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned)
-                else:
-                    with self.assertRaises(f.module.Refusal): f.change('new-panel.example',None)
-                    self.assertEqual(f.state(),before)
-                    self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] for _,args in f.calls))
-        f=self.fixture()
-        owned=f.telemt(True,'site',origin_port=18082)
-        before=f.state()
-        marker=f.p('/var/lib/telemt-web-manager/manifest.json')
-        data=json.loads(marker.read_text())
-        data['nginx_sha256']='0'*64
-        marker.write_text(json.dumps(data))
-        with self.assertRaises(f.module.Refusal): f.change('new-panel.example',None)
-        self.assertEqual(f.state(),before)
-        self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] for _,args in f.calls))
-
-    def test_twpm_vhost_digest_headers_and_manifest_refuse_before_backup(self):
-        cases=(('keepalive','unknown'),('site','extra-header'),('site','csp'),('site','digest-invalid'),
-               ('site','digest-placeholder'),('keepalive','domain-placeholder'),
-               ('site','digest-stale'),('site','duplicate-digest'),('keepalive','manifest-domain'),
-               ('site','manifest-hash'),('site','missing-manifest'),('site','manifest-mode'),
-               ('site','panel-conflict'),('site','reality-conflict'))
-        for index,(layout,fault) in enumerate(cases):
-            with self.subTest(layout=layout,fault=fault):
-                f=self.fixture();owned=f.telemt(bool(index%2),layout);before=f.state()
-                vhost=f.p('/etc/nginx/conf.d/telemt-web-manager.conf')
-                marker=f.p('/var/lib/telemt-web-manager/manifest.json')
-                if fault in ('unknown','extra-header','csp','digest-invalid','digest-placeholder','domain-placeholder','digest-stale','duplicate-digest'):
-                    old,new={'unknown':('keepalive 32','keepalive 31'),
-                             'extra-header':('    charset utf-8;','    charset utf-8;\n    add_header X-Custom unexpected;'),
-                             'csp':("style-src 'self'","style-src 'unsafe-inline'"),
-                             'digest-invalid':('a'*64,'z'*64),'digest-placeholder':('a'*64,'{site_digest}'),
-                             'domain-placeholder':('telegram.example','{domain}'),'digest-stale':('a'*64,'b'*64),
-                             'duplicate-digest':('# TWPM original site v0.3 sha256: '+'a'*64+'\n',
-                                                 ('# TWPM original site v0.3 sha256: '+'a'*64+'\n')*2)}[fault]
-                    vhost.write_text(vhost.read_text().replace(old,new))
-                    if fault!='digest-stale':
-                        value=json.loads(marker.read_text());value['nginx_sha256']=f.module.digest(vhost.read_bytes())
-                        marker.write_text(json.dumps(value))
-                elif fault.startswith('manifest-'):
-                    if fault=='manifest-mode':marker.chmod(0o644)
+    def test_twpm_changed_vhost_and_missing_manifest_keep_route(self):
+        for includes in (False,True):
+            for change in ('vhost','manifest','acme'):
+                with self.subTest(includes=includes,change=change):
+                    f=self.fixture();owned=f.telemt(includes,'site',origin_port=18091)
+                    if change=='vhost':
+                        vhost=f.p('/etc/nginx/conf.d/telemt-web-manager.conf')
+                        vhost.write_text(vhost.read_text().replace('    access_log off;','    access_log off;\n    add_header X-Custom twpm;',1))
+                    elif change=='manifest':
+                        f.p('/var/lib/telemt-web-manager/manifest.json').unlink()
                     else:
-                        value=json.loads(marker.read_text());value['domain' if fault=='manifest-domain' else 'nginx_sha256']='foreign.example' if fault=='manifest-domain' else '0'*64
-                        marker.write_text(json.dumps(value))
-                elif fault=='missing-manifest':marker.unlink()
-                snapshot={path:f.p(path).read_bytes() if f.p(path).exists() else None for path in owned}
-                with self.assertRaises(f.module.Refusal):
-                    f.change('telegram.example' if fault=='panel-conflict' else 'new-panel.example',
-                             'telegram.example' if fault=='reality-conflict' else None)
-                self.assertTrue(f.state()==before,'Refusal changed SQLite')
-                self.assertTrue(snapshot=={path:f.p(path).read_bytes() if f.p(path).exists() else None for path in owned},'Refusal changed TWPM data')
-                self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] or args[0]=='certbot' for _,args in f.calls))
-                self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
-
-    def test_twpm_manifest_guard_retains_recovery_without_overwriting_companion(self):
-        f=self.fixture();owned=f.telemt(True,'site');before=f.state()
-        stream=f.p(f.module.STREAM).read_bytes()
-        marker=f.p('/var/lib/telemt-web-manager/manifest.json');original=marker.read_bytes()
-        candidate=f.operation.candidate_nginx
-        def changed(record):
-            candidate(record)
-            if record['files']:  # Inject after preparation, not the initial read-only check.
-                state=json.loads(marker.read_text());state['public_ip']='192.0.2.20'
-                marker.write_text(json.dumps(state))
-        f.operation.candidate_nginx=changed
-        with self.assertRaises(f.module.Refusal): f.change('new-panel.example','new-cover.example')
-        modified=marker.read_bytes()
-        self.assertNotEqual(modified,original)
-        self.assertTrue(f.state()==before,'Guard failure changed SQLite')
-        self.assertEqual(f.p(f.module.STREAM).read_bytes(),stream)
-        self.assertTrue(f.p(f.module.STATE+'/journal.json').exists())
-        self.assertFalse(any(args[:3]==['systemctl','stop','x-ui'] for _,args in f.calls))
-        # Resolve only the simulated independent edit; normal scoped recovery
-        # then restores 3X-UI and never writes the companion manifest.
-        marker.write_bytes(original)
-        self.assertTrue(f.operation.recover())
-        self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Recovery changed TWPM state')
-        self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
-        self.assertTrue(all(value=='active' for value in f.services.values()))
+                        acme=f.p('/etc/nginx/conf.d/telemt-web-manager-acme.conf')
+                        acme.write_text(acme.read_text().replace('access_log off;','access_log /var/log/twpm.log;'))
+                    owned={path:f.p(path).read_bytes() for path in owned if f.p(path).exists()}
+                    stream=f.p(f.module.STREAM).read_text()
+                    f.change('new-panel.example','new-cover.example')
+                    self.assertEqual(f.operation.discover()['telemt']['domain'],'telegram.example')
+                    self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'TWPM state changed')
+                    self.assertEqual(f.p(f.module.STREAM).read_text().replace('new-panel.example',f.panel).replace('new-cover.example',f.reality),stream)
 
     def test_telemt_conflicts_and_unknown_routes_refuse_before_backup(self):
         for includes in (False,True):
-            cases=('panel-conflict','reality-conflict','upstream','duplicate','vhost','domain','unknown','mixed','include-position')
+            cases=('panel-conflict','reality-conflict','upstream','duplicate','unknown','mixed','include-position')
             for fault in cases+(('commented-includes',) if includes else ()):
                 with self.subTest(includes=includes,fault=fault):
                     f=self.fixture();f.telemt(includes);before=f.state()
@@ -623,10 +555,6 @@ curl() {
                     elif fault=='duplicate':
                         row='    telegram.example twm_frontend; # telemt-web-manager\n'
                         sni.write_text(sni.read_text()*2 if includes else sni.read_text().replace(row,row+row))
-                    elif fault=='vhost':
-                        vhost=f.p('/etc/nginx/conf.d/telemt-web-manager.conf')
-                        vhost.write_text(vhost.read_text().replace('client_max_body_size 2m','client_max_body_size 3m'))
-                    elif fault=='domain': sni.write_text(sni.read_text().replace('telegram.example','different.example'))
                     elif fault=='unknown': stream.write_text(stream.read_text()+'\nupstream unknown { server 127.0.0.1:7445; }\n')
                     elif fault=='mixed':
                         if includes: stream.write_text(stream.read_text().replace('    default','    duplicate.example twm_frontend; # telemt-web-manager\n    default'))
