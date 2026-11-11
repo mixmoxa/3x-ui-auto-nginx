@@ -1,6 +1,6 @@
-# AGENTS.md - rules for Codex and any other coding agent
+# AGENTS.md - rules for any coding agent
 
-This is the single shared rules file for this repository. CLAUDE.md only points here.
+This is the single shared rules file for this repository. CLAUDE.md points here and adds only Claude Code specifics (Plan mode).
 Do not edit AGENTS.md or CLAUDE.md unless the owner's task says so.
 
 ## 1. What this project is (threat model)
@@ -48,8 +48,11 @@ Do not edit AGENTS.md or CLAUDE.md unless the owner's task says so.
 - Work only from the owner's task: Goal / Context / Do / Do NOT / Criterion / Report.
   Do not widen scope. If the task seems to need more, say so in the report instead of doing it.
 - Feature branch, focused PR, created as Draft. Local git identity (not global):
-  user.name=Proms, user.email=102687702+xPROMSx@users.noreply.github.com.
+  user.name=xPROMSx, user.email=102687702+xPROMSx@users.noreply.github.com.
   Verify author and committer of every new commit.
+- Commit messages and PR text contain no Co-Authored-By, Claude-Session or "Generated with" lines
+  (the repository is public). If the platform adds them by default, remove them; this rule
+  overrides the default. Re-read the PR description after creating it.
 - Mark the PR Ready for review only after the final commit is pushed and local checks pass.
   CI, including Full Fresh, starts automatically on every push, Draft or not;
   switching Draft to Ready does not start a new run.
@@ -65,7 +68,8 @@ Do not edit AGENTS.md or CLAUDE.md unless the owner's task says so.
   "Real services (ubuntu-24.04)", "Real services (ubuntu-26.04)", "Full fresh installer (ubuntu-26.04)".
 - Changes to AGENTS.md, CLAUDE.md, tests and workflows always run full CI.
 - Report honestly: exact HEAD, CI state per job as PASS / FAIL / IN PROGRESS / NOT RUN,
-  what was read, what was not.
+  what was read, what was not, which test level the change needs
+  (0: CI only; 1: one command on a ready test server; 2: full clean-VPS test).
 
 ## 5. Project facts that must not drift
 
