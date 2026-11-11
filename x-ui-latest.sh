@@ -3556,6 +3556,40 @@ prepare_restore_security() {
     /usr/bin/python3 -I -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$RESTORE_SECURITY_DIR/managed.py"
 }
 
+# A fresh VPS runs its first automatic update for 15-60 minutes and holds the apt/dpkg lock.
+# unattended-upgrade-shutdown lives permanently and is deliberately not matched.
+apt_busy() {
+    pgrep -f '/usr/lib/apt/apt.systemd.daily' > /dev/null ||
+        pgrep -f '/usr/bin/unattended-upgrade($| )' > /dev/null ||
+        pgrep -x 'apt|apt-get|dpkg' > /dev/null
+}
+
+wait_for_apt_idle() {
+    apt_busy || return 0
+    local ticks=0 idle=0
+    ui_title "$(ui_text 'SERVER IS INSTALLING SYSTEM UPDATES' 'СЕРВЕР УСТАНАВЛИВАЕТ ОБНОВЛЕНИЯ СИСТЕМЫ')"
+    msg_warn "$(ui_text 'A fresh server updates itself right after the first start. This can take 10-60 minutes.
+Restore will continue automatically when the update finishes. No data has been restored yet.
+DO NOT reboot or power off the server - this can break the system.
+You can safely cancel with Ctrl+C and run Restore later.' 'Свежий сервер сам обновляется сразу после первого запуска. Это может занять от 10 до 60 минут.
+Restore продолжится автоматически, когда обновление закончится. Данные ещё не восстанавливались.
+НЕ ПЕРЕЗАГРУЖАЙТЕ и не выключайте сервер - это может сломать систему.
+Можно безопасно отменить по Ctrl+C и запустить Restore позже.')"
+    # Poll every 5 s; two free checks in a row end the wait (packages install one by one).
+    while (( ticks < 720 )); do
+        sleep 5
+        ticks=$((ticks + 1))
+        if apt_busy; then idle=0; else idle=$((idle + 1)); fi
+        if (( idle >= 2 )); then
+            msg_ok "$(ui_text '[OK] System update finished. Continuing Restore.' '[OK] Обновление системы завершено. Продолжаю Restore.')"
+            return 0
+        fi
+        (( ticks % 12 )) || ui_text 'Waiting for the system update: %d of 60 min. Do not reboot the server.\n' 'Ожидание конца обновления: %d из 60 мин. Не перезагружайте сервер.\n' $((ticks / 12))
+    done
+    msg_err "$(ui_text 'The system update is still running after 60 minutes. Restore was not started and no data was restored. Wait for the update to finish and run Restore again.' 'Обновление системы всё ещё идёт спустя 60 минут. Restore не запускался, данные не восстанавливались. Дождитесь конца обновления и запустите Restore снова.')"
+    return 1
+}
+
 post_restore_security() (
     local directory=$1 apt=$2 ufw=$3 apt_code=0 ufw_code=0
     cd / || exit 1
@@ -3665,6 +3699,7 @@ backup_action() (
             apt=n ufw=n
         fi
     fi
+    wait_for_apt_idle || exit 1
     local status=0
     [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_title "$(ui_text 'RESTORING BACKUP' 'ВОССТАНОВЛЕНИЕ')"
     bash /usr/local/bin/x-ui-backup restore "$archive" || status=$?

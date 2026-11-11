@@ -283,6 +283,16 @@ python3() { if [[ "$*" == *--render-acme* ]]; then echo '# ACME fixture'; else p
             self.assertEqual(success.stdout.count('successful-package-output'),1)
             self.assertNotIn('APT: working',success.stdout)
 
+    def test_security_command_error_includes_stderr_for_sshd_and_resolvectl_only(self):
+        security = helper('security')
+        for tool, shown in (('/usr/sbin/sshd', True), ('resolvectl', True), ('getent', False)):
+            with self.subTest(tool=tool), patch.object(security.subprocess, 'run',
+                    return_value=subprocess.CompletedProcess([tool], 255, '', 'a' * 400 + 'TAIL')):
+                with self.assertRaises(ValueError) as caught: security.command(tool, '-t')
+                message = str(caught.exception)
+                self.assertIn('(exit 255)', message)
+                self.assertEqual('a' * 400 in message, shown); self.assertNotIn('TAIL', message)
+
     def test_security_apt_stream_keeps_json_stdout(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory); release=root/'release'; apt=root/'apt-get'

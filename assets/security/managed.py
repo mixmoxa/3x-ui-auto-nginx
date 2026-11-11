@@ -43,7 +43,7 @@ def command(*args, check=True):
                             env={**os.environ, 'LC_ALL': 'C', 'DEBIAN_FRONTEND': 'noninteractive',
                                  'NEEDRESTART_MODE': 'l', 'UCF_FORCE_CONFFOLD': '1'})
     if check and result.returncode:
-        detail = ': ' + result.stderr.strip()[:400] if args[0] == 'resolvectl' else ''
+        detail = ': ' + result.stderr.strip()[:400] if args[0] in ('resolvectl', '/usr/sbin/sshd') else ''
         raise ValueError('Command failed (exit '+str(result.returncode)+'): ' + ' '.join(args) + detail)
     return (result.stdout or '').strip()
 

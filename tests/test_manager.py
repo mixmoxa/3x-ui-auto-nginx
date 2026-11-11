@@ -49,6 +49,61 @@ class Manager(unittest.TestCase):
         self.assertEqual(result.returncode,0,result.stderr+result.stdout)
         self.assertEqual(result.stdout,'')
 
+    def apt_wait(self, sequence, lang='en'):
+        """Run wait_for_apt_idle with scripted apt_busy results (B busy, F free; last repeats) and no real sleep."""
+        script = ('source "$1"; UI_LANG=$2; seq=$3; n=0; sleeps=0\n'
+                  'sleep() { sleeps=$((sleeps+1)); }\n'
+                  'apt_busy() { local c=${seq:n:1}; [[ -n $c ]] || c=${seq: -1}; n=$((n+1)); [[ $c == B ]]; }\n'
+                  'wait_for_apt_idle; code=$?; echo "SLEEPS:$sleeps"; exit $code')
+        return subprocess.run(['bash', '-c', script, 'fixture', str(ROOT/'x-ui-latest.sh'), lang, sequence],
+                              capture_output=True, text=True, env={**os.environ, 'NO_COLOR': '1'})
+
+    def test_apt_wait_free_immediately_prints_and_waits_for_nothing(self):
+        result = self.apt_wait('F')
+        self.assertEqual((result.returncode, result.stdout), (0, 'SLEEPS:0\n'), result.stderr)
+
+    def test_apt_wait_busy_then_free_shows_block_in_both_languages(self):
+        for lang, title, warning, done in (
+                ('en', 'SERVER IS INSTALLING SYSTEM UPDATES', 'DO NOT reboot or power off the server', '[OK] System update finished. Continuing Restore.'),
+                ('ru', 'СЕРВЕР УСТАНАВЛИВАЕТ ОБНОВЛЕНИЯ СИСТЕМЫ', 'НЕ ПЕРЕЗАГРУЖАЙТЕ и не выключайте сервер', '[OK] Обновление системы завершено. Продолжаю Restore.')):
+            with self.subTest(lang=lang):
+                result = self.apt_wait('BBFF', lang)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                for text in (title, warning, done): self.assertEqual(result.stdout.count(text), 1, result.stdout)
+                # First check busy, then two polls busy/free/free: 3 sleeps in total, no progress line yet.
+                self.assertIn('SLEEPS:3', result.stdout)
+                self.assertNotIn('of 60', result.stdout); self.assertNotIn('из 60', result.stdout)
+
+    def test_apt_wait_single_free_check_between_busy_does_not_finish(self):
+        result = self.apt_wait('BBFBFF')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('SLEEPS:5', result.stdout)
+
+    def test_apt_wait_times_out_after_60_minutes_with_minute_progress(self):
+        for lang, progress, error in (
+                ('en', 'Waiting for the system update: {} of 60 min. Do not reboot the server.', 'still running after 60 minutes. Restore was not started and no data was restored.'),
+                ('ru', 'Ожидание конца обновления: {} из 60 мин. Не перезагружайте сервер.', 'спустя 60 минут. Restore не запускался, данные не восстанавливались.')):
+            with self.subTest(lang=lang):
+                result = self.apt_wait('B', lang)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn('SLEEPS:720', result.stdout); self.assertIn(error, result.stdout)
+                self.assertNotIn('[OK]', result.stdout)
+                for minute in (1, 30, 60): self.assertEqual(result.stdout.count(progress.format(minute)), 1)
+                self.assertEqual(result.stdout.count(progress.split('{}')[0]), 60)
+
+    def test_apt_busy_ignores_unattended_upgrade_shutdown_daemon(self):
+        probe = lambda: subprocess.run(['bash', '-c', 'source "$1"; apt_busy', 'fixture', str(ROOT/'x-ui-latest.sh')]).returncode
+        if subprocess.run(['pgrep', '-x', 'apt|apt-get|dpkg']).returncode == 0:
+            self.skipTest('apt or dpkg is running on this machine')
+        def start(name):
+            process = subprocess.Popen(['bash', '-c', 'exec -a "$0" sleep 30', name])
+            self.addCleanup(lambda: (process.kill(), process.wait()))
+            time.sleep(.3)
+        start('/usr/share/unattended-upgrades/unattended-upgrade-shutdown --wait-for-signal')
+        self.assertEqual(probe(), 1)
+        start('python3 /usr/bin/unattended-upgrade')
+        self.assertEqual(probe(), 0)
+
     def test_real_entrypoint_tty_exit_back_invalid_and_no_tty(self):
         for answers in (b'1\n0\n',b'1\n9\n3\n0\n0\n'):
             code,text=tty_run(ROOT/'x-ui-latest.sh',answers)
@@ -526,6 +581,7 @@ esac
         script.write_text(library[:library.rindex('if [[ ${BASH_SOURCE[0]}')]+'''
 prepare_backup_helper() { :; }
 prepare_restore_security() { :; }
+wait_for_apt_idle() { :; }
 if [[ ${PARTIAL_SECURITY:-0} == 1 ]]; then
     post_restore_security() { printf 'Security: PARTIAL\\nOverall: PARTIAL\\n'; return 1; }
 fi
@@ -591,6 +647,7 @@ sys.exit(1 if result['status']=='partial' else 0)
 ''')
         code = '''source "$1"
 prepare_backup_helper() { :; }
+if [[ ${WAIT_FAIL:-0} == 1 ]]; then wait_for_apt_idle() { return 1; }; else wait_for_apt_idle() { :; }; fi
 pin_project_source() { PROJECT_SOURCE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; PROJECT_REF=$PROJECT_SOURCE_SHA; GITHUB_RAW=https://source.invalid/$PROJECT_SOURCE_SHA; }
 curl() { [[ ${PREP_FAIL:-0} != 1 && "$*" == *aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/assets/security/managed.py* ]] || return 1; cp "$TRUSTED_HELPER" "${@: -1}"; touch "$FIXTURE_ROOT/prepared"; }
 manager_menu
@@ -602,6 +659,7 @@ manager_menu
             ('cleanup', 'y\ny\nYES\n', {'RESTORE_EXIT':'42'}, 42, ''),
             ('prep-continue', 'y\ny\nYES\ny\n', {'PREP_FAIL':'1'}, 0, ''),
             ('prep-cancel', 'y\ny\nYES\nn\n', {'PREP_FAIL':'1'}, 0, ''),
+            ('apt-wait-timeout', 'y\ny\nYES\n', {'WAIT_FAIL':'1'}, 1, ''),
         ):
             with self.subTest(scenario=scenario):
                 for name in ('security-ran', 'prepared', 'restored'): (root/name).unlink(missing_ok=True)
@@ -623,6 +681,8 @@ manager_menu
                     self.assertFalse((root/'prepared').exists())
                     self.assertNotIn('UFW:', result.stdout)
                 elif scenario == 'prep-cancel': self.assertFalse((root/'restored').exists())
+                elif scenario == 'apt-wait-timeout':
+                    self.assertFalse((root/'restored').exists()); self.assertNotIn('Restore:', result.stdout)
 
     def test_inherited_backup_json_keeps_default_cli(self):
         result=self.f.run_tool('backup',BACKUP_JSON='1')
