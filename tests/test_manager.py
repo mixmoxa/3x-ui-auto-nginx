@@ -159,12 +159,18 @@ entrypoint
 run_installation() { printf 'CLI:%s|' "$UI_LANG"; printf '<%s>' "$@"; return 37; }
 entrypoint "$@"
 ''')
-            for args in (('-install','y'),('-version','v3.11.0'),('-uninstall','y'),('-unknown','value')):
+            for args in (('-install','y'),('-version','v3.11.0'),('-unknown','value')):
                 result=subprocess.run(['bash',str(script),*args],input='2\n',capture_output=True,text=True,
                                       env={**os.environ,'UI_LANG':'ru'})
                 self.assertEqual(result.returncode,37,result.stderr)
                 self.assertEqual(result.stdout,'CLI:en|'+''.join('<'+arg+'>' for arg in args))
                 self.assertNotIn('Select language',result.stdout)
+
+    def test_removed_uninstall_option_fails_with_message(self):
+        script='source "'+str(ROOT/'x-ui-latest.sh')+'"\nparse_installation_args -uninstall y; echo "RC:$?"\n'
+        result=subprocess.run(['bash','-c',script],capture_output=True,text=True)
+        self.assertIn('RC:2',result.stdout)
+        self.assertIn('The -uninstall option has been removed.',result.stdout+result.stderr)
 
     def test_russian_install_questions_defaults_and_eof(self):
         library='source "'+str(ROOT/'x-ui-latest.sh')+'"\nUI_LANG=ru\n'
@@ -809,8 +815,8 @@ manager_menu
             copy=self.f.root/'installer.sh';copy.write_text(library)
             if operation=='domains':
                 return 'source "'+str(copy)+'"; check_os() { :; }; prepare_domains_tools() { '+action+'; return 1; }; change_domains_action'
-            return 'source \"'+str(copy)+'\"; check_os() { :; }; check_cpu() { :; }; initialize_installation() { :; }; ip() { echo \"src 127.0.0.1\"; }; confirm_destructive_reinstall() { :; }; main() { '+action+'; }; uninstall_xui() { '+action+'; }; run_installation '+('-uninstall y' if operation=='uninstall' else '-install y')
-        for first,second in itertools.product(('backup','restore','install','uninstall','domains'),repeat=2):
+            return 'source \"'+str(copy)+'\"; check_os() { :; }; check_cpu() { :; }; initialize_installation() { :; }; ip() { echo \"src 127.0.0.1\"; }; confirm_destructive_reinstall() { :; }; main() { '+action+'; }; run_installation -install y'
+        for first,second in itertools.product(('backup','restore','install','domains'),repeat=2):
             with self.subTest(first=first,second=second):
                 ready=self.f.root/'ready';ready.unlink(missing_ok=True)
                 holder=subprocess.Popen(['bash','-c',dispatch(first,True),'fixture',str(ready)],

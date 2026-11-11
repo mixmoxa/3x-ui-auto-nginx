@@ -36,5 +36,6 @@ The supplied archive SHA-256 is
 e655164fa862046c781bf934fce9c9ce0dd220a57dae030211a1cf716ad3087c.
 Templates, variants, generator and applicable standard-library checks are carried
 without design/content changes. Demo builds, screenshots and browser dependencies
-are excluded. Full reinstall/uninstall retain their existing destructive managed
-scope; no additional website tree outside /var/www/html is claimed.
+are excluded. A confirmed full reinstall removes the three owned cover-panel,
+cover-reality and cover-vision directories together with their state, after the
+foreign-path preflight; no additional website tree outside /var/www/html is claimed.

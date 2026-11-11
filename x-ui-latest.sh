@@ -166,7 +166,6 @@ LEGACY_CERTBOT_CRON='@monthly certbot renew --non-interactive --pre-hook "system
 # ─── Default argument values ─────────────────────────────────────────────────
 domain=""
 reality_domain=""
-UNINSTALL="x"
 INSTALL="y"
 AUTODOMAIN="n"
 CFALLOW="n"
@@ -200,6 +199,9 @@ clean_previous_install() {
     rm -rf /etc/systemd/system/x-ui.service || return 1
     rm -rf /usr/local/x-ui || return 1
     rm -rf /etc/x-ui || return 1
+    # Cover-site state lived in /etc/x-ui (removed above); preflight_cover_sites already
+    # confirmed these exact directories as owned, so remove them for a fresh publish.
+    rm -rf /var/www/html/cover-panel /var/www/html/cover-reality /var/www/html/cover-vision || return 1
     rm -rf /etc/nginx/sites-enabled/* || return 1
     rm -rf /etc/nginx/sites-available/* || return 1
     rm -rf /etc/nginx/stream-enabled/* || return 1
@@ -275,7 +277,7 @@ initialize_installation() {
 
 parse_installation_args() {
     while [ "$#" -gt 0 ]; do
-        case "$1" in -install|-subdomain|-reality_domain|-ONLY_CF_IP_ALLOW|-version|-uninstall)
+        case "$1" in -install|-subdomain|-reality_domain|-ONLY_CF_IP_ALLOW|-version)
             (( $# >= 2 )) || { msg_err "Missing argument: $1"; return 2; } ;; esac
         case "$1" in
             -install)          INSTALL="$2";           shift 2 ;;
@@ -286,7 +288,7 @@ parse_installation_args() {
                 PANEL_VERSION="${2:-}"
                 [[ -n "$PANEL_VERSION" ]] || { msg_err "-version requires a stable release tag."; exit 1; }
                 shift 2 ;;
-            -uninstall)        UNINSTALL="$2";         shift 2 ;;
+            -uninstall)        msg_err "The -uninstall option has been removed."; return 2 ;;
             *)                 shift 1 ;;
         esac
     done
@@ -306,7 +308,7 @@ _validate_panel_version() {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# UNINSTALL
+# EXISTING INSTALLATION
 # ─────────────────────────────────────────────────────────────────────────────
 detect_existing_installation() {
     EXISTING_INSTALL_CATEGORIES=()
@@ -387,24 +389,6 @@ cleanup_adguard() {
     rm -rf /opt/AdGuardHome || return 1
     rm -f /etc/nginx/snippets/adguard.conf /etc/nginx/snippets/x-ui-auto-optional/adguard.conf || return 1
     rm -f /usr/local/lib/3x-ui-pro/managed-adguard.sh
-}
-
-uninstall_xui() {
-    cleanup_adguard || { msg_err "$(ui_text 'Cannot clean AdGuard Home; core deployment was not removed.' 'Не удалось удалить управляемый AdGuard Home; основной стек не удалён.')"; return 1; }
-    remove_legacy_certbot_cron || { msg_err "Cannot remove the exact legacy certificate renewal job."; return 1; }
-    rm -f /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx || return 1
-    printf 'y\n' | x-ui uninstall 2>/dev/null || true
-    rm -rf /etc/x-ui/ /usr/local/x-ui/
-    rm -f  /usr/bin/x-ui
-    $Pak -y remove nginx nginx-common nginx-core nginx-full
-    $Pak -y purge  nginx nginx-common nginx-core nginx-full
-    $Pak -y autoclean
-    rm -rf /var/www/html/ /var/www/diagnostics/ /var/www/subpage/ /etc/nginx/ /usr/share/nginx/
-    systemctl stop mtr-backend 2>/dev/null || true
-    systemctl disable mtr-backend 2>/dev/null || true
-    rm -f /etc/systemd/system/mtr-backend.service
-    rm -rf /usr/local/lib/3x-ui-pro/
-    systemctl daemon-reload 2>/dev/null || true
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2620,7 +2604,7 @@ adguard_stage() {
     install -o root -g root -m 0600 "$AGH_TEMP/helper" /usr/local/lib/3x-ui-pro/managed-adguard.sh || return 1
     . /usr/local/lib/3x-ui-pro/managed-adguard.sh
     agh_release "$(uname -m)" || return 1
-    apt-get install -y --no-install-recommends apache2-utils gnupg || return 1
+    apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends apache2-utils gnupg || return 1
     curl -fsSL --connect-timeout 15 --max-time 180 \
         "https://github.com/AdguardTeam/AdGuardHome/releases/download/${AGH_VERSION}/AdGuardHome_linux_${AGH_ARCH}.tar.gz" \
         -o "$AGH_TEMP/archive" || return 1
@@ -2977,7 +2961,10 @@ select_vision() {
     ui_text 'Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains): ' 'Введите домен VLESS TLS Vision (отличный от доменов панели и REALITY): '
     IFS= read -r vision_domain || return 1
     vision_domain=${vision_domain,,}
-    [[ -n "$vision_domain" ]] || return 1
+    [[ -n "$vision_domain" ]] || {
+        msg_err "$(ui_text 'Vision domain was not entered; installation stopped.' 'Домен Vision не введён; установка остановлена.')"
+        return 1
+    }
     INSTALL_VISION=y
 }
 
@@ -3731,13 +3718,6 @@ run_installation() (
     check_cpu
     parse_installation_args "$@" || exit $?
     [[ -z "$PANEL_VERSION" ]] || _validate_panel_version "$PANEL_VERSION" || exit 1
-    Pak=$(type apt &>/dev/null && echo apt || echo yum)
-    if [[ ${UNINSTALL} == *y* ]]; then
-        confirm_destructive_reinstall || exit 1
-        uninstall_xui || exit 1
-        msg_ok "$(ui_text '3X-UI Auto Nginx completely uninstalled.' '3X-UI Auto Nginx полностью удалён.')"
-        exit 0
-    fi
     initialize_installation
     # The historical early lookup belongs only to installation / auto-domain.
     IP4=$(ip route get 8.8.8.8 2>&1 | grep -Po -- 'src \K\S*')
@@ -4039,7 +4019,7 @@ PY
     command -v gpg >/dev/null && command -v gpgv >/dev/null || {
         # Only the signature-verification dependency; no dist-upgrade or stack
         # component update is part of this separate maintenance operation.
-        apt-get install -y --no-install-recommends gnupg gpgv || exit 1
+        apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends gnupg gpgv || exit 1
     }
     local snippet
     snippet=$(cat "$AGH_SNIPPET") || exit 1

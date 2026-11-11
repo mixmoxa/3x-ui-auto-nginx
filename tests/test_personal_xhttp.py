@@ -1027,7 +1027,7 @@ sys.exit(1 if sys.argv[1] == os.environ["FAIL_PANEL_COMMAND"] else 0)
     def test_panel_version_minimum_is_checked_before_destructive_actions(self):
         preflight = function('parse_installation_args')+'\n'+function('_validate_panel_version')
         dispatch=SOURCE.split('run_installation() (')[1].split('manager_menu()')[0]
-        self.assertLess(dispatch.index('_validate_panel_version'),dispatch.index('uninstall_xui'))
+        self.assertLess(dispatch.index('_validate_panel_version'),dispatch.index('initialize_installation'))
         for version, accepted in (("v3.7.0", False), ("v3.7.99", False), ("v3.8.0", True), ("v3.8.5", True),
                                   ("v3.9.0", True), ("3.10.0", True), ("v4.0.0", True),
                                   ("v3.08.0", False), ("v3.8", False), ("latest", False), ("", False)):

@@ -22,7 +22,7 @@ Primary install URL: `https://github.com/xPROMSx/3x-ui-auto-nginx/releases/lates
 
 ## Components
 
-- `x-ui-latest.sh`: interactive manager. Installation is a destructive fresh install / full rebuild, not an in-place updater. Reinstall of an existing deployment and uninstall require typing `YES`.
+- `x-ui-latest.sh`: interactive manager. Installation is a destructive fresh install / full rebuild, not an in-place updater. Reinstall of an existing deployment requires typing `YES`.
 - `assets/domains/managed.py`: Change Domains. Bounded edits of the local SQLite DB and nginx stream config, full Backup v3 before changes, role/Host ownership checks and durable private `prepared`/`switching`/`committed` recovery state in `/var/lib/3x-ui-auto-nginx/change-domains` (outside Restore trees). Known manifest-free v2.1.7 layouts can be adopted after read-only agreement checks. Old certificates/lineages are retained.
 - `assets/adguard/managed.sh`: managed AdGuard Home (AGH) config, nginx snippet, health/cleanup. Initial pin v0.107.80, schema 34; fresh installs update via the native web updater; updated binaries are verified against vendor signatures at Backup/Restore; v0.107.79 archives stay compatible.
 - `assets/amneziawg/managed.py`: optional embedded AmneziaWG 3.1 on UDP/8443 via the official panel API/session. Administrator firewall rules are left alone on failure.

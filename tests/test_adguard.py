@@ -286,9 +286,8 @@ class AdGuardInstaller(unittest.TestCase):
             self.assertNotIn('binary ',self.calls.read_text().split('core-health')[-1])
 
     def test_cleanup_precedes_core_and_preserves_core_on_failure(self):
-        main=function('main'); uninstall=function('uninstall_xui')
+        main=function('main')
         self.assertLess(main.index('cleanup_adguard'),main.index('clean_previous_install'))
-        self.assertLess(uninstall.index('cleanup_adguard'),uninstall.index('remove_legacy_certbot_cron'))
         r=self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'),'install_adguard')
         self.assertEqual(r.returncode,0,r.stderr)
         r=self.run_shell(('cleanup_adguard',),'cleanup_adguard; echo core-destruction',FAIL='cleanup')

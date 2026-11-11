@@ -797,6 +797,8 @@ curl() {
                 f=self.fixture();f.cdn();before=f.state()
                 route=f.p('/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf')
                 if foreign=='before-preflight':route.write_text('# foreign route; preserve\n')
+                html=f.root/'var/www/html'
+                for name in ('cover-panel','cover-reality','cover-vision','other'):(html/name).mkdir(parents=True,exist_ok=True)
                 script='systemctl() { :; }; msg_err() { :; };\n'
                 script+='\n'.join(relocated(function(name),f.root) for name in ('preflight_xhttp_cdn','preflight_cover_sites','clean_previous_install'))
                 script+='\nINSTALL_XHTTP_CDN=n; preflight_xhttp_cdn; '
@@ -805,6 +807,8 @@ curl() {
                 result=subprocess.run(['bash','-eu','-c',script],capture_output=True,text=True)
                 self.assertEqual(result.returncode,0 if foreign=='none' else 1,result.stderr)
                 self.assertEqual(route.exists(),foreign!='none')
+                for name in ('cover-panel','cover-reality','cover-vision'):self.assertEqual((html/name).exists(),foreign!='none')
+                self.assertTrue((html/'other').exists())
                 if foreign!='none':self.assertTrue(f.state()==before,'Foreign route caused data removal')
 
     def test_panel_reality_both_preserve_client_keys_ids_new_fields_and_optional_state(self):

@@ -21,8 +21,9 @@ perform no downloads, IP lookups or system preparation. An unfinished domain
 journal instead requires root and verified recovery before another menu action.
 
 Installation is the existing destructive fresh install/rebuild, with the same
-`YES` confirmation for an existing deployment. Existing explicit installation and
-uninstall arguments run directly in English, without language selection.
+`YES` confirmation for an existing deployment. Existing explicit installation
+arguments run directly in English, without language selection. The former
+`-uninstall` option has been removed; it now fails with exit code 2.
 Without arguments and without an interactive
 stdin/stdout TTY, the script refuses to install. Do not pipe the script into Bash;
 download it to a file so prompts keep their terminal input.
@@ -189,7 +190,7 @@ DNS/Let's Encrypt and a live VPS acceptance remain separate owner actions.
 
 ## Operation locking
 
-Installation, rebuild, uninstall, Change Domains and the updated standalone Backup/Restore and
+Installation, rebuild, Change Domains and the updated standalone Backup/Restore and
 `update-hooks` share a nonblocking `flock`. Contention returns **75** before stack
 changes. `/run/3x-ui-auto-nginx` is root-owned 0700; its regular 0600
 `operation.lock` is never deleted to release a lock and lies outside Restore trees.
