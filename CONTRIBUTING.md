@@ -43,6 +43,15 @@ to the third, and the other non-lock root tests to the fourth; shard five
 isolates `ManagerBackup`. The canonical collector includes new methods, and any
 failed shard fails the job. Plain `--suite root` remains sequential for local use.
 
+The hosted XHTTP job runs four non-root processes concurrently in one step:
+three shards of the `integration` suite (`--integration-shard N`, N = 1..3: the
+full gRPC test alone, the direct gRPC test with the other heavy transport tests,
+and every remaining integration test) and the `nonroot` suite. Each process prints
+its own PASS/FAIL and any failure fails the step. `run_ci.py` raises, and
+`--check-completeness` fails, if a named test is missing or an integration test is
+not in exactly one shard; plain `--suite integration` runs all of them sequentially
+for local use. gRPC iteration counts and timeouts are the same in every process.
+
 The `nonroot`, `integration` and `services` suites require EUID != 0; the `root` suite requires EUID 0 for ownership/permission coverage. The `systemd` suite requires EUID 0 **inside its disposable VM**, with systemd as PID 1. Do not run non-root suites under sudo. Legacy entry commands remain available for compatibility but are not the canonical CI interface.
 
 CI checks every tracked shell script with `bash -n` and ShellCheck **error-only**. Existing warning/info/style findings are not suppressed or claimed clean. All tracked workflow YAML is checked with actionlint 1.7.12, downloaded from its official release with a pinned SHA-256 verified before extraction; the workflow records the exact download and checksum.
@@ -81,6 +90,14 @@ passwordless sudo required) when a PR targeting `main` is opened, reopened, or u
 (Draft PRs included); switching Draft to Ready does not start a new run. It checks out the exact event's PR head SHA with full history.
 There is no branch-push or manual-dispatch trigger. A newer launch cancels an older running Full Fresh job for the same PR.
 
+`tests/fresh/run.sh` selects a scenario group through `XUI_FRESH_GROUP`:
+`positive` (installation, consumers, cold boot, Change Domains and Restore),
+`agh` (a separate clean installation followed by the native AdGuard Home update
+scenario), `negative` (clean-disk failure cases) or `all` (the three in that
+order, used locally). The workflow runs `positive`, `agh` and `negative` as three
+independent jobs; the aggregate `Full fresh installer (ubuntu-26.04)` (name unchanged)
+requires all three, so a missing group never passes.
+
 The unchanged harness boots a minimal disk-based VM
 under QEMU KVM with 4 vCPU/4 GiB RAM, runs the unmodified installer `main()` with
 maximum options and one exact checkout SHA, then cold-boots the same disk.
@@ -93,8 +110,8 @@ The existing canonical regression preserves STOP on unverified rollback.
 Only external DNS/DoT/filter/HTTP-01 services are controlled fixtures (real Pebble
 validation); official package/release downloads remain real. This does not test
 public Let's Encrypt, a provider's kernel/network or full disaster recovery.
-Raw installer logs, disks and private keys are never uploaded. The dedicated job
-has a 60-minute limit including P/R/Both changes and their three full Backups. Both ordinary native
+Raw installer logs, disks and private keys are never uploaded. Each dedicated job
+has a 60-minute limit; the positive job includes P/R/Both changes and their three full Backups. Both ordinary native
 services jobs have the standard 25-minute limit; their existing names, Debian 13
 coverage and all systemd jobs remain unchanged.
 
@@ -109,15 +126,16 @@ Never label the documentation exception as Full Fresh PASS.
 
 Every ordinary job and the final-stage check run `tests/ci_scope.py` after exact
 checkout with full history. A nonempty, reliable Git diff may use the lightweight
-mode only for the eight listed root README files, `docs/**/*.md`, and PNG images
-under `assets/support/`. SVG, agent/contributor instructions, tests, workflows,
+mode only for the eight listed root README files, `AGENTS.md`, `CLAUDE.md`,
+`CONTRIBUTING.md`, `docs/**/*.md`, and PNG images under `assets/support/`. SVG,
+tests, workflows,
 unknown paths/types, renames/copies and mixed changes keep full CI. A PR uses the
 merge-base of the event base/head; main pushes use before/head across the entire
 change. Invalid or unavailable revisions fall back to full CI; manual dispatch
 always runs full CI. Branch names, labels and commit messages do not classify it.
 
-The stdlib-only smoke validates changed regular paths, UTF-8, PNG chunk CRCs and
-pixel stream, local file/image references within the checkout, and diff whitespace.
+The stdlib-only smoke validates changed regular paths, UTF-8, the PNG signature
+and a 16 MiB size limit, local file/image references within the checkout, and diff whitespace.
 It checks new/touched references and tolerates unrelated pre-existing broken links;
 it does not contact external sites or enforce Markdown style. Corrupt documents
 fail the job. No APT, binary downloads, test suites, Docker or QEMU run in docs mode.

@@ -63,6 +63,36 @@ def root_shards(tests):
     return shards
 
 
+# Heavy gRPC fragmentation tests dominate the integration suite; each process
+# below is balanced to run for roughly the same time as the others.
+INTEGRATION_SHARD_1 = ('test_grpc_fragmented_full',)
+INTEGRATION_SHARD_2 = (
+    'test_grpc_fragmented_direct',
+    'test_managed_hysteria_http3_and_disabled_roles',
+    'test_amneziawg_tcp_udp_and_panel_restart',
+    'test_vision_and_initial_client_official_api',
+    'test_real_mihomo_generated_template',
+    'test_telemt_backup_restore_accepts_real_manager_install_plan',
+)
+
+
+def integration_shards(tests):
+    """Partition integration tests: two named groups and every other test in shard 3."""
+    shards = [[], [], []]
+    named = {name: index for index, names in enumerate((INTEGRATION_SHARD_1, INTEGRATION_SHARD_2))
+             for name in names}
+    method_names = {case.id().rsplit('.', 1)[1] for case in tests}
+    missing = sorted(name for name in named if name not in method_names)
+    if missing:
+        raise ValueError('Integration shard names a missing test: ' + ', '.join(missing))
+    for case in tests:
+        shards[named.get(case.id().rsplit('.', 1)[1], 2)].append(case)
+    assigned = [case.id() for shard in shards for case in shard]
+    if not all(shards) or sorted(assigned) != sorted(case.id() for case in tests):
+        raise ValueError('Integration shards must cover every test exactly once')
+    return shards
+
+
 def collect():
     directory = Path(__file__).resolve().parent
     sys.path.insert(0, str(directory))
@@ -103,6 +133,8 @@ def collect():
         if not tests:
             raise ValueError(f'Empty suite: {name}')
 
+    integration_shards(suites['integration'])
+
     print('CI TEST INVENTORY')
     print(f'Modules:          {len(modules)}')
     print(f'TestCase classes: {len(classes)}')
@@ -119,9 +151,12 @@ def main():
     mode.add_argument('--check-completeness', action='store_true')
     mode.add_argument('--suite', choices=SUITES)
     parser.add_argument('--root-shard', type=int, choices=range(1, 6))
+    parser.add_argument('--integration-shard', type=int, choices=range(1, 4))
     args = parser.parse_args()
     if args.root_shard is not None and args.suite != 'root':
         parser.error('--root-shard requires --suite root')
+    if args.integration_shard is not None and args.suite != 'integration':
+        parser.error('--integration-shard requires --suite integration')
     if args.suite and ((args.suite in ('root', 'systemd')) != (os.geteuid() == 0)):
         print(f'PRIVILEGE: FAIL — {args.suite} requires '
               + ('EUID 0' if args.suite in ('root', 'systemd') else 'EUID != 0'), file=sys.stderr)
@@ -137,6 +172,9 @@ def main():
     if args.root_shard is not None:
         tests = root_shards(tests)[args.root_shard - 1]
         print(f'ROOT SHARD {args.root_shard}/5: {len(tests)} tests', flush=True)
+    if args.integration_shard is not None:
+        tests = integration_shards(tests)[args.integration_shard - 1]
+        print(f'INTEGRATION SHARD {args.integration_shard}/3: {len(tests)} tests', flush=True)
     result = unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(tests))
     return 0 if result.wasSuccessful() else 1
 

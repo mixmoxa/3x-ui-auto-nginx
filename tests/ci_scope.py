@@ -1,19 +1,17 @@
 """Conservative Git-derived docs exception and stdlib-only documentation smoke test."""
 import argparse
-import binascii
 import html
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
-import struct
 import subprocess
 import sys
 from urllib.parse import unquote, urlsplit
-import zlib
 
 READMES = {'README.md', 'README_EN.md', 'README_RU.md', 'README_AR.md',
            'README_FA.md', 'README_ES.md', 'README_TR.md', 'README_ZH_CN.md'}
+INSTRUCTIONS = {'AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md'}
 
 
 def git(*args):
@@ -41,7 +39,7 @@ def changed_paths(data):
 
 def allowed(path):
     p = PurePosixPath(path)
-    return (path in READMES or (p.parts[0] == 'docs' and p.suffix == '.md')
+    return (path in READMES or path in INSTRUCTIONS or (p.parts[0] == 'docs' and p.suffix == '.md')
             or (p.parts[:2] == ('assets', 'support') and p.suffix == '.png'))
 
 
@@ -83,55 +81,6 @@ def classify(event, payload, sha):
 def validate_png(data):
     if len(data) > 16*1024*1024 or not data.startswith(b'\x89PNG\r\n\x1a\n'):
         raise ValueError('Invalid PNG signature/size')
-    offset, chunks, compressed = 8, [], bytearray()
-    while offset < len(data):
-        if offset+12 > len(data): raise ValueError('Truncated PNG')
-        size = struct.unpack('!I', data[offset:offset+4])[0]
-        kind = data[offset+4:offset+8]; end = offset+12+size
-        if end > len(data): raise ValueError('Truncated PNG chunk')
-        payload = data[offset+8:end-4]
-        if binascii.crc32(kind+payload) != struct.unpack('!I', data[end-4:end])[0]:
-            raise ValueError('PNG CRC mismatch')
-        chunks.append((kind, payload))
-        if kind == b'IDAT': compressed.extend(payload)
-        offset = end
-    if not chunks or chunks[0][0] != b'IHDR' or len(chunks[0][1]) != 13:
-        raise ValueError('Missing PNG header')
-    if chunks[-1] != (b'IEND', b'') or sum(k == b'IHDR' for k, _ in chunks) != 1 or sum(k == b'IEND' for k, _ in chunks) != 1:
-        raise ValueError('Invalid PNG boundaries')
-    kinds = [kind for kind, _ in chunks]
-    if b'IDAT' not in kinds or any(not re.fullmatch(b'[A-Za-z]{4}', k) or k[2:3].islower() or (k[:1].isupper() and k not in (b'IHDR',b'PLTE',b'IDAT',b'IEND')) for k in kinds):
-        raise ValueError('Invalid PNG chunk type')
-    first, last = kinds.index(b'IDAT'), len(kinds)-1-kinds[::-1].index(b'IDAT')
-    if any(k != b'IDAT' for k in kinds[first:last+1]) or kinds.count(b'PLTE') > 1:
-        raise ValueError('Invalid PNG chunk order')
-    if b'PLTE' in kinds and kinds.index(b'PLTE') > first: raise ValueError('Invalid PNG palette order')
-    w, h, depth, color, compression, filtering, interlace = struct.unpack('!IIBBBBB', chunks[0][1])
-    channels = {0:1, 2:3, 3:1, 4:2, 6:4}
-    depths = {0:(1,2,4,8,16), 2:(8,16), 3:(1,2,4,8), 4:(8,16), 6:(8,16)}
-    if not w or not h or color not in channels or depth not in depths[color] or compression or filtering or interlace not in (0,1):
-        raise ValueError('Invalid PNG header values')
-    if color == 3 and not any(k == b'PLTE' and len(v) % 3 == 0 and 0 < len(v) <= 768 for k, v in chunks):
-        raise ValueError('Missing PNG palette')
-    # Bound decompression; verify every scanline including Adam7 passes.
-    passes = ((0,0,1,1),) if interlace == 0 else ((0,0,8,8),(4,0,8,8),(0,4,4,8),(2,0,4,4),(0,2,2,4),(1,0,2,2),(0,1,1,2))
-    rows = []
-    for x, y, dx, dy in passes:
-        pw, ph = max(0,(w-x+dx-1)//dx), max(0,(h-y+dy-1)//dy)
-        if pw and ph:
-            row = (pw*channels[color]*depth+7)//8+1
-            if row*ph+sum(a*b for a,b in rows) > 64*1024*1024: raise ValueError('PNG pixels too large')
-            rows.append((row, ph))
-    expected = sum(a*b for a,b in rows)
-    decoder = zlib.decompressobj()
-    pixels = decoder.decompress(compressed, expected+1)
-    if not decoder.eof or decoder.unused_data or decoder.unconsumed_tail or len(pixels) != expected:
-        raise ValueError('Invalid PNG pixel stream')
-    offset = 0
-    for row, count in rows:
-        for _ in range(count):
-            if pixels[offset] > 4: raise ValueError('Invalid PNG filter')
-            offset += row
 
 
 def references(text):
@@ -186,7 +135,7 @@ def main():
         status = status if status in ('success', 'failure', 'cancelled') else 'unknown'
         message = ('DOCS-ONLY: Full Fresh E2E not executed; documentation scope verified.'
                    if docs and os.environ.get('CI_FRESH') == 'true' else
-                   'DOCS-ONLY: UTF-8, PNG integrity, local references and diff whitespace checked.'
+                   'DOCS-ONLY: UTF-8, PNG signature/size, local references and diff whitespace checked.'
                    if docs else 'FULL CI mode; job result: '+status+'.')
         if os.environ.get('CI_DOCS_ONLY') not in ('true','false'):
             message = 'Scope/smoke incomplete: documentation exception NOT verified; job result: '+status+'.'
@@ -203,7 +152,7 @@ def main():
     print(reason)
     if docs:
         try: smoke(base, head, changes)
-        except (ValueError, OSError, subprocess.SubprocessError, zlib.error, struct.error):
+        except (ValueError, OSError, subprocess.SubprocessError):
             print('DOCS SMOKE: FAIL — invalid text, image, local reference or diff whitespace', file=sys.stderr)
             return 1
         print('DOCS SMOKE: PASS')

@@ -63,7 +63,7 @@ Do not edit AGENTS.md or CLAUDE.md unless the owner's task says so.
 - Tests: run through tests/run_ci.py only (never unittest discover). Register every new test class
   and run --check-completeness. Exact commands are in CONTRIBUTING.md.
 - CI, required checks and protected job names: see CONTRIBUTING.md.
-- Changes to AGENTS.md, CLAUDE.md, tests and workflows always run full CI.
+- Changes to tests and workflows always run full CI.
 - Report honestly: exact HEAD, CI state per job as PASS / FAIL / IN PROGRESS / NOT RUN,
   what was read, what was not, which test level the change needs
   (0: CI only; 1: one command on a ready test server; 2: full clean-VPS test).

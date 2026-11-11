@@ -258,9 +258,9 @@ def restore_acceptance(ref):
 
 
 def fresh_acceptance(ref, group='all'):
-    """Run the linked positive installation and/or the clean-disk negative cases."""
+    """Run the linked positive installation, the AGH update scenario and/or the clean-disk negative cases."""
     global phase
-    if group not in ('all','positive','negative'):
+    if group not in ('all','positive','agh','negative'):
         raise ValueError('Invalid fresh scenario group')
     if group in ('all','positive'):
         fresh_disk()
@@ -295,6 +295,14 @@ def fresh_acceptance(ref, group='all'):
         invoke('checks.change_domains()', 'change-domains', 1200, tty=True)
         phase = 'restore-before-domains'
         invoke('checks.restore_before_domains()', 'restore-before-domains', 600, tty=True)
+        poweroff()
+    if group in ('all','agh'):
+        # Needs only an installed system; the phase restores its own state.
+        fresh_disk()
+        phase = 'maximum-install'
+        boot()
+        install('positive', ref)
+        invoke('checks.installed()', 'installed')
         phase = 'native-agh-update'
         invoke('checks.native_agh_update()', 'native-agh-update', 1200, tty=True)
         poweroff()

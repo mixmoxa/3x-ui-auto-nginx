@@ -8,7 +8,7 @@ restore_mode=${XUI_RESTORE_ACCEPTANCE:-0}
 fresh_group=all
 if [[ "$restore_mode" != 1 ]]; then
     fresh_group=${XUI_FRESH_GROUP:-all}
-    case "$fresh_group" in all|positive|negative) ;; *) printf 'Invalid fresh scenario group\n' >&2; exit 2 ;; esac
+    case "$fresh_group" in all|positive|agh|negative) ;; *) printf 'Invalid fresh scenario group\n' >&2; exit 2 ;; esac
 fi
 distro=ubuntu:26.04
 if [[ "$restore_mode" == 1 ]]; then

@@ -43,6 +43,22 @@ jobs:
           XUI_FRESH_GROUP: positive
         run: bash tests/fresh/run.sh
 
+  agh:
+    name: Fresh AGH update scenario (ubuntu-26.04)
+    needs: scope
+    if: needs.scope.outputs.docs_only == 'false'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Installed system, historical AdGuard Home enablement and native update
+        env:
+          XUI_FRESH_GROUP: agh
+        run: bash tests/fresh/run.sh
+
   negative:
     name: Fresh negative scenarios (ubuntu-26.04)
     needs: scope
@@ -61,7 +77,7 @@ jobs:
 
   fresh:
     name: Full fresh installer (ubuntu-26.04)
-    needs: [scope, positive, negative]
+    needs: [scope, positive, agh, negative]
     if: always()
     runs-on: ubuntu-26.04
     steps:
@@ -70,27 +86,29 @@ jobs:
           CI_DOCS_ONLY: ${{ needs.scope.outputs.docs_only }}
           CI_SCOPE_RESULT: ${{ needs.scope.result }}
           CI_POSITIVE_RESULT: ${{ needs.positive.result }}
+          CI_AGH_RESULT: ${{ needs.agh.result }}
           CI_NEGATIVE_RESULT: ${{ needs.negative.result }}
         run: |
           python3 - <<'PYFRESHRESULT'
           import os, sys
 
-          def fresh_success(docs, scope, positive, negative):
+          def fresh_success(docs, scope, positive, agh, negative):
               if scope != 'success':
                   return False
               if docs == 'true':
-                  return positive == negative == 'skipped'
-              return docs == 'false' and positive == negative == 'success'
+                  return positive == agh == negative == 'skipped'
+              return docs == 'false' and positive == agh == negative == 'success'
 
           docs = os.environ.get('CI_DOCS_ONLY', '')
           scope = os.environ.get('CI_SCOPE_RESULT', '')
           positive = os.environ.get('CI_POSITIVE_RESULT', '')
+          agh = os.environ.get('CI_AGH_RESULT', '')
           negative = os.environ.get('CI_NEGATIVE_RESULT', '')
-          passed = fresh_success(docs, scope, positive, negative)
+          passed = fresh_success(docs, scope, positive, agh, negative)
           if passed and docs == 'true':
               message = 'DOCS-ONLY: Full Fresh E2E not executed; documentation scope verified.'
           elif passed:
-              message = 'Full Fresh E2E: PASS; both positive and negative groups completed.'
+              message = 'Full Fresh E2E: PASS; the positive, AGH update and negative groups completed.'
           else:
               message = 'Full Fresh E2E: FAIL; scope or a required scenario group did not complete as expected.'
           print(message)

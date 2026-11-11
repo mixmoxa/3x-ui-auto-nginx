@@ -68,16 +68,41 @@ jobs:
       - name: Test completeness
         if: steps.scope.outputs.docs_only != 'true'
         run: python3 tests/run_ci.py --check-completeness
-      - name: Transport and security regression tests
+      - name: Transport, security and real Xray integration (parallel)
         if: steps.scope.outputs.docs_only != 'true'
         env:
           NGINX_BIN: /usr/sbin/nginx
-        run: python3 tests/run_ci.py --suite nonroot
-      - name: Real Xray and subscription integration
-        if: steps.scope.outputs.docs_only != 'true'
-        env:
-          NGINX_BIN: /usr/sbin/nginx
-        run: python3 tests/run_ci.py --suite integration
+        run: |
+          set -euo pipefail
+          # Four concurrent non-root processes: gRPC full, gRPC direct plus the
+          # heavier transport tests, the remaining integration tests, and the
+          # nonroot regression suite. run_ci.py guarantees that every
+          # integration test belongs to exactly one process.
+          run_process() {
+            local name=$1
+            shift
+            python3 tests/run_ci.py "$@" 2>&1 | sed -u "s/^/[$name] /"
+          }
+          names=(integration-1 integration-2 integration-3 nonroot)
+          pids=()
+          run_process integration-1 --suite integration --integration-shard 1 &
+          pids+=("$!")
+          run_process integration-2 --suite integration --integration-shard 2 &
+          pids+=("$!")
+          run_process integration-3 --suite integration --integration-shard 3 &
+          pids+=("$!")
+          run_process nonroot --suite nonroot &
+          pids+=("$!")
+          failed=0
+          for idx in "${!pids[@]}"; do
+            if wait "${pids[$idx]}"; then
+              printf 'Process %s: PASS\n' "${names[$idx]}"
+            else
+              printf 'Process %s: FAIL\n' "${names[$idx]}"
+              failed=1
+            fi
+          done
+          exit "$failed"
       - name: Whitespace validation
         if: steps.scope.outputs.docs_only != 'true'
         env:

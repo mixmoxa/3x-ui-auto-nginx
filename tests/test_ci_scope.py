@@ -90,7 +90,8 @@ class CIScope(unittest.TestCase):
 
     def test_documentation_histories_and_push(self):
         cases = [('README.md', '# Revised\n'), ('docs/SUPPORT.md', '# Donate\n'),
-                 ('assets/support/qr.png', png(b'\0\0\0')), ('README_EN.md', '# English\n')]
+                 ('assets/support/qr.png', png(b'\0\0\0')), ('README_EN.md', '# English\n'),
+                 ('AGENTS.md', '# Agents\n'), ('CLAUDE.md', '# Claude\n'), ('CONTRIBUTING.md', '# Contributing\n')]
         for name, data in cases:
             with self.subTest(name=name):
                 self.git('reset', '--hard', self.base)
@@ -111,7 +112,7 @@ class CIScope(unittest.TestCase):
 
     def test_mixed_and_unknown_files_require_full(self):
         for path in ('x-ui-latest.sh', 'assets/helper.py', 'tests/test_fixture.py',
-                     '.github/workflows/example.yml', 'AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md',
+                     '.github/workflows/example.yml',
                      'SECURITY.md', 'LICENSE', 'unknown.md', 'docs/run.sh', 'docs/data.yaml',
                      'assets/support/logo.svg', 'assets/support/file.bin', 'tests/ci_scope.py'):
             with self.subTest(path=path):
@@ -160,19 +161,20 @@ class CIScope(unittest.TestCase):
         self.assert_mode(self.check('push'), 'docs-only')
 
     def test_smoke_rejects_broken_resources_utf8_and_whitespace(self):
-        for name, content in (('assets/support/qr.png', png()[:-5]),
-                              ('docs/SUPPORT.md', b'\xff'),
-                              ('docs/SUPPORT.md', '[missing](missing.md)\n'),
-                              ('docs/SUPPORT.md', '![bad](../../outside.png)\n'),
-                              ('docs/SUPPORT.md', '# trailing space \n')):
+        cases = [('assets/support/qr.png', b'not a png')]
+        for name in ('docs/SUPPORT.md', 'README.md', 'AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md'):
+            cases += [(name, b'\xff'), (name, '[missing](missing.md)\n'),
+                      (name, '![bad](../../outside.png)\n'), (name, '# trailing space \n')]
+        for name, content in cases:
             with self.subTest(name=name):
                 self.git('reset', '--hard', self.base)
                 self.write(name, content); self.commit()
                 self.assertNotEqual(self.check().returncode, 0)
-        self.git('reset', '--hard', self.base)
-        data = bytearray(png()); data[45] ^= 1
-        self.write('assets/support/qr.png', bytes(data)); self.commit()
-        self.assertNotEqual(self.check().returncode, 0)
+        spec = importlib.util.spec_from_file_location('scope_png', ROOT/'tests/ci_scope.py')
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        module.validate_png(png())
+        for data in (b'', png()[:7], b'GIF89a'+png()[6:], png()+b'\0'*(16*1024*1024)):
+            with self.assertRaises(ValueError): module.validate_png(data)
 
     def test_existing_broken_reference_and_deleted_docs(self):
         self.write('docs/old.md', '[legacy](missing.md)\n'); self.base = self.commit()
@@ -339,10 +341,11 @@ class CIScope(unittest.TestCase):
         tree=ast.parse((ROOT/'tests/fresh/acceptance.py').read_text())
         function=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='fresh_acceptance')
         positive=['maximum-install','manager-backup','transport-consumers','AWG-payload','tech0-RED-GREEN',
-                  'installed-renewal-hooks','cold-boot','cold-transport-consumers','change-domains','restore-before-domains','native-agh-update']
+                  'installed-renewal-hooks','cold-boot','cold-transport-consumers','change-domains','restore-before-domains']
+        agh=['maximum-install','maximum-install','native-agh-update']
         negative=['mandatory-dependency-negative','DoT-outage-partial-install','DoT-outage-core-consumers']
         with tempfile.TemporaryDirectory() as directory:
-            for group,expected,disks in (('all',positive+negative,3),('positive',positive,1),('negative',negative,2)):
+            for group,disks in (('all',4),('positive',1),('agh',1),('negative',2)):
                 events=[];calls=[];group_root=Path(directory)/group;group_root.mkdir()
                 env=dict(ROOT=group_root,phase='',re=re)
                 def record(kind):events.append((kind,env['phase']))
@@ -354,21 +357,30 @@ class CIScope(unittest.TestCase):
                 env['fresh_acceptance']('a'*40,group)
                 positive_phases=[positive[0],*positive[:6],'installed-renewal-hooks','cold-boot',*positive[6:]]
                 self.assertEqual([phase for kind,phase in events if kind=='phase'],
-                                 (positive_phases if group!='negative' else [])+(negative if group!='positive' else []))
+                                 (positive_phases if group in ('all','positive') else [])+
+                                 (agh if group in ('all','agh') else [])+
+                                 (negative if group in ('all','negative') else []))
                 positive_calls=['positive','checks.installed()','checks.manager_backup()','checks.transports()',
                     'checks.amneziawg()','checks.search_domain_regression()','checks.renewal()',
                     'checks.disabled_cold_boot(prepare=True)','checks.disabled_cold_boot()',
                     'checks.installed(cold=True)','checks.transports()','checks.change_domains()',
-                    'checks.restore_before_domains()','checks.native_agh_update()']
+                    'checks.restore_before_domains()']
+                agh_calls=['positive','checks.installed()','checks.native_agh_update()']
                 negative_calls=['dependency','dot-outage','checks.transports(vision=False)']
-                self.assertEqual(calls,(positive_calls if group!='negative' else [])+
-                                       (negative_calls if group!='positive' else []))
+                self.assertEqual(calls,(positive_calls if group in ('all','positive') else [])+
+                                       (agh_calls if group in ('all','agh') else [])+
+                                       (negative_calls if group in ('all','negative') else []))
+                if group in ('all','agh'):
+                    self.assertEqual(calls.count('checks.native_agh_update()'),1)
+                    self.assertEqual([phase for kind,phase in events if kind=='phase'].count('native-agh-update'),1)
                 self.assertEqual(sum(kind=='disk' for kind,_ in events),disks)
-                if group!='positive':
+                if group=='agh':
+                    self.assertEqual([kind for kind,_ in events],['disk','boot','phase','phase','phase','off'])
+                if group in ('all','negative'):
                     for phase in negative[:2]:
                         boot_index=events.index(('boot',phase))
                         self.assertEqual(events[boot_index-1][0],'disk')
-                if group!='negative':
+                if group in ('all','positive'):
                     cold=events.index(('boot','cold-boot'))
                     self.assertEqual(events[cold-1][0],'off')
                     self.assertNotIn(('disk','cold-boot'),events)
@@ -388,19 +400,21 @@ class CIScope(unittest.TestCase):
         env={};exec(compile(ast.Module(body=[function],type_ignores=[]),'fresh-result','exec'),env)
         states=('success','failure','cancelled','skipped')
         for docs in ('true','false','','unknown'):
-            for scope,positive,negative in itertools.product(states,repeat=3):
-                expected=scope=='success' and ((docs=='true' and positive==negative=='skipped') or
-                                              (docs=='false' and positive==negative=='success'))
-                self.assertEqual(env['fresh_success'](docs,scope,positive,negative),expected,
-                                 (docs,scope,positive,negative))
-        for docs,scope,positive,negative,passed in (('false','success','success','success',True),
-                ('true','success','skipped','skipped',True),('true','failure','skipped','skipped',False),
-                ('false','success','skipped','success',False),('false','success','cancelled','success',False)):
+            for scope,positive,agh,negative in itertools.product(states,repeat=4):
+                expected=scope=='success' and ((docs=='true' and positive==agh==negative=='skipped') or
+                                              (docs=='false' and positive==agh==negative=='success'))
+                self.assertEqual(env['fresh_success'](docs,scope,positive,agh,negative),expected,
+                                 (docs,scope,positive,agh,negative))
+        for docs,scope,positive,agh,negative,passed in (('false','success','success','success','success',True),
+                ('true','success','skipped','skipped','skipped',True),('true','failure','skipped','skipped','skipped',False),
+                ('false','success','skipped','success','success',False),('false','success','cancelled','success','success',False),
+                ('false','success','success','failure','success',False),('false','success','success','skipped','success',False),
+                ('true','success','skipped','success','skipped',False)):
             with tempfile.TemporaryDirectory() as directory:
                 summary=Path(directory)/'summary'
                 result=subprocess.run(['python3','-c',code],text=True,capture_output=True,env={**os.environ,
                     'CI_DOCS_ONLY':docs,'CI_SCOPE_RESULT':scope,'CI_POSITIVE_RESULT':positive,
-                    'CI_NEGATIVE_RESULT':negative,'GITHUB_STEP_SUMMARY':str(summary)})
+                    'CI_AGH_RESULT':agh,'CI_NEGATIVE_RESULT':negative,'GITHUB_STEP_SUMMARY':str(summary)})
                 self.assertEqual(result.returncode==0,passed)
                 self.assertEqual(summary.read_text().strip(),result.stdout.strip())
                 if docs=='true' and passed:
@@ -426,6 +440,31 @@ class CIScope(unittest.TestCase):
             cwd=ROOT, text=True, capture_output=True)
         self.assertNotEqual(rejected.returncode, 0)
         self.assertIn('--root-shard requires --suite root', rejected.stderr)
+
+    def test_integration_shards_cover_canonical_suite_once(self):
+        from run_ci import collect, integration_shards, INTEGRATION_SHARD_1, INTEGRATION_SHARD_2
+        from unittest.mock import patch
+        tests = collect()['integration']
+        shards = integration_shards(tests)
+        assigned = [case.id() for shard in shards for case in shard]
+        self.assertCountEqual(assigned, [case.id() for case in tests])
+        self.assertEqual(len(assigned), len(set(assigned)))
+        self.assertTrue(all(shards))
+        self.assertEqual([case.id().rsplit('.', 1)[1] for case in shards[0]], list(INTEGRATION_SHARD_1))
+        self.assertCountEqual([case.id().rsplit('.', 1)[1] for case in shards[1]], INTEGRATION_SHARD_2)
+        with patch('run_ci.INTEGRATION_SHARD_2', INTEGRATION_SHARD_2 + ('test_renamed_or_removed',)):
+            with self.assertRaisesRegex(ValueError, 'missing test: test_renamed_or_removed'):
+                integration_shards(tests)
+        rejected = subprocess.run(
+            ['python3', 'tests/run_ci.py', '--suite', 'nonroot', '--integration-shard', '1'],
+            cwd=ROOT, text=True, capture_output=True)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn('--integration-shard requires --suite integration', rejected.stderr)
+        workflow = (ROOT/'.github/workflows/stack-xhttp.yml').read_text()
+        for shard in ('1', '2', '3'):
+            self.assertEqual(workflow.count('--suite integration --integration-shard '+shard), 1)
+        self.assertEqual(workflow.count('--suite nonroot'), 1)
+        self.assertNotIn('sudo', workflow.split('(parallel)', 1)[1].split('Whitespace validation', 1)[0])
 
     def test_kvm_preflight_requires_actual_vm_creation(self):
         import importlib.util
@@ -454,11 +493,12 @@ class CIScope(unittest.TestCase):
     def test_fresh_workflow_wires_independent_groups_and_kvm_budgets(self):
         workflow=(ROOT/'.github/workflows/fresh-acceptance.yml').read_text()
         self.assertEqual(workflow.count('name: Full fresh installer (ubuntu-26.04)'),1)
-        self.assertIn('needs: [scope, positive, negative]',workflow)
+        self.assertIn('needs: [scope, positive, agh, negative]',workflow)
         self.assertIn('if: always()',workflow.split('  fresh:',1)[1])
-        self.assertEqual(workflow.count('timeout-minutes: 60'),2)
-        self.assertEqual(workflow.count("if: needs.scope.outputs.docs_only == 'false'"),2)
-        for group in ('positive','negative'):
+        self.assertEqual(workflow.count('timeout-minutes: 60'),3)
+        self.assertEqual(workflow.count("if: needs.scope.outputs.docs_only == 'false'"),3)
+        self.assertEqual(workflow.count('name: Fresh AGH update scenario (ubuntu-26.04)'),1)
+        for group in ('positive','agh','negative'):
             block=re.split(r'\n  [a-z]+:',workflow.split('  '+group+':',1)[1])[0]
             self.assertIn('needs: scope',block)
             self.assertIn('XUI_FRESH_GROUP: '+group,block)

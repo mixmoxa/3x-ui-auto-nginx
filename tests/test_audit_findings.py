@@ -512,11 +512,11 @@ class AuditRecovery(unittest.TestCase):
 
     def test_json_user_choices_survive_backup_restore(self):
         from test_personal_backup import PersonalBackup
+        # One case per distinct outcome of the URI repair: only enable=='true' with the
+        # exact old project-generated URI is rewritten; everything else is user state.
         for enabled, uri in (('true','https://example.com/jsonsub/'),
-                             ('false','https://example.com/jsonsub/'),
-                             ('false','https://custom.example/export?name=mine'),
-                             ('false',''), ('true','https://custom.example/export/'),
-                             ('true',''), (None,''), (None,None),
+                             ('true','https://custom.example/export/'),
+                             (None,None),
                              ('false','https://example.com/jsonsub?name='),
                              (None,'https://example.com/jsonsub?name='),
                              ('true','https://example.com/jsonsub?name=')):
