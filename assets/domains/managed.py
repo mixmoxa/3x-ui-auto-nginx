@@ -45,9 +45,7 @@ AGH = '/opt/AdGuardHome/managed.json'
 CORE = ('reality', 'ws', 'grpc', 'xhttp', 'hysteria2')
 SNI_INCLUDE = '/etc/nginx/stream-sni.d/*.conf'
 UPSTREAM_INCLUDE = '/etc/nginx/stream-upstreams.d/*.conf'
-TELEMT_FILES = ('/etc/nginx/conf.d/telemt-web-manager.conf', '/etc/nginx/conf.d/telemt-web-manager-acme.conf',
-                '/etc/nginx/stream-sni.d/telemt-web-manager.conf', '/etc/nginx/stream-upstreams.d/telemt-web-manager.conf')
-TELEMT_MANIFEST = '/var/lib/telemt-web-manager/manifest.json'
+TELEMT_INCLUDES = ('/etc/nginx/stream-sni.d/telemt-web-manager.conf', '/etc/nginx/stream-upstreams.d/telemt-web-manager.conf')
 
 
 class Refusal(ValueError):
@@ -405,17 +403,17 @@ class Operation:
             require(all(context[key] == expected[key] for key in ('domains', 'inbound_roles', 'features')),
                     'Managed roles changed independently; recovery material retained.')
         self.validate_files(context)
-        if expected and 'telemt' in expected:
-            require(context['telemt'] == expected['telemt'], 'Telemt nginx integration changed independently; preserved.')
         return context
 
     def stream_integration(self, context, stream):
-        """Recognize the inline or include Telemt route in our stream, without editing it.
+        """Read TWPM SNI names for the domain conflict check only.
 
-        TWPM files are foreign: recognized by name and guarded, never compared.
-        The remaining complete stream still has to match our bounded template.
+        TWPM files are foreign: recognized by name, never compared or guarded.
+        The complete stream still has to match our bounded template.
         """
-        normalize = lambda value: re.sub(r'\s+', '', re.sub(r'(?m)#.*$', '', value))
+        require('# telemt-web-manager' not in stream and 'twm_frontend' not in stream,
+                'stream.conf содержит старые inline-строки Telegram Web Proxy Manager. Обновите TWPM до текущей версии '
+                'или удалите эти строки, затем повторите. Данные не менялись.')
         entries = []
         for directory in ('/etc/nginx/stream-sni.d', '/etc/nginx/stream-upstreams.d'):
             path = self.path(directory)
@@ -424,41 +422,15 @@ class Operation:
                 require(stat.S_ISDIR(path.lstat().st_mode) and path.stat().st_uid == path.stat().st_gid == 0 and
                         stat.S_IMODE(path.stat().st_mode) == 0o755, 'Unsafe nginx stream include directory.')
                 entries += [str(p.relative_to(self.root)) for p in path.iterdir()]
-        require(set(entries) <= {name.lstrip('/') for name in TELEMT_FILES[2:]}, 'Unknown additional nginx stream include files.')
-        included = bool(entries)
-        row = re.findall(r'^    ([a-z0-9.-]+) twm_frontend; # telemt-web-manager\n', stream, re.M)
-        backend = '\n# telemt-web-manager\nupstream twm_frontend { server 127.0.0.1:7444; }\n'
-        if included:
-            require(set(entries) == {name.lstrip('/') for name in TELEMT_FILES[2:]} and not row,
-                    'Incomplete or conflicting Telemt include integration.')
-            sni = self.read(TELEMT_FILES[2])
-            hosts = re.findall(r'^\s*([a-z0-9.-]+)\s+twm_frontend\s*;', re.sub(r'(?m)#.*$', '', sni))
-            host = single(hosts, 'Unknown Telemt SNI include.')
-            require(normalize(sni) == host+'twm_frontend;' and
-                    normalize(self.read(TELEMT_FILES[3])) == 'upstreamtwm_frontend{server127.0.0.1:7444;}',
-                    'Changed Telemt stream include objects.')
-            require(all(stream.count('include '+name+';') == 1 for name in (SNI_INCLUDE, UPSTREAM_INCLUDE)),
-                    'Telemt stream include directives are incomplete or ambiguous.')
-        elif row:
-            host = single(row, 'Duplicate Telemt SNI rows.')
-            literal = f'    {host} twm_frontend; # telemt-web-manager\n'
-            require(stream.count('map $ssl_preread_server_name $sni_name {') == 1, 'Unknown Telemt SNI map.')
-            opening = stream.index('map $ssl_preread_server_name $sni_name {')
-            closing = stream.index('}', opening)
-            require(opening < stream.index(literal) < closing and stream.count(backend) == 1 and
-                    stream.index(backend) == closing+1, 'Changed legacy Telemt stream fragments.')
-            stream = stream.replace(literal, '', 1).replace(backend, '', 1)
-        else:
-            require(not any(os.path.lexists(self.path(name)) for name in TELEMT_FILES), 'Incomplete Telemt nginx integration.')
-            context['telemt'] = None
-            return stream
-        hostname(host)
-        require(host not in context['domains'].values(), 'Telemt SNI conflicts with a managed 3X-UI domain.')
-        paths = [name for name in TELEMT_FILES if os.path.lexists(self.path(name))]
-        main = re.sub(r'(?m)#.*$', '', self.read('/etc/nginx/nginx.conf'))
-        require(main.count('include /etc/nginx/conf.d/*.conf;') == 1, 'Telemt vhosts are not included through the known HTTP contract.')
-        context['telemt'] = dict(domain=host, files={name:self.guard_value(name) for name in paths},
-                                 layout='include' if included else 'inline')
+        require(set(entries) <= {name.lstrip('/') for name in TELEMT_INCLUDES}, 'Unknown additional nginx stream include files.')
+        context['telemt'] = None
+        if entries:
+            sni = self.read(TELEMT_INCLUDES[0]) if os.path.lexists(self.path(TELEMT_INCLUDES[0])) else ''
+            hosts = re.findall(r'^\s*([a-z0-9.-]+)\s+twm_frontend\s*;', re.sub(r'(?m)#.*$', '', sni), re.M)
+            require(not set(hosts) & set(context['domains'].values()), 'Telemt SNI conflicts with a managed 3X-UI domain.')
+            main = re.sub(r'(?m)#.*$', '', self.read('/etc/nginx/nginx.conf'))
+            require(main.count('include /etc/nginx/conf.d/*.conf;') == 1, 'Telemt vhosts are not included through the known HTTP contract.')
+            context['telemt'] = dict(domains=hosts)
         return stream
 
     def validate_files(self, context):
@@ -480,7 +452,7 @@ class Operation:
             row = context['rows'][context['inbound_roles']['vision']]
             expected += 'upstream vision { server 127.0.0.1:'+str(row['port'])+'; }'
         layouts = (('', ''), ('include '+SNI_INCLUDE+';', 'include '+UPSTREAM_INCLUDE+';'))
-        if (context['telemt'] or {}).get('layout') == 'include':
+        if context['telemt'] is not None:
             layouts = layouts[1:]  # Files alone never prove an active include route.
         if context['hysteria_cover']:
             require(context['streams'][context['inbound_roles']['reality']]['realitySettings'].get('xver') == 1, 'Backup upstream requires REALITY PROXY v1.')
@@ -834,7 +806,10 @@ class Operation:
         require(panel != reality and old['vision'] not in (panel, reality), 'New domains conflict with each other or Vision.')
         require(panel != old['reality'] and reality != old['panel'], 'Panel/REALITY role exchange is unsupported; choose distinct new domains.')
         require((panel, reality) != (old['panel'], old['reality']), 'Domains are unchanged; no operation is necessary.')
-        require(not context.get('telemt') or context['telemt']['domain'] not in (panel, reality),
+        telemt = context['telemt']
+        if telemt is not None and not telemt['domains']:
+            print('WARN: Telegram Web Proxy Manager domain not found in '+TELEMT_INCLUDES[0]+'; domain conflict check skipped.', file=sys.stderr)
+        require(not telemt or not {panel, reality} & set(telemt['domains']),
                 'New domain conflicts with the Telemt SNI route; no data changed.')
         history = (context['manifest'] or {}).get('retained_domains', {})
         require(isinstance(history, dict), 'Invalid retained domain ownership metadata.')
@@ -1042,9 +1017,7 @@ class Operation:
 
     @staticmethod
     def summary(context):
-        result = {key: copy.deepcopy(context[key]) for key in ('domains', 'inbound_roles', 'features')}
-        result['telemt'] = copy.deepcopy(context.get('telemt'))
-        return result
+        return {key: copy.deepcopy(context[key]) for key in ('domains', 'inbound_roles', 'features')}
 
     @staticmethod
     def same_value(column, left, right):
@@ -1104,7 +1077,6 @@ class Operation:
 
     def guards(self, context):
         paths = ['/etc/systemd/system/x-ui.service', '/etc/default/x-ui']
-        paths += list((context.get('telemt') or {}).get('files', {}))
         if context['features']['vision']:
             paths += ['/etc/nginx/sites-available/vision.conf', '/etc/nginx/sites-available/vision-acme.conf',
                       '/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision']
@@ -1115,11 +1087,10 @@ class Operation:
         return digest(json.dumps(value, sort_keys=True).encode())
 
     def check_guards(self, record):
-        allowed = {'/etc/systemd/system/x-ui.service', '/etc/default/x-ui', '/etc/nginx/sites-available/vision.conf',
-                   '/etc/nginx/sites-available/vision-acme.conf', '/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision'}
-        allowed.update(TELEMT_FILES)
-        allowed.add(TELEMT_MANIFEST)
-        require(record['guards'].keys() <= allowed and all(self.guard_value(path) == expected for path, expected in record['guards'].items()),
+        # Journals from older versions may also hold foreign TWPM paths; those are ignored.
+        ours = {'/etc/systemd/system/x-ui.service', '/etc/default/x-ui', '/etc/nginx/sites-available/vision.conf',
+                '/etc/nginx/sites-available/vision-acme.conf', '/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision'}
+        require(all(self.guard_value(path) == expected for path, expected in record['guards'].items() if path in ours),
                 'Service/Vision resources changed independently; operation refused to overwrite them.')
 
     def conflict_check(self, record):

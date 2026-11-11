@@ -453,48 +453,47 @@ curl() {
         temporary = tempfile.TemporaryDirectory(prefix='domain-operation-'); self.addCleanup(temporary.cleanup)
         return DomainFixture(temporary.name, **kwargs)
 
-    def test_legacy_telemt_change_domains_preserves_its_integration(self):
-        f=self.fixture(historical=True); owned=f.telemt(); before=f.state()
-        # Historical A still works without private manager state.
-        marker='/var/lib/telemt-web-manager/manifest.json'
-        owned.pop(marker);f.p(marker).unlink()
-        f.change('second.example')
-        self.assertEqual(f.operation.discover()['domains']['panel'],'second.example')
-        self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Telemt files changed')
-        stream=f.p(f.module.STREAM).read_text()
-        self.assertIn('    telegram.example twm_frontend; # telemt-web-manager\n',stream)
-        self.assertIn('upstream twm_frontend { server 127.0.0.1:7444; }',stream)
-        for name in ('clients','client_inbounds','users','client_traffics'):
-            self.assertEqual(f.state()[name],before[name])
+    def test_inline_twpm_refuses_early_without_changes(self):
+        for historical in (False,True):
+            with self.subTest(historical=historical):
+                f=self.fixture(historical=historical);owned=f.telemt();before=f.state()
+                stream=f.p(f.module.STREAM).read_bytes()
+                with self.assertRaisesRegex(f.module.Refusal,'^stream.conf содержит старые inline-строки Telegram Web Proxy Manager\\. '
+                                            'Обновите TWPM до текущей версии или удалите эти строки, затем повторите\\. Данные не менялись\\.$'):
+                    f.change('new-panel.example','new-cover.example')
+                self.assertTrue(f.state()==before,'Refusal changed SQLite')
+                self.assertEqual(f.p(f.module.STREAM).read_bytes(),stream)
+                self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Telemt files changed')
+                self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] or args[0]=='certbot' for _,args in f.calls))
+                self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
 
-    def test_telemt_inline_include_panel_reality_both_and_verified_rollback(self):
-        for includes,mode in ((kind,mode) for kind in (False,True) for mode in ('panel','reality','both')):
-            with self.subTest(includes=includes,mode=mode):
-                f=self.fixture(optional=not includes and mode=='both',historical=not includes)
-                if includes and mode=='both': f.cdn()
-                owned=f.telemt(includes); before=f.state(); stream=f.p(f.module.STREAM).read_text()
+    def test_telemt_include_panel_reality_both_and_verified_rollback(self):
+        for mode in ('panel','reality','both'):
+            with self.subTest(mode=mode):
+                f=self.fixture()
+                if mode=='both': f.cdn()
+                owned=f.telemt(True); before=f.state(); stream=f.p(f.module.STREAM).read_text()
                 f.change('new-panel.example' if mode!='reality' else None,'new-cover.example' if mode!='panel' else None)
                 context=f.operation.discover()
-                self.assertEqual(context['telemt']['domain'],'telegram.example')
+                self.assertEqual(context['telemt']['domains'],['telegram.example'])
                 self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Telemt files changed')
                 self.assertEqual(f.p(f.module.STREAM).read_text().replace('new-panel.example',f.panel).replace('new-cover.example',f.reality),stream)
                 for table in ('clients','client_inbounds','users','client_traffics'): self.assertEqual(f.state()[table],before[table])
                 self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
-        for includes in (False,True):
-            with self.subTest(rollback=includes):
-                f=self.fixture();owned=f.telemt(includes);before=f.state();stream=f.p(f.module.STREAM).read_bytes()
-                f.fault='verifying new stack'
-                with self.assertRaises(subprocess.CalledProcessError): f.change('new-panel.example','new-cover.example')
-                self.assertEqual(f.state(),before)
-                self.assertEqual(f.p(f.module.STREAM).read_bytes(),stream)
-                self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Telemt files changed')
-                self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
-                self.assertTrue(all(value=='active' for value in f.services.values()))
-                self.assertFalse(any('restore' in args for _,args in f.calls))
+        with self.subTest(rollback=True):
+            f=self.fixture();owned=f.telemt(True);before=f.state();stream=f.p(f.module.STREAM).read_bytes()
+            f.fault='verifying new stack'
+            with self.assertRaises(subprocess.CalledProcessError): f.change('new-panel.example','new-cover.example')
+            self.assertEqual(f.state(),before)
+            self.assertEqual(f.p(f.module.STREAM).read_bytes(),stream)
+            self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Telemt files changed')
+            self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
+            self.assertTrue(all(value=='active' for value in f.services.values()))
+            self.assertFalse(any('restore' in args for _,args in f.calls))
 
     def test_twpm_canonical_vhosts_panel_reality_both_and_rollback(self):
         for layout in ('legacy','keepalive','site'):
-            for includes in (False,True):
+            for includes in (True,):
                 for mode in ('panel','reality','both'):
                     with self.subTest(layout=layout,includes=includes,mode=mode):
                         f=self.fixture()
@@ -503,7 +502,7 @@ curl() {
                         before=f.state(); stream=f.p(f.module.STREAM).read_text()
                         f.change('new-panel.example' if mode!='reality' else None,
                                  'new-cover.example' if mode!='panel' else None)
-                        self.assertEqual(f.operation.discover()['telemt']['domain'],'telegram.example')
+                        self.assertEqual(f.operation.discover()['telemt']['domains'],['telegram.example'])
                         self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'TWPM state changed')
                         self.assertEqual(f.p(f.module.STREAM).read_text().replace('new-panel.example',f.panel).replace('new-cover.example',f.reality),stream)
                         for table in ('clients','client_inbounds','users','client_traffics'):
@@ -522,7 +521,7 @@ curl() {
                     self.assertFalse(any('restore' in args for _,args in f.calls))
 
     def test_twpm_changed_vhost_and_missing_manifest_keep_route(self):
-        for includes in (False,True):
+        for includes in (True,):
             for change in ('vhost','manifest','acme'):
                 with self.subTest(includes=includes,change=change):
                     f=self.fixture();owned=f.telemt(includes,'site',origin_port=18091)
@@ -537,45 +536,101 @@ curl() {
                     owned={path:f.p(path).read_bytes() for path in owned if f.p(path).exists()}
                     stream=f.p(f.module.STREAM).read_text()
                     f.change('new-panel.example','new-cover.example')
-                    self.assertEqual(f.operation.discover()['telemt']['domain'],'telegram.example')
+                    self.assertEqual(f.operation.discover()['telemt']['domains'],['telegram.example'])
                     self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'TWPM state changed')
                     self.assertEqual(f.p(f.module.STREAM).read_text().replace('new-panel.example',f.panel).replace('new-cover.example',f.reality),stream)
 
     def test_telemt_conflicts_and_unknown_routes_refuse_before_backup(self):
-        for includes in (False,True):
-            cases=('panel-conflict','reality-conflict','upstream','duplicate','unknown','mixed','include-position')
-            for fault in cases+(('commented-includes',) if includes else ()):
-                with self.subTest(includes=includes,fault=fault):
-                    f=self.fixture();f.telemt(includes);before=f.state()
-                    stream=f.p(f.module.STREAM)
-                    sni=f.p('/etc/nginx/stream-sni.d/telemt-web-manager.conf') if includes else stream
-                    if fault=='upstream':
-                        if includes: f.p('/etc/nginx/stream-upstreams.d/telemt-web-manager.conf').unlink()
-                        else: stream.write_text(stream.read_text().replace('server 127.0.0.1:7444;','server 127.0.0.1:7445;'))
-                    elif fault=='duplicate':
-                        row='    telegram.example twm_frontend; # telemt-web-manager\n'
-                        sni.write_text(sni.read_text()*2 if includes else sni.read_text().replace(row,row+row))
-                    elif fault=='unknown': stream.write_text(stream.read_text()+'\nupstream unknown { server 127.0.0.1:7445; }\n')
-                    elif fault=='mixed':
-                        if includes: stream.write_text(stream.read_text().replace('    default','    duplicate.example twm_frontend; # telemt-web-manager\n    default'))
-                        else: f.write('/etc/nginx/stream-sni.d/telemt-web-manager.conf','telegram.example twm_frontend;\n')
-                    elif fault=='include-position':
-                        directive='    include /etc/nginx/stream-sni.d/*.conf;\n'
-                        stream.write_text(stream.read_text().replace(directive,'')+'\n'+directive)
-                    elif fault=='commented-includes':
-                        text=stream.read_text()
-                        for directory in ('stream-sni.d','stream-upstreams.d'):
-                            text=text.replace('include /etc/nginx/'+directory+'/*.conf;','# include /etc/nginx/'+directory+'/*.conf;')
-                        stream.write_text(text)
-                    with self.assertRaises(f.module.Refusal):
-                        f.change('telegram.example' if fault=='panel-conflict' else 'new.example',
-                                 'telegram.example' if fault=='reality-conflict' else None)
-                    self.assertEqual(f.state(),before)
-                    self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] or args[0]=='certbot' for _,args in f.calls))
-                    self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
+        for fault in ('panel-conflict','reality-conflict','unknown','mixed','include-position','commented-includes'):
+            with self.subTest(fault=fault):
+                f=self.fixture();f.telemt(True);before=f.state()
+                stream=f.p(f.module.STREAM)
+                if fault=='unknown': stream.write_text(stream.read_text()+'\nupstream unknown { server 127.0.0.1:7445; }\n')
+                elif fault=='mixed':
+                    stream.write_text(stream.read_text().replace('    default','    duplicate.example twm_frontend; # telemt-web-manager\n    default'))
+                elif fault=='include-position':
+                    directive='    include /etc/nginx/stream-sni.d/*.conf;\n'
+                    stream.write_text(stream.read_text().replace(directive,'')+'\n'+directive)
+                elif fault=='commented-includes':
+                    text=stream.read_text()
+                    for directory in ('stream-sni.d','stream-upstreams.d'):
+                        text=text.replace('include /etc/nginx/'+directory+'/*.conf;','# include /etc/nginx/'+directory+'/*.conf;')
+                    stream.write_text(text)
+                with self.assertRaises(f.module.Refusal):
+                    f.change('telegram.example' if fault=='panel-conflict' else 'new.example',
+                             'telegram.example' if fault=='reality-conflict' else None)
+                self.assertEqual(f.state(),before)
+                self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] or args[0]=='certbot' for _,args in f.calls))
+                self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
         f=self.fixture();owned=f.telemt(True)
         f.change('nested.telegram.example')
         self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Telemt files changed')
+
+    def test_twpm_noncanonical_include_files_do_not_block(self):
+        sni='/etc/nginx/stream-sni.d/telemt-web-manager.conf';upstream='/etc/nginx/stream-upstreams.d/telemt-web-manager.conf'
+        for case in ('upstream-extra-parameter','sni-extra-host'):
+            with self.subTest(case=case):
+                f=self.fixture();f.telemt(True)
+                if case=='upstream-extra-parameter':
+                    f.write(upstream,'# TWPM future layout\nupstream twm_frontend {\n        server 127.0.0.1:7444 max_fails=0;\n}\n')
+                else:
+                    f.write(sni,'# TWPM future layout\ntelegram.example   twm_frontend ;\nwww.telegram.example twm_frontend; # alias\n')
+                owned={path:f.p(path).read_bytes() for path in (sni,upstream)}
+                hosts=f.operation.discover()['telemt']['domains']
+                self.assertIn('telegram.example',hosts)
+                if case=='sni-extra-host':
+                    self.assertIn('www.telegram.example',hosts)
+                    with self.assertRaises(f.module.Refusal):f.change('www.telegram.example')
+                f.change('new-panel.example','new-cover.example')
+                self.assertEqual(f.operation.discover()['domains']['panel'],'new-panel.example')
+                self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'TWPM files changed')
+
+    def test_twpm_files_changed_during_operation_do_not_block_rollback(self):
+        f=self.fixture();f.telemt(True);before=f.state();stream=f.p(f.module.STREAM).read_bytes()
+        vhost=f.p('/etc/nginx/conf.d/telemt-web-manager.conf');original=f.operation.issue
+        def issue(name,previous):
+            original(name,previous)
+            vhost.write_text(vhost.read_text()+'# changed by TWPM during the operation\n')
+        f.operation.issue=issue;f.fault='verifying new stack'
+        with self.assertRaises(subprocess.CalledProcessError):f.change('new-panel.example','new-cover.example')
+        self.assertTrue(f.state()==before,'Rollback changed SQLite')
+        self.assertEqual(f.p(f.module.STREAM).read_bytes(),stream)
+        self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
+        self.assertTrue(all(value=='active' for value in f.services.values()))
+        self.assertIn('changed by TWPM',vhost.read_text())
+
+    def test_old_journal_with_twpm_guards_and_summary_recovers(self):
+        f=self.fixture();owned=f.telemt(True);before=f.state();stream=f.p(f.module.STREAM).read_bytes()
+        f.fault='verifying new stack'
+        with patch.object(f.operation,'recover',side_effect=RuntimeError('fixture interrupted recovery')),self.assertRaises(f.module.Refusal):
+            f.change('new-panel.example','new-cover.example')
+        record=json.loads(f.p(f.module.STATE+'/journal.json').read_text())
+        self.assertEqual(record['phase'],'switching')
+        # Shape written by the previous version: TWPM guards and a 'telemt' summary key.
+        previous=('/etc/nginx/conf.d/telemt-web-manager.conf','/etc/nginx/conf.d/telemt-web-manager-acme.conf',
+                  '/etc/nginx/stream-sni.d/telemt-web-manager.conf','/etc/nginx/stream-upstreams.d/telemt-web-manager.conf')
+        files={name:f.operation.guard_value(name) for name in previous}
+        record['guards'].update(files);record['guards']['/var/lib/telemt-web-manager/manifest.json']='0'*64
+        for key in ('old','new'):record[key]['telemt']=dict(domain='telegram.example',files=files,layout='include')
+        f.operation.journal(record)
+        vhost=f.p(previous[0]);vhost.write_text(vhost.read_text()+'# changed by TWPM after the old journal\n')
+        self.assertTrue(f.operation.recover())
+        self.assertTrue(f.state()==before,'Recovery did not restore SQLite')
+        self.assertEqual(f.p(f.module.STREAM).read_bytes(),stream)
+        self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
+        self.assertTrue(all(value=='active' for value in f.services.values()))
+        owned.pop(previous[0])
+        self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Recovery changed TWPM files')
+
+    def test_twpm_domain_unknown_warns_and_continues(self):
+        import contextlib, io
+        f=self.fixture();f.telemt(True);sni='/etc/nginx/stream-sni.d/telemt-web-manager.conf'
+        f.write(sni,'# no recognizable TWPM route\n')
+        self.assertEqual(f.operation.discover()['telemt']['domains'],[])
+        error=io.StringIO()
+        with contextlib.redirect_stderr(error):f.change('new-panel.example')
+        self.assertIn('WARN: Telegram Web Proxy Manager domain not found in '+sni,error.getvalue())
+        self.assertEqual(f.operation.discover()['domains']['panel'],'new-panel.example')
 
     def test_old_and_new_empty_stream_contracts_keep_reality_xver(self):
         for historical in (False,True):
@@ -605,7 +660,7 @@ curl() {
         backend=ThreadingHTTPServer(('127.0.0.1',18080),Backend)
         self.addCleanup(backend.server_close);self.addCleanup(backend.shutdown)
         threading.Thread(target=backend.serve_forever,daemon=True).start()
-        for layout,includes in (('legacy',False),('legacy',True),('keepalive',False),('site',True)):
+        for layout,includes in (('legacy',True),('site',True)):
             with self.subTest(layout=layout,includes=includes):
                 f=self.fixture(optional=not includes,historical=not includes)
                 if includes:f.cdn()
