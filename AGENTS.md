@@ -54,8 +54,6 @@ Do not edit AGENTS.md or CLAUDE.md unless the owner's task says so.
   (the repository is public). If the platform adds them by default, remove them; this rule
   overrides the default. Re-read the PR description after creating it.
 - Mark the PR Ready for review only after the final commit is pushed and local checks pass.
-  CI, including Full Fresh, starts automatically on every push, Draft or not;
-  switching Draft to Ready does not start a new run.
 - NEVER, without explicit owner permission: merge, create tags or releases, run Prepare Release,
   change GitHub settings or rulesets, force-push, rewrite history, operate any VPS.
 - Bug fix: reproducing RED test -> minimal fix -> same test GREEN -> full suite GREEN.
@@ -64,8 +62,7 @@ Do not edit AGENTS.md or CLAUDE.md unless the owner's task says so.
   (names and why) in the report. Keep every other test green.
 - Tests: run through tests/run_ci.py only (never unittest discover). Register every new test class
   and run --check-completeness. Exact commands are in CONTRIBUTING.md.
-- Protected CI job names must stay exactly: "Stack XHTTP and security", "Stack Backup and restore",
-  "Real services (ubuntu-24.04)", "Real services (ubuntu-26.04)", "Full fresh installer (ubuntu-26.04)".
+- CI, required checks and protected job names: see CONTRIBUTING.md.
 - Changes to AGENTS.md, CLAUDE.md, tests and workflows always run full CI.
 - Report honestly: exact HEAD, CI state per job as PASS / FAIL / IN PROGRESS / NOT RUN,
   what was read, what was not, which test level the change needs

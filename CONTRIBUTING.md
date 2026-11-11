@@ -10,18 +10,9 @@ Review product wording with the maintainer in Russian (`README.md`) first, then 
 
 ## Required checks
 
-Keep the four existing required checks, which run during Draft development:
+The required checks are defined in the repository Rulesets on GitHub.
 
-- `Stack XHTTP and security` (`.github/workflows/stack-xhttp.yml`)
-- `Stack Backup and restore` (`.github/workflows/stack-backup.yml`)
-- `Real services (ubuntu-24.04)` (`.github/workflows/stack-services.yml`)
-- `Real services (ubuntu-26.04)` (`.github/workflows/stack-services.yml`)
-
-The final-stage required check is `Full fresh installer (ubuntu-26.04)`
-(`.github/workflows/fresh-acceptance.yml`); see the owner setup and acceptance
-procedure below. All five checks must pass for the current revision before merge.
-
-The four ordinary checks retain their unique names and run for pushes to `main`,
+The ordinary checks retain their unique names and run for pushes to `main`,
 pull requests targeting `main`, and manual `workflow_dispatch`. Full Fresh runs
 on `opened`, `reopened` and `synchronize` (every push) for a PR targeting `main`, Draft included; switching Draft to Ready does not start a new run. These PR validation workflows
 have read-only repository permissions and no repository-secret dependency.
@@ -81,10 +72,6 @@ unit limits and within-operation failure/rollback checks remain unchanged.
 
 See [v2 audit scope](docs/V2_AUDIT.md) for option states, ownership, portable Restore and remaining live acceptance boundaries.
 
-Required enforcement is configured by the repository owner, not by workflow code.
-Preserve the four existing protected check names and add the final-stage check
-using the procedure below; this change does not modify repository settings.
-
 Live VPS acceptance is still required for public DNS, Let's Encrypt, provider kernel/firewall behavior, external-network acceptance and full recovery. Do not run `x-ui-latest.sh` to test syntax: it removes an existing installation. The controlled VM test below covers fresh installation and cold boot, not arbitrary provider/VPS acceptance. Use a disposable VPS for live checks.
 
 ## Full fresh installation acceptance
@@ -111,32 +98,10 @@ has a 60-minute limit including P/R/Both changes and their three full Backups. B
 services jobs have the standard 25-minute limit; their existing names, Debian 13
 coverage and all systemd jobs remain unchanged.
 
-### Owner setup and hosted acceptance
+### Hosted acceptance
 
-In repository Settings → Rules → Rulesets → `main-protection`, keep enforcement
-active and preserve all four checks listed above. Under required status checks,
-add the exact fifth context `Full fresh installer (ubuntu-26.04)` with source
-**GitHub Actions** (app ID 15368). Keep **Require branches to be up to date before
-merging** enabled (strict required status checks), preserve PR requirements and
-the existing no-bypass policy. If GitHub does not yet offer the new context, run
-the first Full Fresh run to register it, then add it before any merge.
-Do not remove an existing check or merge during this configuration handoff.
-
-Use the CI-change PR to verify GitHub behavior before merging it:
-
-1. Leave the PR Draft. Confirm ordinary CI and one real Full Fresh run start
-   automatically with event `pull_request`, action `opened` or `synchronize`,
-   the correct PR and checkout SHA; wait for its successful completion.
-2. With the fifth check required, add a small meaningful follow-up commit.
-   Confirm ordinary CI and a new Full Fresh run start, and the old PASS does not
-   satisfy the new revision: merge must be blocked awaiting the fifth check.
-3. Confirm the new Full Fresh run on the new head SHA reaches PASS before merge
-   eligibility. Preserve the earlier run/SHA evidence.
-
-These are required hosted acceptance steps, not a claim that YAML validation
-proves event or protection behavior. Stop if GitHub behaves differently; do not
-substitute a skipped job or synthetic success. New commits after a PASS start a new Full Fresh run automatically. A base update required by strict protection
-also needs fresh acceptance for the resulting revision. Do not merge until all five required checks are enforced and the final SHA has
+New commits after a PASS start a new Full Fresh run automatically. A base update required by strict protection
+also needs fresh acceptance for the resulting revision. Do not merge until the final SHA has
 a real Full Fresh PASS for code changes or a verified documentation-only smoke.
 Never label the documentation exception as Full Fresh PASS.
 
@@ -158,7 +123,7 @@ it does not contact external sites or enforce Markdown style. Corrupt documents
 fail the job. No APT, binary downloads, test suites, Docker or QEMU run in docs mode.
 All jobs still execute a real scope/smoke step and report what ran.
 
-The five protected check names stay unchanged. A verified
+The protected check names stay unchanged. A verified
 documentation-only final check states exactly:
 `DOCS-ONLY: Full Fresh E2E not executed; documentation scope verified.`
 Production/code changes still execute the complete unchanged acceptance sequence.
@@ -194,7 +159,7 @@ NGINX_BIN=/usr/sbin/nginx python3 tests/upstream_canary.py run --directory /tmp/
 python3 tests/upstream_canary.py report --directory /tmp/xui-canary
 ```
 
-Promote upstream only in a separate reviewed PR: independently confirm all official archive pins, update the single baseline, run all five required checks, and record full installer/live acceptance. Canary **integration PASS is not full installer acceptance**: systemd lifecycle, public ACME/DNS, kernel UFW, reboot/recovery and non-amd64 behavior still require their own acceptance. Canary failures must be investigated, not hidden by changing assertions or silently substituting baseline binaries.
+Promote upstream only in a separate reviewed PR: independently confirm all official archive pins, update the single baseline, run all required checks, and record full installer/live acceptance. Canary **integration PASS is not full installer acceptance**: systemd lifecycle, public ACME/DNS, kernel UFW, reboot/recovery and non-amd64 behavior still require their own acceptance. Canary failures must be investigated, not hidden by changing assertions or silently substituting baseline binaries.
 
 ## AdGuard Home maintenance
 
@@ -254,17 +219,17 @@ The initial main checkpoint is `e02bd9e87768afb11b7cad18fc64d77ee637c3b3`, promo
 
 ## Releases
 
-Only the owner publishes `vX.Y.Z` project releases, after independent audit, required checks and merge to `main`, with explicit authorization. Project versions are separate from upstream 3x-ui/Xray versions; `-version <tag>` selects the panel, not this project's assets. Release notes describe user-visible project changes and compatibility limits, not CI, README edits or internal repository tooling. A short release is preferable to presenting internal maintenance as a new installer capability.
+Only the owner publishes `vX.Y.Z` project releases, after required checks and merge to `main`, with explicit authorization. Project versions are separate from upstream 3x-ui/Xray versions; `-version <tag>` selects the panel, not this project's assets. Release notes describe user-visible project changes and compatibility limits, not CI, README edits or internal repository tooling. A short release is preferable to presenting internal maintenance as a new installer capability.
 
 The development `x-ui-latest.sh` keeps `PROJECT_REF="${XUI_AUTO_REF:-main}"`. Prepare the release asset from **committed content**, never by editing or copying the working-tree installer manually. `tools/prepare_release.py` checks an existing stable tag against an exact source commit, pins the asset's default to that 40-hex SHA, checks Bash/source initialization and writes a new output directory with `x-ui-latest.sh` and its SHA-256 sidecar. `XUI_AUTO_REF` remains an explicit override. All project-owned helpers follow the same selected tree; no fallback to main or mixed versions is permitted. An exact SHA is immutable even if a tag moves; dynamic Latest is only a download selector, never the source ref inside an asset.
 
-Normal owner procedure after audit/merge — no local SHA selection, tag commands, Python invocation or manual asset upload is needed:
+Normal owner procedure after merge — no local SHA selection, tag commands, Python invocation or manual asset upload is needed:
 
 1. Open **Actions → Prepare Release → Run workflow**, select **main**, and enter the new stable project version, for example `v2.1.5`.
 2. On success, open the **Draft Release** link in the job summary. The summary records the exact source SHA; the workflow has built and downloaded both attachments and verified their bytes, SHA-256, Bash syntax, tag and source-ref contract.
 3. Write/review the user-facing release notes in GitHub and click **Publish release** as stable Latest. The workflow leaves notes empty and never publishes automatically.
 
-`.github/workflows/prepare-release.yml` is manual-only, not a required PR check. It runs only for this repository's `main`, checks that the dispatched/checked-out SHA is still the current protected main commit, and rejects invalid versions and existing matching tags/releases before writing. GitHub lookup failures are failures, not evidence of absence. It uses the standard `GITHUB_TOKEN` with `contents: write` only for its preparation job; no PAT, extra secret, package installation or heavy acceptance is required. Owner approval, audit and full required acceptance precede dispatch; this lightweight job does not establish installer acceptance.
+`.github/workflows/prepare-release.yml` is manual-only, not a required PR check. It runs only for this repository's `main`, checks that the dispatched/checked-out SHA is still the current protected main commit, and rejects invalid versions and existing matching tags/releases before writing. GitHub lookup failures are failures, not evidence of absence. It uses the standard `GITHUB_TOKEN` with `contents: write` only for its preparation job; no PAT, extra secret, package installation or heavy acceptance is required. Owner approval and full required acceptance precede dispatch; this lightweight job does not establish installer acceptance.
 
 Preparation creates the tag, invokes the existing builder, attaches both files to a new Draft Release, downloads them for byte/checksum verification, and checks the final tag/release source metadata. It finds exactly one matching tag in the paginated release list and fetches the Draft by numeric Release ID; the tag lookup endpoint is not used for Draft verification. Concurrent preparations do not cancel a running preparation. Any error fails the job without publishing. A created tag or partial Draft may remain: a repeat deliberately refuses to overwrite it. Inspect/resolve those unpublished resources as the owner before trying again; never reuse or modify a published release/tag, including `personal-v*`. The local builder remains available for independent reproduction, not as a required manual release step.
 
