@@ -401,15 +401,19 @@ def ufw_preflight(root, ports):
             raise ValueError('Legacy kernel firewall tables exist; automatic enable refused')
     for entry in json.loads(command('nft', '-j', 'list', 'ruleset'))['nftables']:
         if set(entry) == {'metainfo'}: continue
-        if set(entry) == {'table'}:
-            table = entry['table']
-            if table['family'] in ('ip', 'ip6') and table['name'] == 'filter': continue
-        if set(entry) == {'chain'}:
-            chain = entry['chain']
-            if (chain['family'] in ('ip', 'ip6') and chain['table'] == 'filter'
-                    and chain['name'] in ('INPUT', 'OUTPUT', 'FORWARD') and chain.get('policy') == 'accept'
-                    and chain.get('type') == 'filter' and chain.get('prio') == 0): continue
-        raise ValueError('Existing kernel firewall rules are unsupported; automatic enable refused')
+        kind = next(iter(entry)); item = entry[kind]
+        table_name = item.get('name') if kind == 'table' else item.get('table')
+        # Fail2ban (installed by Security, banaction = nftables) owns inet f2b-table with all its objects.
+        if len(entry) == 1 and item.get('family') == 'inet' and table_name == 'f2b-table' \
+                and kind in ('table', 'chain', 'set', 'map', 'rule', 'element'): continue
+        if kind == 'table' and len(entry) == 1:
+            if item['family'] in ('ip', 'ip6') and item['name'] == 'filter': continue
+        if kind == 'chain' and len(entry) == 1:
+            if (item['family'] in ('ip', 'ip6') and item['table'] == 'filter'
+                    and item['name'] in ('INPUT', 'OUTPUT', 'FORWARD') and item.get('policy') == 'accept'
+                    and item.get('type') == 'filter' and item.get('prio') == 0): continue
+        found = ' '.join(str(v) for v in (kind, item.get('family'), table_name, item.get('name') if kind != 'table' else None) if v)
+        raise ValueError(f'Existing kernel firewall rules are unsupported ({found}); automatic enable refused')
 
 
 def ufw_ssh_ports(root):

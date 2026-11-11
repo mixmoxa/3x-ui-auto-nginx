@@ -193,6 +193,49 @@ printf 'RESULT:%s:%s:%s\n' "$core_port" "$xhttp_cdn_port" "$xhttp_cdn_path"
                 else:
                     self.assertLess(calls.index(('ufw','allow','2222/tcp')), calls.index(('ufw','--force','enable')))
 
+    def test_ufw_preflight_allows_only_fail2ban_inet_table_among_foreign_nft_objects(self):
+        import hashlib
+        # Real `nft -j list ruleset` from a server with Fail2ban (banaction = nftables), unchanged.
+        real = json.loads('{"nftables": [{"metainfo": {"version": "1.1.6", "release_name": "Commodore Bullmoose #7", "json_schema_version": 1}}, {"table": {"family": "ip", "name": "filter", "handle": 1}}, {"table": {"family": "ip6", "name": "filter", "handle": 2}}, {"table": {"family": "inet", "name": "f2b-table", "handle": 4}}, {"chain": {"family": "inet", "table": "f2b-table", "name": "f2b-chain", "handle": 1, "type": "filter", "hook": "input", "prio": -1, "policy": "accept"}}, {"set": {"family": "inet", "name": "addr-set-sshd", "table": "f2b-table", "type": "ipv4_addr", "handle": 2, "elem": ["45.148.10.157", "199.19.225.232"]}}, {"rule": {"family": "inet", "table": "f2b-table", "chain": "f2b-chain", "handle": 3, "expr": [{"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": 22}}, {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "saddr"}}, "right": "@addr-set-sshd"}}, {"reject": {"type": "icmp", "expr": "port-unreachable"}}]}}]}')
+        extra_f2b = [{'set': {'family': 'inet', 'name': 'addr-set-empty', 'table': 'f2b-table', 'type': 'ipv4_addr', 'handle': 5}},
+                     {'map': {'family': 'inet', 'name': 'm', 'table': 'f2b-table', 'type': 'ipv4_addr', 'map': 'verdict', 'handle': 6}},
+                     {'element': {'family': 'inet', 'name': 'addr-set-sshd', 'table': 'f2b-table', 'elem': ['192.0.2.1']}}]
+        chains = [{'chain': {'family': family, 'table': 'filter', 'name': name, 'handle': 9, 'type': 'filter', 'hook': name.lower(), 'prio': 0, 'policy': 'accept'}}
+                  for family in ('ip', 'ip6') for name in ('INPUT', 'OUTPUT', 'FORWARD')]
+        cases = [('real', real['nftables'], None),
+                 ('extra f2b objects', real['nftables'] + extra_f2b + chains, None),
+                 ('foreign inet table', real['nftables'] + [{'table': {'family': 'inet', 'name': 'other', 'handle': 7}}], 'table inet other'),
+                 ('foreign inet chain', real['nftables'] + [{'chain': {'family': 'inet', 'table': 'other', 'name': 'c'}}], 'chain inet other c'),
+                 ('inet filter', real['nftables'] + [{'table': {'family': 'inet', 'name': 'filter'}}], 'table inet filter'),
+                 ('ip nat', real['nftables'] + [{'table': {'family': 'ip', 'name': 'nat'}}], 'table ip nat'),
+                 ('bare rule', [{'rule': {}}], None)]
+        for label, entries, fragment in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                security = helper('security'); root = Path(directory); conffiles = ''
+                for name in ('etc/ufw', 'usr/share/ufw', 'etc/default'): (root/name).mkdir(parents=True)
+                for name in ('before.rules','before6.rules','after.rules','after6.rules','before.init','after.init'):
+                    for folder in ('etc/ufw','usr/share/ufw'): (root/folder/name).write_text('stock\n')
+                for name in ('user.rules','user6.rules'): (root/'etc/ufw'/name).write_text('*filter\nCOMMIT\n')
+                (root/'etc/ufw/ufw.conf').write_text('ENABLED=no\nLOGLEVEL=low\n')
+                for name in ('etc/default/ufw','etc/ufw/sysctl.conf'):
+                    (root/name).write_text('stock\n')
+                    conffiles += ' /'+name+' '+hashlib.md5((root/name).read_bytes()).hexdigest()+'\n'
+                def command(*args, **kwargs):
+                    if args[0] == 'dpkg-query': return conffiles.strip()
+                    if args[0] == 'nft': return json.dumps({'nftables': entries})
+                    if args[:2] == ('systemctl','is-active'): return 'inactive'
+                    if args[0] in ('iptables','ip6tables'): return 'iptables v1.8 (nf_tables)'
+                    return ''
+                with patch.object(security, 'command', side_effect=command):
+                    if label == 'bare rule':
+                        with self.assertRaisesRegex(ValueError, r'^Existing kernel firewall rules are unsupported \(rule\); automatic enable refused$'):
+                            security.ufw_preflight(root, [22])
+                    elif fragment is None:
+                        security.ufw_preflight(root, [22])
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'unsupported \\('+fragment+'\\); automatic enable refused'):
+                            security.ufw_preflight(root, [22])
+
     def test_xtls_uses_existing_country_flag_without_new_geolocation(self):
         from test_personal_backup import relocated
         vision = helper('vision')
