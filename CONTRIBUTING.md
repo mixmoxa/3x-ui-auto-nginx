@@ -4,7 +4,7 @@
 
 `main` is the maintained production line. Create `feat/*`, `fix/*`, `docs/*` or `chore/*` branches and open pull requests against `main`. Upstream is a reference source; do not automatically synchronize it.
 
-Create all new PRs as **Draft**. Codex may mark its own PR **Ready for review** when implementation is complete, the final commit is pushed, necessary local checks pass, and no further changes are planned. Do not wait for long-running GitHub CI first: Ready starts the existing final-stage check. Waiting for Full Fresh in the working session is unnecessary; report the exact HEAD and actual **PASS**, **FAIL**, **IN PROGRESS** or **NOT RUN** states at handoff. If another commit is needed after launch, return to Draft during edits and repeat Ready for the new final HEAD. This permission does not authorize merge, actual tags/releases, Prepare Release dispatch, publication, Settings/Rulesets changes or VPS operations.
+Create all new PRs as **Draft**. Codex may mark its own PR **Ready for review** when implementation is complete, the final commit is pushed, necessary local checks pass, and no further changes are planned. Do not wait for long-running GitHub CI first: Full Fresh already starts automatically on every push. Waiting for Full Fresh in the working session is unnecessary; report the exact HEAD and actual **PASS**, **FAIL**, **IN PROGRESS** or **NOT RUN** states at handoff. Switching Draft to Ready does not start a new Full Fresh run. If another commit is needed, push it; no Draft round-trip is required. This permission does not authorize merge, actual tags/releases, Prepare Release dispatch, publication, Settings/Rulesets changes or VPS operations.
 
 Review product wording with the maintainer in Russian (`README.md`) first, then adapt all seven languages; Russian is the default GitHub landing page (`README.md`), and the full English adaptation is in `README_EN.md`. `README_RU.md` preserves older Russian links. Preserve exact commands, safety warnings and upstream attribution in every full translation. The maintainer has adopted `GPL-3.0-only` for original xPROMSx developments and changes. Follow the partial scope in `LICENSE` and `THIRD_PARTY_NOTICES.md`; do not claim permission to relicense inherited material.
 
@@ -23,7 +23,7 @@ procedure below. All five checks must pass for the current revision before merge
 
 The four ordinary checks retain their unique names and run for pushes to `main`,
 pull requests targeting `main`, and manual `workflow_dispatch`. Full Fresh runs
-only on `ready_for_review` for a PR targeting `main`. These PR validation workflows
+on `opened`, `reopened` and `synchronize` (every push) for a PR targeting `main`, Draft included; switching Draft to Ready does not start a new run. These PR validation workflows
 have read-only repository permissions and no repository-secret dependency.
 
 Reproduce the full suites on a disposable Ubuntu 24.04 test environment:
@@ -90,10 +90,9 @@ Live VPS acceptance is still required for public DNS, Let's Encrypt, provider ke
 ## Full fresh installation acceptance
 
 `fresh-acceptance.yml` runs `bash tests/fresh/run.sh` (Docker, Python 3, Git and
-passwordless sudo required) only when a PR targeting `main` changes from Draft to
-Ready for review. It checks out the exact event's PR head SHA with full history.
-There is no push, synchronize, opened or manual-dispatch trigger. A new final
-launch cancels an older running Full Fresh job for the same PR.
+passwordless sudo required) when a PR targeting `main` is opened, reopened, or updated by a push
+(Draft PRs included); switching Draft to Ready does not start a new run. It checks out the exact event's PR head SHA with full history.
+There is no branch-push or manual-dispatch trigger. A newer launch cancels an older running Full Fresh job for the same PR.
 
 The unchanged harness boots a minimal disk-based VM
 under QEMU KVM with 4 vCPU/4 GiB RAM, runs the unmodified installer `main()` with
@@ -120,26 +119,23 @@ add the exact fifth context `Full fresh installer (ubuntu-26.04)` with source
 **GitHub Actions** (app ID 15368). Keep **Require branches to be up to date before
 merging** enabled (strict required status checks), preserve PR requirements and
 the existing no-bypass policy. If GitHub does not yet offer the new context, run
-the first Draft → Ready acceptance to register it, then add it before any merge.
+the first Full Fresh run to register it, then add it before any merge.
 Do not remove an existing check or merge during this configuration handoff.
 
 Use the CI-change PR to verify GitHub behavior before merging it:
 
-1. Leave the PR Draft while ordinary CI runs. Confirm there is no Full Fresh run.
-2. After the final commit, choose Ready for review. Confirm one real Full Fresh
-   run with event `pull_request`, action `ready_for_review`, the correct PR and
-   checkout SHA; wait for its successful completion in GitHub Actions.
-3. With the fifth check required, add a small meaningful follow-up commit.
-   Confirm ordinary CI runs, Full Fresh does not start, and the old PASS does not
+1. Leave the PR Draft. Confirm ordinary CI and one real Full Fresh run start
+   automatically with event `pull_request`, action `opened` or `synchronize`,
+   the correct PR and checkout SHA; wait for its successful completion.
+2. With the fifth check required, add a small meaningful follow-up commit.
+   Confirm ordinary CI and a new Full Fresh run start, and the old PASS does not
    satisfy the new revision: merge must be blocked awaiting the fifth check.
-4. Convert to Draft, then Ready again. Confirm one new real Full Fresh run on the
-   new head SHA and PASS before merge eligibility. Preserve the earlier run/SHA
-   evidence. Return the audit PR to Draft if it must remain Draft for handoff.
+3. Confirm the new Full Fresh run on the new head SHA reaches PASS before merge
+   eligibility. Preserve the earlier run/SHA evidence.
 
 These are required hosted acceptance steps, not a claim that YAML validation
 proves event or protection behavior. Stop if GitHub behaves differently; do not
-substitute a skipped job or synthetic success. New commits after a PASS require
-another explicit Draft → Ready cycle. A base update required by strict protection
+substitute a skipped job or synthetic success. New commits after a PASS start a new Full Fresh run automatically. A base update required by strict protection
 also needs fresh acceptance for the resulting revision. Do not merge until all five required checks are enforced and the final SHA has
 a real Full Fresh PASS for code changes or a verified documentation-only smoke.
 Never label the documentation exception as Full Fresh PASS.
@@ -162,7 +158,7 @@ it does not contact external sites or enforce Markdown style. Corrupt documents
 fail the job. No APT, binary downloads, test suites, Docker or QEMU run in docs mode.
 All jobs still execute a real scope/smoke step and report what ran.
 
-The five protected check names stay unchanged. After Draft → Ready, a verified
+The five protected check names stay unchanged. A verified
 documentation-only final check states exactly:
 `DOCS-ONLY: Full Fresh E2E not executed; documentation scope verified.`
 Production/code changes still execute the complete unchanged acceptance sequence.

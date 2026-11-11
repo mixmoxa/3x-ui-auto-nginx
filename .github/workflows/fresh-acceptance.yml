@@ -3,7 +3,7 @@ name: Full fresh installer acceptance
 on:
   pull_request:
     branches: [main]
-    types: [ready_for_review]
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: read

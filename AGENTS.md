@@ -51,7 +51,8 @@ Do not edit AGENTS.md or CLAUDE.md unless the owner's task says so.
   user.name=Proms, user.email=102687702+xPROMSx@users.noreply.github.com.
   Verify author and committer of every new commit.
 - Mark the PR Ready for review only after the final commit is pushed and local checks pass.
-  If another commit is needed, return to Draft first.
+  CI, including Full Fresh, starts automatically on every push, Draft or not;
+  switching Draft to Ready does not start a new run.
 - NEVER, without explicit owner permission: merge, create tags or releases, run Prepare Release,
   change GitHub settings or rulesets, force-push, rewrite history, operate any VPS.
 - Bug fix: reproducing RED test -> minimal fix -> same test GREEN -> full suite GREEN.
