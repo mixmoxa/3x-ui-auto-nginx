@@ -232,6 +232,21 @@ dpkg-query() { [[ "${NGINX_PACKAGE:-0}" == 1 ]] && echo 'install ok installed'; 
             self.assertNotEqual(result.returncode,0)
             self.assertNotIn('mutation',result.stdout)
 
+    def test_foreign_nginx_adguard_like_rules_are_not_an_adguard_installation(self):
+        mock = MOCK + '''\nsystemctl() { return 1; }
+dpkg-query() { return 1; }
+'''
+        rule = self.root / 'etc/nginx/sites-available/foreign.example.com'
+        rule.parent.mkdir(parents=True)
+        rule.write_text('server { location /dns-query { return 404; } location ^~ /adg-foreign/ { return 404; } }\n')
+        (self.root / 'etc/nginx/snippets').mkdir()
+        (self.root / 'etc/nginx/snippets/foreign.conf').write_text('location /dns-query { return 404; }\n')
+        result = self.run_functions(('detect_existing_installation',),
+                                    'detect_existing_installation; printf "<%s>\\n" "${EXISTING_INSTALL_CATEGORIES[@]}"', mock=mock)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('<nginx configuration / package>', result.stdout)
+        self.assertNotIn('AdGuard Home', result.stdout)
+
     def test_install_has_no_mutations_before_yes(self):
         (self.root / 'etc/x-ui').mkdir(parents=True)
         guard = ('detect_existing_installation','confirm_destructive_reinstall')

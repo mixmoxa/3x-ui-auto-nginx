@@ -19,9 +19,24 @@ msg_ok() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then print
 msg_err() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;31m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
 msg_inf() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;36m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
 msg_warn() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;33m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
+# 38;5;208 is orange: explanatory text of refusals and warnings.
+msg_note() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[38;5;208m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
+ui_note() {
+    if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then
+        printf '\e[38;5;208m'; ui_text "$@"; printf '\e[0m'
+    else ui_text "$@"; fi
+}
 
 ui_rule() {
     printf '%s\n' '------------------------------------------------------------'
+}
+ui_frame() {
+    printf '%s\n' '============================================================'
+}
+# Refusal: red [FAIL] between frames, then the orange explanation (one language, chosen by the caller).
+ui_refuse() {
+    printf '\n'; ui_frame; msg_err '  [FAIL]'; ui_frame
+    msg_note "$1"; ui_frame
 }
 ui_title() {
     printf '\n%s\n' '============================================================'
@@ -336,8 +351,7 @@ detect_existing_installation() {
     fi
     if [[ -e /opt/AdGuardHome || -e /etc/systemd/system/AdGuardHome.service ||
           -e /etc/nginx/snippets/adguard.conf || -e /etc/nginx/snippets/x-ui-auto-optional/adguard.conf ]] ||
-       systemctl is-active --quiet AdGuardHome 2>/dev/null || systemctl is-enabled --quiet AdGuardHome 2>/dev/null ||
-       grep -RqE 'location.*(/adg-|/dns-query)' /etc/nginx/sites-available /etc/nginx/snippets 2>/dev/null; then
+       systemctl is-active --quiet AdGuardHome 2>/dev/null || systemctl is-enabled --quiet AdGuardHome 2>/dev/null; then
         EXISTING_INSTALL_CATEGORIES+=("AdGuard Home")
     fi
     return 0
@@ -3543,38 +3557,13 @@ prepare_restore_security() {
     /usr/bin/python3 -I -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$RESTORE_SECURITY_DIR/managed.py"
 }
 
-# A fresh VPS runs its first automatic update for 15-60 minutes and holds the apt/dpkg lock.
-# unattended-upgrade-shutdown lives permanently and is deliberately not matched.
-apt_busy() {
-    pgrep -f '/usr/lib/apt/apt.systemd.daily' > /dev/null ||
-        pgrep -f '/usr/bin/unattended-upgrade($| )' > /dev/null ||
-        pgrep -x 'apt|apt-get|dpkg' > /dev/null
-}
-
-wait_for_apt_idle() {
-    apt_busy || return 0
-    local ticks=0 idle=0
-    ui_title "$(ui_text 'SERVER IS INSTALLING SYSTEM UPDATES' 'СЕРВЕР УСТАНАВЛИВАЕТ ОБНОВЛЕНИЯ СИСТЕМЫ')"
-    msg_warn "$(ui_text 'A fresh server updates itself right after the first start. This can take 10-60 minutes.
-Restore will continue automatically when the update finishes. No data has been restored yet.
-DO NOT reboot or power off the server - this can break the system.
-You can safely cancel with Ctrl+C and run Restore later.' 'Свежий сервер сам обновляется сразу после первого запуска. Это может занять от 10 до 60 минут.
-Restore продолжится автоматически, когда обновление закончится. Данные ещё не восстанавливались.
-НЕ ПЕРЕЗАГРУЖАЙТЕ и не выключайте сервер - это может сломать систему.
-Можно безопасно отменить по Ctrl+C и запустить Restore позже.')"
-    # Poll every 5 s; two free checks in a row end the wait (packages install one by one).
-    while (( ticks < 720 )); do
-        sleep 5
-        ticks=$((ticks + 1))
-        if apt_busy; then idle=0; else idle=$((idle + 1)); fi
-        if (( idle >= 2 )); then
-            msg_ok "$(ui_text '[OK] System update finished. Continuing Restore.' '[OK] Обновление системы завершено. Продолжаю Restore.')"
-            return 0
-        fi
-        (( ticks % 12 )) || ui_text 'Waiting for the system update: %d of 60 min. Do not reboot the server.\n' 'Ожидание конца обновления: %d из 60 мин. Не перезагружайте сервер.\n' $((ticks / 12))
-    done
-    msg_err "$(ui_text 'The system update is still running after 60 minutes. Restore was not started and no data was restored. Wait for the update to finish and run Restore again.' 'Обновление системы всё ещё идёт спустя 60 минут. Restore не запускался, данные не восстанавливались. Дождитесь конца обновления и запустите Restore снова.')"
-    return 1
+# Early, translated refusal. x-ui-backup repeats the same check in its own preflight before any change;
+# exit code 10 means TWPM was found, any other code (including an old helper without the command) continues.
+twpm_blocks_restore() {
+    local status=0
+    bash /usr/local/bin/x-ui-backup telemt-check || status=$?
+    (( status == 10 )) || return 1
+    ui_refuse "$(ui_text 'Telegram Web Proxy Manager (TWPM) was found on this server. Restore replaces the nginx configuration and would break it. Remove it manually: in the 3X-UI main menu open Telegram Web Proxy Manager, choose "Uninstall Telegram proxy" and answer y when asked whether to delete the certificate. Then run Restore again. After Restore, install TWPM again. The connection link will change after TWPM is installed again. Nothing has been changed on the server so far.' 'На сервере найден Telegram Web Proxy Manager (TWPM). Восстановление заменяет настройки nginx, и его работа нарушилась бы. Удалите его вручную: в главном меню 3X-UI откройте Telegram Web Proxy Manager, выберите «Удалить Telegram-прокси» и на вопрос про сертификат ответьте y (удалить). Затем повторите восстановление. После восстановления переустановите TWPM. После новой установки TWPM ссылка подключения изменится. На данный момент на сервере ничего не изменено.')"
 }
 
 post_restore_security() (
@@ -3652,6 +3641,7 @@ backup_action() (
         fi
         exit 0
     fi
+    twpm_blocks_restore && exit 1
     backup_list || exit 1
     ui_text 'Archive number or absolute path (empty to cancel): ' 'Номер архива или абсолютный путь (пустой ввод — отмена): '
     IFS= read -r choice || exit 0
@@ -3675,7 +3665,10 @@ backup_action() (
     ui_text 'Enable UFW with SSH protection after Restore? [y/N] ' 'Включить UFW с защитой доступа по SSH после Restore? [y/N] '
     IFS= read -r answer || exit 0
     [[ "$answer" != y && "$answer" != Y ]] || ufw=y
-    ui_text 'Restore replaces project-managed data. Trust this archive before continuing.\nType YES to restore: ' 'Restore заменяет данные, управляемые проектом. Продолжайте только с доверенным архивом.\nДля восстановления введите YES: '
+    printf '\n'; ui_frame
+    ui_note 'Restore replaces project data on this server: the nginx configuration, the 3x-ui panel and its database, the websites (/var/www/html), project certificates and /root/cert, and AdGuard Home. Any other files in these folders will be deleted. Certificates of other sites are not touched. Trust this archive before continuing.\n' 'Восстановление заменит данные проекта на этом сервере: настройки nginx, панель 3x-ui с базой, сайты (/var/www/html), сертификаты проекта и /root/cert, AdGuard Home. Всё остальное в этих папках будет удалено. Сертификаты других сайтов не затрагиваются. Продолжайте только с доверенным архивом.\n'
+    ui_frame
+    ui_note 'Type YES to restore: ' 'Для восстановления введите YES: '
     IFS= read -r answer || exit 0
     [[ "$answer" == YES ]] || { ui_text 'Cancelled.\n' 'Отменено.\n'; exit 0; }
     if [[ "$apt" == y || "$ufw" == y ]]; then
@@ -3686,7 +3679,6 @@ backup_action() (
             apt=n ufw=n
         fi
     fi
-    wait_for_apt_idle || exit 1
     local status=0
     [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_title "$(ui_text 'RESTORING BACKUP' 'ВОССТАНОВЛЕНИЕ')"
     bash /usr/local/bin/x-ui-backup restore "$archive" || status=$?

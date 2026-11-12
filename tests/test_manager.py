@@ -37,6 +37,17 @@ def tty_run(script, answers, timeout=8, env=None):
     return process.returncode, output.decode(errors='replace')
 
 
+YES_RU = ('Восстановление заменит данные проекта на этом сервере: настройки nginx, панель 3x-ui с базой, сайты (/var/www/html), '
+          'сертификаты проекта и /root/cert, AdGuard Home. Всё остальное в этих папках будет удалено. Сертификаты других сайтов не затрагиваются. '
+          'Продолжайте только с доверенным архивом.')
+YES_EN = ('Restore replaces project data on this server: the nginx configuration, the 3x-ui panel and its database, the websites (/var/www/html), '
+          'project certificates and /root/cert, and AdGuard Home. Any other files in these folders will be deleted. '
+          'Certificates of other sites are not touched. Trust this archive before continuing.')
+YES_RU_PROMPT = 'Для восстановления введите YES:'
+YES_EN_PROMPT = 'Type YES to restore:'
+FRAME = '=' * 60
+
+
 class Manager(unittest.TestCase):
     def test_import_has_no_effects_and_preserves_traps(self):
         import re
@@ -48,61 +59,6 @@ class Manager(unittest.TestCase):
             'fixture',str(ROOT/'x-ui-latest.sh')],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr+result.stdout)
         self.assertEqual(result.stdout,'')
-
-    def apt_wait(self, sequence, lang='en'):
-        """Run wait_for_apt_idle with scripted apt_busy results (B busy, F free; last repeats) and no real sleep."""
-        script = ('source "$1"; UI_LANG=$2; seq=$3; n=0; sleeps=0\n'
-                  'sleep() { sleeps=$((sleeps+1)); }\n'
-                  'apt_busy() { local c=${seq:n:1}; [[ -n $c ]] || c=${seq: -1}; n=$((n+1)); [[ $c == B ]]; }\n'
-                  'wait_for_apt_idle; code=$?; echo "SLEEPS:$sleeps"; exit $code')
-        return subprocess.run(['bash', '-c', script, 'fixture', str(ROOT/'x-ui-latest.sh'), lang, sequence],
-                              capture_output=True, text=True, env={**os.environ, 'NO_COLOR': '1'})
-
-    def test_apt_wait_free_immediately_prints_and_waits_for_nothing(self):
-        result = self.apt_wait('F')
-        self.assertEqual((result.returncode, result.stdout), (0, 'SLEEPS:0\n'), result.stderr)
-
-    def test_apt_wait_busy_then_free_shows_block_in_both_languages(self):
-        for lang, title, warning, done in (
-                ('en', 'SERVER IS INSTALLING SYSTEM UPDATES', 'DO NOT reboot or power off the server', '[OK] System update finished. Continuing Restore.'),
-                ('ru', 'СЕРВЕР УСТАНАВЛИВАЕТ ОБНОВЛЕНИЯ СИСТЕМЫ', 'НЕ ПЕРЕЗАГРУЖАЙТЕ и не выключайте сервер', '[OK] Обновление системы завершено. Продолжаю Restore.')):
-            with self.subTest(lang=lang):
-                result = self.apt_wait('BBFF', lang)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                for text in (title, warning, done): self.assertEqual(result.stdout.count(text), 1, result.stdout)
-                # First check busy, then two polls busy/free/free: 3 sleeps in total, no progress line yet.
-                self.assertIn('SLEEPS:3', result.stdout)
-                self.assertNotIn('of 60', result.stdout); self.assertNotIn('из 60', result.stdout)
-
-    def test_apt_wait_single_free_check_between_busy_does_not_finish(self):
-        result = self.apt_wait('BBFBFF')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('SLEEPS:5', result.stdout)
-
-    def test_apt_wait_times_out_after_60_minutes_with_minute_progress(self):
-        for lang, progress, error in (
-                ('en', 'Waiting for the system update: {} of 60 min. Do not reboot the server.', 'still running after 60 minutes. Restore was not started and no data was restored.'),
-                ('ru', 'Ожидание конца обновления: {} из 60 мин. Не перезагружайте сервер.', 'спустя 60 минут. Restore не запускался, данные не восстанавливались.')):
-            with self.subTest(lang=lang):
-                result = self.apt_wait('B', lang)
-                self.assertEqual(result.returncode, 1, result.stderr)
-                self.assertIn('SLEEPS:720', result.stdout); self.assertIn(error, result.stdout)
-                self.assertNotIn('[OK]', result.stdout)
-                for minute in (1, 30, 60): self.assertEqual(result.stdout.count(progress.format(minute)), 1)
-                self.assertEqual(result.stdout.count(progress.split('{}')[0]), 60)
-
-    def test_apt_busy_ignores_unattended_upgrade_shutdown_daemon(self):
-        probe = lambda: subprocess.run(['bash', '-c', 'source "$1"; apt_busy', 'fixture', str(ROOT/'x-ui-latest.sh')]).returncode
-        if subprocess.run(['pgrep', '-x', 'apt|apt-get|dpkg']).returncode == 0:
-            self.skipTest('apt or dpkg is running on this machine')
-        def start(name):
-            process = subprocess.Popen(['bash', '-c', 'exec -a "$0" sleep 30', name])
-            self.addCleanup(lambda: (process.kill(), process.wait()))
-            time.sleep(.3)
-        start('/usr/share/unattended-upgrades/unattended-upgrade-shutdown --wait-for-signal')
-        self.assertEqual(probe(), 1)
-        start('python3 /usr/bin/unattended-upgrade')
-        self.assertEqual(probe(), 0)
 
     def test_real_entrypoint_tty_exit_back_invalid_and_no_tty(self):
         for answers in (b'1\n0\n',b'1\n9\n3\n0\n0\n'):
@@ -569,7 +525,7 @@ telegram_manager_action
         self.assertNotEqual(run().returncode,0);self.assertFalse(network.exists())
 
     def test_russian_backup_restore_confirmation_status_and_partial_messages(self):
-        from test_personal_backup import relocated
+        from test_personal_backup import relocated, TWPM_RESTORE_EN, TWPM_RESTORE_RU
         root=self.f.root;helper=self.f.path('/usr/local/bin/x-ui-backup')
         helper.parent.mkdir(parents=True,exist_ok=True)
         helper.write_text('''#!/bin/bash
@@ -577,6 +533,7 @@ case "$1" in
     inspect) printf '{"format_version":3}\\n' ;;
     backup) printf '{"status":"success","archive":"%s/var/backups/x-ui/fixture.tar.gz"}\\n' "$FIXTURE_ROOT" ;;
     restore) printf restored > "$FIXTURE_ROOT/restored"; exit "${RESTORE_EXIT:-0}" ;;
+    telemt-check) exit "${TELEMT_CHECK:-0}" ;;
 esac
 ''');helper.chmod(0o755)
         self.f.path('/var/backups/x-ui').mkdir(parents=True,exist_ok=True)
@@ -587,7 +544,6 @@ esac
         script.write_text(library[:library.rindex('if [[ ${BASH_SOURCE[0]}')]+'''
 prepare_backup_helper() { :; }
 prepare_restore_security() { :; }
-wait_for_apt_idle() { :; }
 if [[ ${PARTIAL_SECURITY:-0} == 1 ]]; then
     post_restore_security() { printf 'Security: PARTIAL\\nOverall: PARTIAL\\n'; return 1; }
 fi
@@ -609,6 +565,7 @@ entrypoint
                                'Fail2ban для SSH? [y/N]','Включить UFW с защитой доступа по SSH','введите YES'):
                     self.assertIn(prompt,text)
                 self.assertNotIn('{"format_version":3}',text);self.assertIn('Формат: Backup v3',text)
+                self.assertIn(f'{YES_RU} {FRAME} {YES_RU_PROMPT}',' '.join(text.replace(str(root),'').split()))  # the fixture relocates paths into its root
                 self.assertEqual(self.f.path('/etc/x-ui/x-ui.db').read_bytes(),original)
                 if not restored and '\x04' not in answers:self.assertIn('Отменено.',text)
                 if flags.get('RESTORE_EXIT'):
@@ -618,6 +575,23 @@ entrypoint
                     self.assertIn('Overall: PARTIAL' if expected else 'Overall: SUCCESS',text)
                     self.assertEqual(text.count('1. Установка'),1,text)
                     if expected:self.assertIn('данные сохранены, но настройка Security не завершена',text)
+
+        # TWPM found (helper exit 10): translated refusal before any question; nothing is restored.
+        for choice,expected,absent in (('2',TWPM_RESTORE_RU,'Номер архива'),('1',TWPM_RESTORE_EN,'Archive number')):
+            with self.subTest(twpm_language=choice):
+                (root/'restored').unlink(missing_ok=True)
+                code,text=tty_run(script,(choice+'\n3\n3\n0\n0\n').encode(),env={**self.f.env,'TELEMT_CHECK':'10'})
+                flat=' '.join(text.split())
+                self.assertIn(f'{FRAME} [FAIL] {FRAME} {expected} {FRAME}',flat)
+                # One language per choice: the other language's text is absent.
+                self.assertNotIn(TWPM_RESTORE_EN if choice=='2' else TWPM_RESTORE_RU,flat)
+                self.assertNotIn(absent,text);self.assertFalse((root/'restored').exists())
+                self.assertEqual(self.f.path('/etc/x-ui/x-ui.db').read_bytes(),original)
+        # Any other helper status (for example an old helper without the command) continues to the archive question.
+        code,text=tty_run(script,b'1\n3\n3\n0\n0\n',env={**self.f.env,'TELEMT_CHECK':'1'})
+        self.assertIn('Archive number',text);self.assertNotIn('Telegram Web Proxy Manager (TWPM) was found',text)
+        code,text=tty_run(script,b'1\n3\n3\n/archive.tar.gz\nn\nn\nyes\n0\n0\n',env=self.f.env)
+        self.assertIn(f'{YES_EN} {FRAME} {YES_EN_PROMPT}',' '.join(text.replace(str(root),'').split()));self.assertFalse((root/'restored').exists())
 
     def test_post_restore_security_trust_cleanup_status_lock_and_partial_result(self):
         from test_personal_backup import relocated
@@ -653,7 +627,6 @@ sys.exit(1 if result['status']=='partial' else 0)
 ''')
         code = '''source "$1"
 prepare_backup_helper() { :; }
-if [[ ${WAIT_FAIL:-0} == 1 ]]; then wait_for_apt_idle() { return 1; }; else wait_for_apt_idle() { :; }; fi
 pin_project_source() { PROJECT_SOURCE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; PROJECT_REF=$PROJECT_SOURCE_SHA; GITHUB_RAW=https://source.invalid/$PROJECT_SOURCE_SHA; }
 curl() { [[ ${PREP_FAIL:-0} != 1 && "$*" == *aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/assets/security/managed.py* ]] || return 1; cp "$TRUSTED_HELPER" "${@: -1}"; touch "$FIXTURE_ROOT/prepared"; }
 manager_menu
@@ -665,7 +638,6 @@ manager_menu
             ('cleanup', 'y\ny\nYES\n', {'RESTORE_EXIT':'42'}, 42, ''),
             ('prep-continue', 'y\ny\nYES\ny\n', {'PREP_FAIL':'1'}, 0, ''),
             ('prep-cancel', 'y\ny\nYES\nn\n', {'PREP_FAIL':'1'}, 0, ''),
-            ('apt-wait-timeout', 'y\ny\nYES\n', {'WAIT_FAIL':'1'}, 1, ''),
         ):
             with self.subTest(scenario=scenario):
                 for name in ('security-ran', 'prepared', 'restored'): (root/name).unlink(missing_ok=True)
@@ -687,8 +659,6 @@ manager_menu
                     self.assertFalse((root/'prepared').exists())
                     self.assertNotIn('UFW:', result.stdout)
                 elif scenario == 'prep-cancel': self.assertFalse((root/'restored').exists())
-                elif scenario == 'apt-wait-timeout':
-                    self.assertFalse((root/'restored').exists()); self.assertNotIn('Restore:', result.stdout)
 
     def test_inherited_backup_json_keeps_default_cli(self):
         result=self.f.run_tool('backup',BACKUP_JSON='1')
