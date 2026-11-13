@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import textwrap
 import unittest
 from configobj import ConfigObj
 from certificate_fixtures import certificates
@@ -52,12 +53,32 @@ TWPM_BACKUP_EN = ('Telegram Web Proxy Manager (TWPM) is connected using an old l
                   'Remove it (3X-UI main menu, Telegram Web Proxy Manager, "Uninstall Telegram proxy", answer y to the certificate question), '
                   'then install TWPM again and repeat Backup. If this message appears again, leave TWPM uninstalled: Backup works only without it. '
                   'The connection link will change after TWPM is installed again. Nothing has been changed on the server so far.')
+TWPM_OLD_ARCHIVE_RU = ('Архив создан, когда на сервере был Telegram Web Proxy Manager (TWPM), подключённый по старой схеме (старая версия). '
+                       'Такой архив не восстанавливается. На исходном сервере удалите TWPM: в главном меню 3X-UI откройте Telegram Web Proxy Manager, '
+                       'выберите «Удалить Telegram-прокси» и на вопрос про сертификат ответьте y. Затем сделайте на нём новый Backup '
+                       'и восстановите этот новый архив. После этого TWPM можно установить заново, ссылка подключения изменится. '
+                       'Восстановление не выполнялось, данные на сервере не изменены.')
+TWPM_OLD_ARCHIVE_EN = ('This archive was created while Telegram Web Proxy Manager (TWPM) was connected using an old layout (old version). '
+                       'Such an archive cannot be restored. On the original server remove TWPM: in the 3X-UI main menu open Telegram Web Proxy Manager, '
+                       'choose "Uninstall Telegram proxy" and answer y when asked whether to delete the certificate. '
+                       'Then create a new Backup there and restore that new archive. After that you can install TWPM again; '
+                       'the connection link will change. Nothing was restored and the server data was not changed.')
 RULE = '=' * 60
+def wrapped(text):
+    # The frame width: whole words, 60 characters per line.
+    return textwrap.fill(text, 60, break_long_words=False, break_on_hyphens=False)
+def flat(text):
+    return ' '.join(text.split())
 # The refusal block without colours (stderr is not a terminal): red [FAIL] label, Russian, an empty line, English.
-def refusal(russian, english):
+# Without python3 (before Restore installs it) the text is not wrapped.
+def refusal(russian, english, wrap=True):
+    if wrap:
+        russian, english = wrapped(russian), wrapped(english)
     return f'\n{RULE}\n  [FAIL]\n{RULE}\n{russian}\n\n{english}\n{RULE}\n'
 REFUSE_RESTORE = refusal(TWPM_RESTORE_RU, TWPM_RESTORE_EN)
+REFUSE_RESTORE_NO_PYTHON = refusal(TWPM_RESTORE_RU, TWPM_RESTORE_EN, wrap=False)
 REFUSE_BACKUP = refusal(TWPM_BACKUP_RU, TWPM_BACKUP_EN)
+REFUSE_OLD_ARCHIVE = refusal(TWPM_OLD_ARCHIVE_RU, TWPM_OLD_ARCHIVE_EN)
 
 def relocated(source, root):
     # Apply a single pass so replacements cannot recursively match themselves.
@@ -241,7 +262,7 @@ elif name == 'dpkg-query':
     print('install ok installed', end='')
 elif name == 'apt-get':
     if os.environ.get('FAIL_APT') and (os.environ['FAIL_APT'] != 'install' or args[0] == 'install'):
-        sys.exit(1)
+        print('E: Unable to locate package fixture-failure', file=sys.stderr); sys.exit(1)
     counter = root / 'apt-lock-count'
     held = int(counter.read_text()) if counter.exists() else 0
     if held < int(os.environ.get('APT_LOCK_FAILURES', '0')):
@@ -263,6 +284,7 @@ elif name == 'apt-get':
             if arg == '-o': next(words, None)
             elif not arg.startswith('-'): installed.add(arg)
         installed_path.write_text('\n'.join(sorted(installed)))
+        print('Setting up fixture-package (1.0) ...')
 elif name in ('python3', 'gzip'):
     if name == 'python3' and args == ['-c', 'import configobj, cryptography'] and os.environ.get('FAIL_PYTHON_IMPORT'):
         sys.exit(1)
@@ -590,9 +612,9 @@ class PersonalBackup(unittest.TestCase):
         self.assertIn(REFUSE_BACKUP,result.stderr)
         # The failing stage follows the block after an empty line.
         self.assertRegex(result.stderr,re.escape(RULE)+r'\n\n\[FAIL\] Operation failed during: ')
-        self.assertIn(TWPM_BACKUP_RU,result.stderr)
-        self.assertIn(TWPM_BACKUP_EN,result.stderr)
-        self.assertLess(result.stderr.index(TWPM_BACKUP_RU),result.stderr.index(TWPM_BACKUP_EN))
+        self.assertIn(TWPM_BACKUP_RU,flat(result.stderr))
+        self.assertIn(TWPM_BACKUP_EN,flat(result.stderr))
+        self.assertLess(flat(result.stderr).index(TWPM_BACKUP_RU),flat(result.stderr).index(TWPM_BACKUP_EN))
         self.assertNotIn('Update TWPM',result.stderr)
         self.assertFalse(list(self.path('/var/backups/x-ui').glob('*.tar.gz')))
         self.assertTrue(live==self.telemt_live_state(),'Refusal changed live files')
@@ -601,7 +623,9 @@ class PersonalBackup(unittest.TestCase):
         (self.root/'commands').write_text('')
         result=self.run_tool('restore',archive)
         self.assertNotEqual(result.returncode,0)
-        self.assertIn('stream-enabled/stream.conf contains old inline Telegram Web Proxy Manager lines',result.stderr)
+        self.assertIn(REFUSE_OLD_ARCHIVE,result.stderr)
+        self.assertRegex(result.stderr,re.escape(RULE)+r'\n\n\[FAIL\] Operation failed during: ')
+        self.assertNotIn('updating TWPM',result.stderr)
         self.assertFalse(any(c[0] == 'cp' or c[:2] == ['systemctl','stop'] for c in self.commands()))
         self.assertEqual(archive.read_bytes(),original)
 
@@ -783,7 +807,7 @@ class PersonalBackup(unittest.TestCase):
                 (self.root/'commands').write_text('')
                 result=self.run_tool('restore',archive,MISSING_PACKAGES='python3 gzip tar',FAIL_APT='1')
                 self.assertNotEqual(result.returncode,0)
-                self.assertIn(REFUSE_RESTORE,result.stderr)
+                self.assertIn(REFUSE_RESTORE_NO_PYTHON,result.stderr)
                 self.assertFalse(any(c[0] in ('apt-get','cp','tar','gzip') or c[:2]==['systemctl','stop'] for c in self.commands()))
                 self.assertFalse(list(self.path('/var/backups/x-ui').glob('.rollback-*')))
                 after=(path.lstat().st_mode,os.readlink(path) if path.is_symlink() else
@@ -857,7 +881,7 @@ class PersonalBackup(unittest.TestCase):
                 (self.root/'commands').write_text('')
                 result = self.run_tool('restore', archive, MISSING_PACKAGES='python3 gzip tar', FAIL_APT='1')
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn(REFUSE_RESTORE, result.stderr)
+                self.assertIn(REFUSE_RESTORE_NO_PYTHON, result.stderr)
                 self.assertFalse(any(c[0] in ('apt-get','cp','tar','gzip') or c[:2] == ['systemctl','stop'] for c in self.commands()))
                 self.assertFalse(list(self.path('/var/backups/x-ui').glob('.rollback-*')))
                 self.assertEqual(self.path(path).read_text(), 'twm_frontend private Telemt state')
@@ -1559,7 +1583,12 @@ class PersonalBackup(unittest.TestCase):
         self.assertLess(everything.index('СЕРВЕР УСТАНАВЛИВАЕТ'), everything.index('SERVER IS INSTALLING'))
         self.assertLess(everything.index('[OK] Обновление системы завершено'), everything.index('[OK] System update finished'))
         self.assertEqual(everything.count('[OK] Обновление системы завершено'), 1)
-        self.assertTrue(everything.rstrip().endswith('[OK] System update finished. Continuing Restore.'), everything)
+        # The package [OK] follows the update [OK]; apt's own output and [FAIL] are not shown.
+        self.assertLess(everything.index('[OK] System update finished. Continuing Restore.'),
+                        everything.index('[OK] Программы установлены / Packages installed'))
+        self.assertTrue(everything.rstrip().endswith('[OK] Программы установлены / Packages installed'), everything)
+        self.assertNotIn('Setting up', everything); self.assertNotIn('[FAIL]', everything)
+        self.assertLessEqual(max(map(len, everything.splitlines())), 60, everything)
         calls = [c for c in self.commands() if c[0] == 'apt-get']
         self.assertEqual([c[1] for c in calls], ['update'] * 14 + ['install'])
         self.assertFalse(any('DPkg::Lock::Timeout=300' in c for c in calls), calls)
@@ -1571,7 +1600,84 @@ class PersonalBackup(unittest.TestCase):
         self.assertEqual(everything.count('Could not get lock'), 1, everything)
         self.assertEqual(everything.count('Ожидание конца обновления: 60 из 60 мин.'), 1)
         self.assertNotIn('[OK] System update finished', everything)
-        self.assertIn('Cannot update package lists', everything)
+        # One [FAIL] frame on stderr: the busy-server advice in Russian then English, the packages, the last apt output.
+        frame = refusal('Сервер всё ещё занят обновлением системы. Ничего не изменено. Подождите и запустите Restore снова, не перезагружая сервер.',
+                        'The server is still busy with a system update. Nothing has been changed. Wait and run Restore again without rebooting the server.')
+        frame = frame[:-len(RULE) - 1] + '\nПакеты / Packages: sqlite3\nE: Could not get lock'
+        self.assertEqual(result.stderr.count('[FAIL]'), 2, result.stderr)  # the frame and the unchanged die message
+        self.assertIn(frame, result.stderr)
+        self.assertLess(result.stderr.index('Unable to lock directory'), result.stderr.rindex(RULE))
+        self.assertTrue(result.stderr.endswith(RULE + '\n[FAIL] Cannot update package lists; managed files have not been replaced.\n'), result.stderr)
+
+    def test_frames_wrap_words_to_rule_width_in_c_and_utf8_locales(self):
+        helper = str(ROOT / 'assets/backup/x-ui-backup.sh')
+        long_path = '/var/backups/x-ui/' + 'x' * 70 + '.tar.gz'
+        blocks = ((TWPM_RESTORE_RU, TWPM_RESTORE_EN), (TWPM_BACKUP_RU, TWPM_BACKUP_EN),
+                  (TWPM_OLD_ARCHIVE_RU, TWPM_OLD_ARCHIVE_EN), ('Архив ' + long_path + ' не найден.', 'Archive ' + long_path + ' not found.'))
+        for locale in ('C', 'C.UTF-8'):
+            for russian, english in blocks:
+                with self.subTest(locale=locale, text=english[:40]):
+                    result = subprocess.run(['bash', '-c', 'source "$1"; refusal_block "$2" "$3"', 'fixture', helper, russian, english],
+                                            capture_output=True, env={**os.environ, 'LC_ALL': locale, 'NO_COLOR': '1'})
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    text = result.stderr.decode('utf-8')
+                    self.assertNotIn('\x1b', text)
+                    head, label, body, tail = text.split(RULE + '\n')
+                    self.assertEqual((head, label, tail), ('\n', '  [FAIL]\n', ''))
+                    # Russian, an empty line, English; no word lost or split; lines counted in characters.
+                    ru_part, en_part = body.rstrip('\n').split('\n\n')
+                    self.assertEqual((flat(ru_part), flat(en_part)), (russian, english))
+                    for line in body.splitlines():
+                        self.assertTrue(len(line) <= 60 or line == long_path, (locale, line))
+                    if long_path in russian:
+                        self.assertIn('\n' + long_path + '\n', body)
+                notice = subprocess.run(['bash', '-c', 'source "$1"; apt_wait_notice', 'fixture', helper],
+                                        capture_output=True, env={**os.environ, 'LC_ALL': locale, 'NO_COLOR': '1'})
+                lines = notice.stdout.decode('utf-8').splitlines()
+                self.assertEqual(lines[:4], ['', RULE, '  СЕРВЕР УСТАНАВЛИВАЕТ ОБНОВЛЕНИЯ СИСТЕМЫ', '  SERVER IS INSTALLING SYSTEM UPDATES'])
+                self.assertLessEqual(max(map(len, lines)), 60, lines)
+                self.assertIn('НЕ ПЕРЕЗАГРУЖАЙТЕ и не выключайте сервер - это может сломать систему.', flat(notice.stdout.decode()))
+        # On a terminal every wrapped line carries its own colour, so a broken line keeps the orange text.
+        master, slave = os.openpty()
+        process = subprocess.Popen(['bash', '-c', 'source "$1"; refusal_block "$2" "$3"', 'fixture', helper, TWPM_RESTORE_RU, TWPM_RESTORE_EN],
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=slave,
+                                   env={k: v for k, v in {**os.environ, 'TERM': 'xterm', 'LC_ALL': 'C'}.items() if k != 'NO_COLOR'})
+        os.close(slave); output = bytearray()
+        while True:
+            try: chunk = os.read(master, 65536)
+            except OSError: break
+            if not chunk: break
+            output.extend(chunk)
+        process.wait(timeout=10); os.close(master)
+        lines = output.decode('utf-8').replace('\r\n', '\n').split('\n')
+        self.assertIn('  \x1b[1;31m[FAIL]\x1b[0m', lines)
+        text_lines = [line for line in lines[4:] if line and line != RULE]
+        self.assertGreater(len(text_lines), 10)
+        for line in text_lines:
+            self.assertTrue(line.startswith('\x1b[38;5;208m') and line.endswith('\x1b[0m'), repr(line))
+            self.assertLessEqual(len(line) - len('\x1b[38;5;208m\x1b[0m'), 60)
+
+    def test_apt_success_hides_raw_output_and_failure_shows_it_once_in_frame(self):
+        script = 'source "$1"; sleep() { :; }; install_missing_packages sqlite3 mtr-tiny'
+        def run(**env):
+            (self.root / 'commands').write_text(''); (self.root / 'installed-packages').unlink(missing_ok=True)
+            return subprocess.run(['bash', '-c', script, 'fixture', str(self.script)], text=True, capture_output=True,
+                                  env={**self.env, 'LC_ALL': 'C', 'NO_COLOR': '1', 'MISSING_PACKAGES': 'sqlite3 mtr-tiny', **env})
+        result = run()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, '\n==> Установка нужных программ / Installing required packages\n'
+                                        '[OK] Программы установлены / Packages installed\n')
+        self.assertEqual(result.stderr, '')
+        self.assertTrue(all(len(line) <= 60 for line in result.stdout.splitlines()))
+        for failing, message in (('1', 'Cannot update package lists'), ('install', 'Dependency installation failed')):
+            with self.subTest(failing=failing):
+                result = run(FAIL_APT=failing)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, '\n==> Установка нужных программ / Installing required packages\n')
+                self.assertEqual(result.stderr, f'\n{RULE}\n  [FAIL]\n{RULE}\nПакеты / Packages: sqlite3 mtr-tiny\n'
+                                                f'E: Unable to locate package fixture-failure\n{RULE}\n'
+                                                f'[FAIL] {message}; managed files have not been replaced.\n')
+                self.assertNotIn('Сервер всё ещё занят', result.stderr)
 
     def test_apt_lock_error_other_than_a_lock_is_not_retried(self):
         (self.root / 'commands').write_text('')
@@ -1603,7 +1709,7 @@ class PersonalBackup(unittest.TestCase):
                 result = self.run_tool('restore', archive)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(REFUSE_RESTORE, result.stderr)
-                self.assertLess(result.stderr.index(TWPM_RESTORE_RU), result.stderr.index(TWPM_RESTORE_EN))
+                self.assertLess(flat(result.stderr).index(TWPM_RESTORE_RU), flat(result.stderr).index(TWPM_RESTORE_EN))
                 self.assertEqual(self.path('/etc/x-ui/marker').read_text(), 'unchanged')
                 self.assertFalse(any(c[0] in ('apt-get', 'cp', 'tar', 'gzip') or c[:2] == ['systemctl', 'stop'] for c in self.commands()))
                 shutil.rmtree(self.path(marker).parent) if marker.startswith('/var/lib') else self.path(marker).unlink()
@@ -1713,7 +1819,10 @@ class PersonalBackup(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertNotIn('Restore completed successfully.', result.stdout)
                     self.assertEqual(self.path('/etc/x-ui/marker').read_text(), 'unchanged')
-                    self.assertFalse(any(c[0] in ('python3', 'gzip', 'tar') or c[:2] == ['systemctl', 'stop'] for c in calls))
+                    # python3 -I only formats the [FAIL] frame text and falls back to unwrapped text while missing.
+                    self.assertFalse(any(c[0] in ('python3', 'gzip', 'tar') and c[:3] != ['python3', '-I', '-c']
+                                         or c[:2] == ['systemctl', 'stop'] for c in calls))
+                    self.assertIn('Пакеты / Packages: python3 gzip tar\nE: Unable to locate package fixture-failure\n', result.stderr)
                 else:
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn('Restore completed successfully.', result.stdout)

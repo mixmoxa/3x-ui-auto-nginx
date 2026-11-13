@@ -289,6 +289,70 @@ ui_back '0. Back'
                         self.assertIn(str(directory/'backup-1.tar.gz'),result.stdout)
                     else:self.assertIn('No backups' if language=='en' else 'нет резервных копий',visible)
 
+    def test_backup_lists_newest_first_equal_times_by_name_and_numbers_match_choice(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory=Path(temporary)/'backups';directory.mkdir()
+            times={'x-ui-backup-20261001-100000-aaaaaa.tar.gz':1790000000,'copied.tar.gz':1793000000,
+                   'x-ui-backup-20261101-100000-bbbbbb.tar.gz':1795000000,'x-ui-backup-20261102-100000-cccccc.tar.gz':1795000000}
+            for name,stamp in times.items():
+                (directory/name).write_bytes(b'fixture');os.utime(directory/name,(stamp,stamp))
+            (directory/'link.tar.gz').symlink_to(directory/'copied.tar.gz')
+            (directory/'broken.tar.gz').symlink_to(directory/'absent')
+            (directory/'folder.tar.gz').mkdir()
+            # Newest first; equal times by name descending (the name holds the UTC creation time).
+            expected=['x-ui-backup-20261102-100000-cccccc.tar.gz','x-ui-backup-20261101-100000-bbbbbb.tar.gz',
+                      'copied.tar.gz','x-ui-backup-20261001-100000-aaaaaa.tar.gz']
+            source=(ROOT/'x-ui-latest.sh').read_text()
+            # Restore takes archive [N] from the same array the list is numbered from.
+            self.assertIn('archive=${BACKUP_CHOICES[10#$choice-1]}',source)
+            body=re.search(r'^backup_list\(\) \{.*?^\}',source,re.M|re.S)[0].replace('/var/backups/x-ui',str(directory))
+            for interactive,pattern in (('1',r'\[(\d+)\] [^\n]*\n[^\n]*\n\s+File: ([^\n]+)'),('0',r'^(\d+)\. (\S+)  ')):
+                with self.subTest(interactive=interactive):
+                    script='source "$1"; UI_INTERACTIVE='+interactive+'; '+body+'; backup_list; printf "SELECTED:%s\\n" "${BACKUP_CHOICES[@]}"'
+                    result=subprocess.run(['bash','-c',script,'fixture',str(ROOT/'x-ui-latest.sh')],capture_output=True,text=True)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    visible=result.stdout.split('SELECTED:')[0]
+                    choices=[Path(line).name for line in result.stdout.splitlines() if line.startswith('SELECTED:')]
+                    shown=re.findall(pattern,visible,re.M)
+                    self.assertEqual(choices,expected)
+                    self.assertEqual([(int(number),Path(name).name) for number,name in shown],list(enumerate(expected,1)))
+            # x-ui-backup list keeps every *.tar.gz entry; entries without a file time go last, without failing.
+            result=subprocess.run(['bash','-c','source "$1"; BACKUP_STORE=$2; cmd_list',
+                                   'fixture',str(ROOT/'assets/backup/x-ui-backup.sh'),str(directory)],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual([line.split()[0] for line in result.stdout.splitlines()],
+                             expected[:2]+['link.tar.gz']+expected[2:]+['folder.tar.gz','broken.tar.gz'])
+
+    def test_menu_frames_wrap_to_frame_width_in_c_and_utf8_locales(self):
+        from test_personal_backup import TWPM_RESTORE_EN, TWPM_RESTORE_RU
+        source=(ROOT/'x-ui-latest.sh').read_text()
+        warning=re.search(r"^    ui_wrap '38;5;208' \"\$\(ui_text 'Restore replaces.*$",source,re.M)[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            script=Path(temporary)/'frames.sh'
+            script.write_text('source "$1"; UI_LANG=$2; ui_refuse "$3"; ui_frame;'+warning+'\nui_frame\n')
+            for locale in ('C','C.UTF-8'):
+                for language,refusal,yes in (('en',TWPM_RESTORE_EN,YES_EN),('ru',TWPM_RESTORE_RU,YES_RU)):
+                    with self.subTest(locale=locale,language=language):
+                        result=subprocess.run(['bash',str(script),str(ROOT/'x-ui-latest.sh'),language,refusal],
+                                              capture_output=True,env={**os.environ,'LC_ALL':locale})
+                        self.assertEqual(result.returncode,0,result.stderr)
+                        text=result.stdout.decode('utf-8')
+                        self.assertNotIn('\x1b',text)
+                        self.assertLessEqual(max(map(len,text.splitlines())),60,text)
+                        flat=' '.join(text.split())
+                        self.assertIn(f'{FRAME} [FAIL] {FRAME} {refusal} {FRAME}',flat)
+                        self.assertIn(f'{FRAME} {yes} {FRAME}',flat)
+            # On a terminal each wrapped line is orange on its own.
+            for language,refusal in (('en',TWPM_RESTORE_EN),('ru',TWPM_RESTORE_RU)):
+                wrapper=Path(temporary)/('tty-'+language+'.sh')
+                wrapper.write_text('bash '+str(script)+' '+str(ROOT/'x-ui-latest.sh')+' '+language+' "$REFUSAL"\n')
+                code,text=tty_run(wrapper,b'',env={'TERM':'xterm','NO_COLOR':None,'LC_ALL':'C','REFUSAL':refusal})
+                self.assertEqual(code,0,text)
+                lines=[line for line in text.replace('\r\n','\n').split('\n') if line and line!=FRAME and '[FAIL]' not in line]
+                self.assertGreater(len(lines),8)
+                for line in lines:
+                    self.assertTrue(line.startswith('\x1b[38;5;208m') and line.endswith('\x1b[0m'),repr(line))
+
     def test_restore_metadata_uses_inspect_fields_without_raw_json_or_controls(self):
         data=dict(format_version=3,created='2026-10-28T16:28:23+00:00',os_id='ubuntu',os_version='26.04',
                   arch='amd64',x_ui_version='3.11.0',xray_version='26.10.21',adguard_home=True)

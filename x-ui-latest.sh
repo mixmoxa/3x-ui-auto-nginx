@@ -19,12 +19,26 @@ msg_ok() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then print
 msg_err() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;31m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
 msg_inf() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;36m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
 msg_warn() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;33m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
-# 38;5;208 is orange: explanatory text of refusals and warnings.
-msg_note() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[38;5;208m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
+# 38;5;208 is orange: explanatory text of refusals and warnings (ui_note, ui_wrap).
 ui_note() {
     if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then
         printf '\e[38;5;208m'; ui_text "$@"; printf '\e[0m'
     else ui_text "$@"; fi
+}
+
+# ui_wrap ANSI-CODE TEXT: text inside a frame wraps by words to the frame width (60 characters, UTF-8 under
+# any LC_ALL; a longer word such as a path stays whole) and every line is coloured separately.
+ui_wrap() {
+    local line
+    while IFS= read -r line; do
+        if [[ -n "$line" && -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[%sm%s\e[0m\n' "$1" "$line"
+        else printf '%s\n' "$line"; fi
+    done < <(printf '%s' "$2" | python3 -I -c 'import sys, textwrap
+out = []
+for line in sys.stdin.buffer.read().decode("utf-8", "replace").rstrip("\n").split("\n"):
+    body = line.lstrip(" "); indent = line[:len(line) - len(body)]
+    out.append(textwrap.fill(body, 60, initial_indent=indent, subsequent_indent=indent, break_long_words=False, break_on_hyphens=False))
+sys.stdout.buffer.write(("\n".join(out) + "\n").encode())' 2>/dev/null || printf '%s\n' "$2")
 }
 
 ui_rule() {
@@ -36,7 +50,7 @@ ui_frame() {
 # Refusal: red [FAIL] between frames, then the orange explanation (one language, chosen by the caller).
 ui_refuse() {
     printf '\n'; ui_frame; msg_err '  [FAIL]'; ui_frame
-    msg_note "$1"; ui_frame
+    ui_wrap '38;5;208' "$1"; ui_frame
 }
 ui_title() {
     printf '\n%s\n' '============================================================'
@@ -3486,12 +3500,20 @@ prepare_backup_helper() {
 }
 
 backup_list() {
-    local archive size timestamp number=0
+    local archive size timestamp number=0 entry
+    local -a found=()
     BACKUP_CHOICES=()
     for archive in /var/backups/x-ui/*.tar.gz; do
         [[ -f "$archive" && ! -L "$archive" ]] || continue
-        BACKUP_CHOICES+=("$archive")
+        timestamp=$(stat -c %Y -- "$archive") || return 1
+        found+=("$timestamp"$'\t'"$archive")
     done
+    # Newest file time (the date shown) first, equal times by name descending: names hold the UTC
+    # creation time. Restore takes archive [N] from this same array, so the numbers match the list.
+    if (( ${#found[@]} )); then
+        while IFS= read -r -d '' entry; do BACKUP_CHOICES+=("${entry#*$'\t'}"); done \
+            < <(printf '%s\0' "${found[@]}" | LC_ALL=C sort -z -t $'\t' -k1,1nr -k2r)
+    fi
     if [[ ${UI_INTERACTIVE:-0} == 1 ]]; then
         ui_title "$(ui_text 'BACKUP LIST' 'СПИСОК РЕЗЕРВНЫХ КОПИЙ')"
         ui_text '  Archives found: %d\n' '  Найдено архивов: %d\n' "${#BACKUP_CHOICES[@]}"
@@ -3666,7 +3688,7 @@ backup_action() (
     IFS= read -r answer || exit 0
     [[ "$answer" != y && "$answer" != Y ]] || ufw=y
     printf '\n'; ui_frame
-    ui_note 'Restore replaces project data on this server: the nginx configuration, the 3x-ui panel and its database, the websites (/var/www/html), project certificates and /root/cert, and AdGuard Home. Any other files in these folders will be deleted. Certificates of other sites are not touched. Trust this archive before continuing.\n' 'Восстановление заменит данные проекта на этом сервере: настройки nginx, панель 3x-ui с базой, сайты (/var/www/html), сертификаты проекта и /root/cert, AdGuard Home. Всё остальное в этих папках будет удалено. Сертификаты других сайтов не затрагиваются. Продолжайте только с доверенным архивом.\n'
+    ui_wrap '38;5;208' "$(ui_text 'Restore replaces project data on this server: the nginx configuration, the 3x-ui panel and its database, the websites (/var/www/html), project certificates and /root/cert, and AdGuard Home. Any other files in these folders will be deleted. Certificates of other sites are not touched. Trust this archive before continuing.' 'Восстановление заменит данные проекта на этом сервере: настройки nginx, панель 3x-ui с базой, сайты (/var/www/html), сертификаты проекта и /root/cert, AdGuard Home. Всё остальное в этих папках будет удалено. Сертификаты других сайтов не затрагиваются. Продолжайте только с доверенным архивом.')"
     ui_frame
     ui_note 'Type YES to restore: ' 'Для восстановления введите YES: '
     IFS= read -r answer || exit 0

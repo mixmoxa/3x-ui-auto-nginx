@@ -39,10 +39,28 @@ RULE='============================================================'
 paint() {
     if [[ -t $1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[%sm%s\e[0m' "$2" "$3"; else printf '%s' "$3"; fi
 }
+# Text between rules wraps by words to the rule width, counted in characters (UTF-8 under any LC_ALL).
+# A word longer than the line (a path, a URL) stays whole. Without python3 the text is printed unwrapped.
+wrap_rule() {
+    printf '%s' "$1" | python3 -I -c 'import sys, textwrap
+out = []
+for line in sys.stdin.buffer.read().decode("utf-8", "replace").rstrip("\n").split("\n"):
+    body = line.lstrip(" "); indent = line[:len(line) - len(body)]
+    out.append(textwrap.fill(body, 60, initial_indent=indent, subsequent_indent=indent, break_long_words=False, break_on_hyphens=False))
+sys.stdout.buffer.write(("\n".join(out) + "\n").encode())' 2>/dev/null || printf '%s\n' "$1"
+}
+# paint_wrapped FD ANSI-CODE TEXT: wrapped text, every line coloured separately.
+paint_wrapped() {
+    local line
+    while IFS= read -r line; do
+        [[ -z "$line" ]] || paint "$1" "$2" "$line"; printf '\n'
+    done < <(wrap_rule "$3")
+}
+# Red [FAIL] between rules; the caller prints the body and the closing rule.
+fail_frame() { printf '\n%s\n  ' "$RULE"; paint 2 '1;31' '[FAIL]'; printf '\n%s\n' "$RULE"; }
 # Refusal block: red [FAIL] between rules, then the orange text, Russian and English separated by an empty line.
 refusal_block() {
-    { printf '\n%s\n  ' "$RULE"; paint 2 '1;31' '[FAIL]'; printf '\n%s\n' "$RULE"
-      paint 2 '38;5;208' "$1"; printf '\n\n'; paint 2 '38;5;208' "$2"; printf '\n%s\n' "$RULE"; } >&2
+    { fail_frame; paint_wrapped 2 '38;5;208' "$1"; printf '\n'; paint_wrapped 2 '38;5;208' "$2"; printf '%s\n' "$RULE"; } >&2
 }
 die_block() { refusal_block "$@"; exit 1; }
 require_root() { [[ $EUID -eq 0 ]] || die 'Run x-ui-backup as root.'; }
@@ -167,20 +185,33 @@ host_identity() {
 # apt-get that waits for the apt/dpkg locks (a fresh VPS updates itself for 10-60 minutes).
 # Without DPkg::Lock::Timeout every lock (lists, dpkg frontend, dpkg) fails at once with
 # "Could not get lock" in LC_ALL=C, so one 10 s retry loop covers all of them and the user sees
-# one block instead of apt's raw errors. The output of an attempt is shown only when it ends the wait.
+# one block instead of apt's raw errors. apt output is shown only on failure, once, in a [FAIL] frame.
+# Usage: apt_wait_run PACKAGES COMMAND ARGS... (PACKAGES is the list named in that frame).
 apt_wait_run() {
-    local command=$1 log status waits=0
-    shift
+    local packages=$1 command=$2 log status waits=0 locked
+    shift 2
     log=$(mktemp) || return 1
     while :; do
-        status=0
+        status=0 locked=0
         LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get "$command" "$@" > "$log" 2>&1 || status=$?
-        (( status )) && grep -Eq 'Could not get lock|Unable to acquire.*lock' "$log" && (( waits < 360 )) || break
+        (( status )) && grep -Eq 'Could not get lock|Unable to acquire.*lock' "$log" && locked=1
+        (( locked && waits < 360 )) || break
         (( waits )) || apt_wait_notice
-        (( ++waits % 6 )) || printf 'Ожидание конца обновления: %d из 60 мин. Не перезагружайте сервер.\nWaiting for the system update: %d of 60 min. Do not reboot the server.\n' $((waits / 6)) $((waits / 6))
+        (( ++waits % 6 )) || wrap_rule "$(printf 'Ожидание конца обновления: %d из 60 мин. Не перезагружайте сервер.\nWaiting for the system update: %d of 60 min. Do not reboot the server.' $((waits / 6)) $((waits / 6)))"
         sleep 10
     done
-    cat "$log"; rm -f "$log"
+    if (( status )); then
+        { fail_frame
+          if (( locked )); then
+              paint_wrapped 2 '38;5;208' 'Сервер всё ещё занят обновлением системы. Ничего не изменено. Подождите и запустите Restore снова, не перезагружая сервер.'
+              printf '\n'
+              paint_wrapped 2 '38;5;208' 'The server is still busy with a system update. Nothing has been changed. Wait and run Restore again without rebooting the server.'
+              printf '\n'
+          fi
+          wrap_rule "Пакеты / Packages: $packages"
+          printf '%s\n%s\n' "$(< "$log")" "$RULE"; } >&2
+    fi
+    rm -f "$log"
     if (( waits && ! status )); then
         paint 1 '1;32' $'[OK] Обновление системы завершено. Продолжаю Restore.\n[OK] System update finished. Continuing Restore.'; printf '\n'
     fi
@@ -189,9 +220,9 @@ apt_wait_run() {
 
 apt_wait_notice() {
     printf '\n%s\n' "$RULE"
-    paint 1 '1;36' $'  СЕРВЕР УСТАНАВЛИВАЕТ ОБНОВЛЕНИЯ СИСТЕМЫ\n  SERVER IS INSTALLING SYSTEM UPDATES'
-    printf '\n%s\n\n' "$RULE"
-    paint 1 '1;33' $'Свежий сервер сам обновляется сразу после первого запуска. Это может занять от 10 до 60 минут.
+    paint_wrapped 1 '1;36' $'  СЕРВЕР УСТАНАВЛИВАЕТ ОБНОВЛЕНИЯ СИСТЕМЫ\n  SERVER IS INSTALLING SYSTEM UPDATES'
+    printf '%s\n\n' "$RULE"
+    paint_wrapped 1 '1;33' $'Свежий сервер сам обновляется сразу после первого запуска. Это может занять от 10 до 60 минут.
 Restore продолжится автоматически, когда обновление закончится. Данные ещё не восстанавливались.
 НЕ ПЕРЕЗАГРУЖАЙТЕ и не выключайте сервер - это может сломать систему.
 Можно безопасно отменить по Ctrl+C и запустить Restore позже.
@@ -200,7 +231,6 @@ A fresh server updates itself right after the first start. This can take 10-60 m
 Restore will continue automatically when the update finishes. No data has been restored yet.
 DO NOT reboot or power off the server - this can break the system.
 You can safely cancel with Ctrl+C and run Restore later.'
-    printf '\n'
 }
 
 install_missing_packages() {
@@ -210,13 +240,14 @@ install_missing_packages() {
         [[ "$status" == 'install ok installed' ]] || missing+=("$package")
     done
     if (( ${#missing[@]} )); then
-        stage "Installing missing dependencies: ${missing[*]}"
+        stage 'Установка нужных программ / Installing required packages'
         if (( ! APT_UPDATED )); then
-            apt_wait_run update -qq || die 'Cannot update package lists; managed files have not been replaced.'
+            apt_wait_run "${missing[*]}" update -qq || die 'Cannot update package lists; managed files have not been replaced.'
             APT_UPDATED=1
         fi
-        apt_wait_run install -y --no-install-recommends "${missing[@]}" ||
+        apt_wait_run "${missing[*]}" install -y --no-install-recommends "${missing[@]}" ||
             die 'Dependency installation failed; managed files have not been replaced.'
+        paint 1 '1;32' '[OK] Программы установлены / Packages installed'; printf '\n'
     fi
 }
 
@@ -641,9 +672,7 @@ def remove(path):
 ng, certs = staged(nginx), staged(certroot)
 stream = ng/'stream-enabled/stream.conf'
 if stream.is_file() and re.search(r'# telemt-web-manager|twm_frontend', read(stream)):
-    if mode == 'backup':
-        sys.exit(11)  # the bash side prints the refusal block
-    sys.exit(f'[FAIL] {live(stream)} contains old inline Telegram Web Proxy Manager lines. Create a new Backup after updating TWPM. Nothing was restored.')
+    sys.exit(11)  # the bash side prints the refusal block for Backup or Restore
 vhost = ng/'conf.d/telemt-web-manager.conf'
 files = (vhost, ng/'conf.d/telemt-web-manager-acme.conf', ng/'stream-sni.d/telemt-web-manager.conf',
          ng/'stream-upstreams.d/telemt-web-manager.conf', certs/'renewal-hooks/deploy/telemt-web-manager')
@@ -672,8 +701,13 @@ removed = [path for path in (*files, *lineage) if remove(path)]
 if removed:
     print('[OK] Telemt integration excluded from private staging')
 PYTELEMT
-    # Exit code 11: Backup of the old TWPM layout. The caller's ERR trap prints the failing stage after the block.
-    (( status != 11 )) || refusal_block $'Telegram Web Proxy Manager (TWPM) подключён по старой схеме (старая версия), Backup с ней не поддерживается. Удалите его (в главном меню 3X-UI откройте Telegram Web Proxy Manager, «Удалить Telegram-прокси», на вопрос про сертификат ответьте y), затем установите TWPM заново и повторите Backup. Если это сообщение появится снова, оставьте TWPM удалённым: Backup работает только без него. Ссылка подключения после новой установки изменится. На данный момент на сервере ничего не изменено.' $'Telegram Web Proxy Manager (TWPM) is connected using an old layout (old version) that Backup does not support. Remove it (3X-UI main menu, Telegram Web Proxy Manager, "Uninstall Telegram proxy", answer y to the certificate question), then install TWPM again and repeat Backup. If this message appears again, leave TWPM uninstalled: Backup works only without it. The connection link will change after TWPM is installed again. Nothing has been changed on the server so far.'
+    # Exit code 11: the old TWPM layout in the live state (Backup) or in the archive (Restore).
+    # The caller's ERR trap prints the failing stage after the block.
+    if (( status == 11 )) && [[ ${1:-restore} == restore ]]; then
+        refusal_block $'Архив создан, когда на сервере был Telegram Web Proxy Manager (TWPM), подключённый по старой схеме (старая версия). Такой архив не восстанавливается. На исходном сервере удалите TWPM: в главном меню 3X-UI откройте Telegram Web Proxy Manager, выберите «Удалить Telegram-прокси» и на вопрос про сертификат ответьте y. Затем сделайте на нём новый Backup и восстановите этот новый архив. После этого TWPM можно установить заново, ссылка подключения изменится. Восстановление не выполнялось, данные на сервере не изменены.' 'This archive was created while Telegram Web Proxy Manager (TWPM) was connected using an old layout (old version). Such an archive cannot be restored. On the original server remove TWPM: in the 3X-UI main menu open Telegram Web Proxy Manager, choose "Uninstall Telegram proxy" and answer y when asked whether to delete the certificate. Then create a new Backup there and restore that new archive. After that you can install TWPM again; the connection link will change. Nothing was restored and the server data was not changed.'
+    elif (( status == 11 )); then
+        refusal_block $'Telegram Web Proxy Manager (TWPM) подключён по старой схеме (старая версия), Backup с ней не поддерживается. Удалите его (в главном меню 3X-UI откройте Telegram Web Proxy Manager, «Удалить Telegram-прокси», на вопрос про сертификат ответьте y), затем установите TWPM заново и повторите Backup. Если это сообщение появится снова, оставьте TWPM удалённым: Backup работает только без него. Ссылка подключения после новой установки изменится. На данный момент на сервере ничего не изменено.' $'Telegram Web Proxy Manager (TWPM) is connected using an old layout (old version) that Backup does not support. Remove it (3X-UI main menu, Telegram Web Proxy Manager, "Uninstall Telegram proxy", answer y to the certificate question), then install TWPM again and repeat Backup. If this message appears again, leave TWPM uninstalled: Backup works only without it. The connection link will change after TWPM is installed again. Nothing has been changed on the server so far.'
+    fi
     return "$status"
 }
 
@@ -2462,13 +2496,20 @@ cmd_update_hooks() (
 )
 
 cmd_list() {
-    local archive
+    local archive entry stamp
     shopt -s nullglob
-    local archives=("$BACKUP_STORE"/*.tar.gz)
+    local archives=("$BACKUP_STORE"/*.tar.gz) sorted=()
     if (( ! ${#archives[@]} )); then printf 'No backups in %s\n' "$BACKUP_STORE"; return; fi
+    # Newest file time first, equal times by name descending (names hold the UTC creation time).
+    # Entries without a file time of their own (a broken link, a directory) go last.
     for archive in "${archives[@]}"; do
-        printf '%q %8s\n' "${archive##*/}" "$(du -h "$archive" | cut -f1)"
+        [[ -f "$archive" ]] && stamp=$(stat -L -c %Y -- "$archive" 2>/dev/null) || stamp=-1
+        sorted+=("$stamp"$'\t'"$archive")
     done
+    while IFS= read -r -d '' entry; do
+        archive=${entry#*$'\t'}
+        printf '%q %8s\n' "${archive##*/}" "$(du -h "$archive" | cut -f1)"
+    done < <(printf '%s\0' "${sorted[@]}" | LC_ALL=C sort -z -t $'\t' -k1,1nr -k2r)
 }
 
 # Protocol 1: fd 9 is an inherited open-file description of this private inode.
