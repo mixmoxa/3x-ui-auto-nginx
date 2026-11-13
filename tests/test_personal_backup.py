@@ -624,7 +624,7 @@ class PersonalBackup(unittest.TestCase):
         result=self.run_tool('restore',archive)
         self.assertNotEqual(result.returncode,0)
         self.assertIn(REFUSE_OLD_ARCHIVE,result.stderr)
-        self.assertRegex(result.stderr,re.escape(RULE)+r'\n\n\[FAIL\] Operation failed during: ')
+        self.assertRegex(result.stderr,re.escape(RULE)+r'\n\n\[FAIL\] Operation failed during: Проверка архива / Checking the archive\n')
         self.assertNotIn('updating TWPM',result.stderr)
         self.assertFalse(any(c[0] == 'cp' or c[:2] == ['systemctl','stop'] for c in self.commands()))
         self.assertEqual(archive.read_bytes(),original)
@@ -1601,8 +1601,8 @@ class PersonalBackup(unittest.TestCase):
         self.assertEqual(everything.count('Ожидание конца обновления: 60 из 60 мин.'), 1)
         self.assertNotIn('[OK] System update finished', everything)
         # One [FAIL] frame on stderr: the busy-server advice in Russian then English, the packages, the last apt output.
-        frame = refusal('Сервер всё ещё занят обновлением системы. Ничего не изменено. Подождите и запустите Restore снова, не перезагружая сервер.',
-                        'The server is still busy with a system update. Nothing has been changed. Wait and run Restore again without rebooting the server.')
+        frame = refusal('Сервер всё ещё занят обновлением системы. Данные проекта не изменены. Подождите и запустите Restore снова, не перезагружая сервер.',
+                        'The server is still busy with a system update. Project data has not been changed. Wait and run Restore again without rebooting the server.')
         frame = frame[:-len(RULE) - 1] + '\nПакеты / Packages: sqlite3\nE: Could not get lock'
         self.assertEqual(result.stderr.count('[FAIL]'), 2, result.stderr)  # the frame and the unchanged die message
         self.assertIn(frame, result.stderr)

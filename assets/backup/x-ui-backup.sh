@@ -203,9 +203,9 @@ apt_wait_run() {
     if (( status )); then
         { fail_frame
           if (( locked )); then
-              paint_wrapped 2 '38;5;208' 'Сервер всё ещё занят обновлением системы. Ничего не изменено. Подождите и запустите Restore снова, не перезагружая сервер.'
+              paint_wrapped 2 '38;5;208' 'Сервер всё ещё занят обновлением системы. Данные проекта не изменены. Подождите и запустите Restore снова, не перезагружая сервер.'
               printf '\n'
-              paint_wrapped 2 '38;5;208' 'The server is still busy with a system update. Nothing has been changed. Wait and run Restore again without rebooting the server.'
+              paint_wrapped 2 '38;5;208' 'The server is still busy with a system update. Project data has not been changed. Wait and run Restore again without rebooting the server.'
               printf '\n'
           fi
           wrap_rule "Пакеты / Packages: $packages"
@@ -2381,6 +2381,7 @@ cmd_restore() {
     check_compatibility
     install_missing_packages "${PACKAGES[@]}"
     check_python_dependencies
+    stage 'Проверка архива / Checking the archive'
     exclude_staged_telemt restore
     quick_check "$STAGING/files$DB"
     ADGUARD_HOME=$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["adguard_home"]).lower())' "$STAGING/meta.json")
