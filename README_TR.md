@@ -19,18 +19,18 @@
 
 </div>
 
-**3X-UI AUTO NGINX**, kendi VPS sunucunuzda [3x-ui](https://github.com/MHSanaei/3x-ui) ve Xray kurmak için ücretsiz bir yükleyicidir. Nginx, HTTPS sertifikaları, REALITY, XHTTP, Hysteria2, abonelikler ve tanılama araçlarını yapılandırır. Etkileşimli yöneticiyle sunucu kurulumu, alan adı değişikliği ve Backup/Restore v3 işlemlerini gerçekleştirebilirsiniz. XTLS Vision, AmneziaWG 3.1 ve DNS-over-HTTPS (DoH) destekli AdGuard Home isteğe bağlıdır.
+**3X-UI AUTO NGINX**, kendi VPS sunucunuzda [3x-ui](https://github.com/MHSanaei/3x-ui) ve Xray kurmak için ücretsiz bir yükleyicidir. Nginx, HTTPS sertifikaları, REALITY, XHTTP, Hysteria2, abonelikler ve tanılama araçlarını yapılandırır. Etkileşimli yöneticiyle sunucu kurulumu, alan adı değişikliği ve Backup/Restore v3 işlemlerini gerçekleştirebilirsiniz. XTLS Vision, AmneziaWG 3.1, Rus siteleri için Cloudflare WARP ve DNS-over-HTTPS (DoH) destekli AdGuard Home isteğe bağlıdır.
 
-**Standart bir 3x-ui kurulumundan fazlası:** yeni kurulumlarda panel ve REALITY için birbirinden farklı, kişiselleştirilmiş çok sayfalı web siteleri oluşturulur. REALITY alan adında TCP üzerinden normal HTTPS istekleri ve UDP üzerinden kimlik doğrulaması yapılmamış HTTP/3 istekleri aynı web sitesini gösterir. Tüm bunlar mevcut Nginx ve Xray ile çalışır; Docker veya ek web sunucusu gerekmez. v2.4.0 yenilikleri, önceden kurulmuş VPS sunucularına otomatik olarak uygulanmaz.
+**Standart bir 3x-ui kurulumundan fazlası:** yeni kurulumlarda panel ve REALITY için birbirinden farklı, kişiselleştirilmiş çok sayfalı web siteleri oluşturulur. REALITY alan adında TCP üzerinden normal HTTPS istekleri ve UDP üzerinden kimlik doğrulaması yapılmamış HTTP/3 istekleri aynı web sitesini gösterir. Tüm bunlar mevcut Nginx ve Xray ile çalışır; Docker veya ek web sunucusu gerekmez.
 
 ## ✨ Neden bu proje?
 
 | | |
 | --- | --- |
-| **Kullanıma hazır bağlantılar**<br>REALITY, XHTTP ve Hysteria2 kurulumda etkinleştirilir; ek taşıma yöntemleri isteğe bağlıdır. | **Eksiksiz kamuflaj siteleri**<br>Yeni kurulumlarda bir kez kişiselleştirilen, mobil uyumlu altı çok sayfalı şablon. |
+| **Kullanıma hazır bağlantılar**<br>REALITY, XHTTP ve Hysteria2 kurulumda etkinleştirilir; ek taşıma yöntemleri isteğe bağlıdır. | **Eksiksiz kamuflaj siteleri**<br>Altı çok sayfalı şablon, çok sayıda tasarım seçeneği sunar. Her kurulumda adlar, renkler, metinler ve görseller değiştirilerek her VPS için kişiselleştirilmiş bir site oluşturulur. |
 | **Hysteria2 için HTTP/3 kamuflajı**<br>REALITY alan adında TCP üzerinden normal HTTPS ve UDP üzerinden kimliği doğrulanmamış HTTP/3 istekleri aynı siteyi gösterir. | **Yalıtılmış dahili arayüzler**<br>Panel ve abonelikler Nginx ve HTTPS üzerinden çalışır; dahili portları doğrudan internete açılmaz. |
 | **Backup / Restore v3**<br>Verileri ve kişiselleştirilmiş siteleri koruyarak yedekleme, kurtarma ve başka bir VPS'e taşıma. | **Yönetici ve alan adı değişikliği**<br>Rusça ve İngilizce menü; panelin, REALITY'nin veya her ikisinin alan adını yeniden kurmadan değiştirin. |
-| **Otomatik sertifikalar ve güvenlik**<br>Let's Encrypt sertifikaları otomatik yenilenir; SSH koruması ve güvenlik güncellemeleri isteğe bağlıdır. | **Ek özellikler**<br>XTLS Vision, AmneziaWG 3.1, CDN için XHTTP ve DoH destekli AdGuard Home. |
+| **Otomatik sertifikalar ve güvenlik**<br>Let's Encrypt sertifikaları otomatik yenilenir; SSH koruması ve güvenlik güncellemeleri isteğe bağlıdır. | **Ek özellikler**<br>XTLS Vision, AmneziaWG 3.1, CDN için XHTTP, Cloudflare WARP ve DoH destekli AdGuard Home. |
 
 <a id="installation"></a>
 
@@ -55,7 +55,7 @@ Menü, etkileşimli bir SSH terminali gerektirir.
 <details>
 <summary><strong>Alternatif indirme — GitHub Releases kullanılamıyorsa</strong></summary>
 
-**`main` dalı geliştirme amacıyla kullanılır.** Henüz kararlı sürüme eklenmemiş değişiklikler, yeterince test edilmemiş özellikler veya hatalar içerebilir. Normal kurulumlar için yukarıdaki kararlı sürümü tercih edin.
+**`main` dalında projenin alfa sürümü bulunur.** Bu sürümün kurulması önerilmez. Yukarıdaki ana komutla kararlı sürümü kullanın.
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
@@ -203,9 +203,43 @@ CDN kullanmak için sağlayıcınızı kendiniz yapılandırmalı ve 3X-UI için
 
 ---
 
+<a id="warp-ru"></a>
+
+### 7. 🌐 Rus siteleri için Cloudflare WARP
+
+> `Route Russian websites through Cloudflare WARP to hide your VPS IP? [y/N]:`
+
+*İsteğe bağlı yönlendirme · Rusça menüde varsayılan olarak açık (`Y`), İngilizce menüde kapalı (`N`)*
+
+`Y` seçildiğinde kurulum aracı Cloudflare WARP (MASQUE) yapılandırır. Böylece Rus web siteleri ve bazı ağ hizmetleri VPS'inizin IP adresi yerine Cloudflare'a ait bir IP adresi görür. Bu, VPS IP adresinizi korumak için gereklidir.
+
+Bu ayar yalnızca VPS üzerinden geçen trafiği etkiler. Bir uygulama siteye doğrudan bağlanıyorsa sunucudaki WARP bu bağlantıyı etkilemez.
+
+Özellik etkinleştirildiğinde kurulum aracı Cloudflare'a bir cihaz kaydeder ve hizmet koşullarını kabul eder.
+
+WARP yapılandırması başarısız olursa kurulum WARP olmadan devam eder ve son raporda kısmi tamamlanma bildirilir. Önceki yapılandırmaya geri dönüş doğrulanamıyorsa panelden Xray'in çalıştığını kontrol edin.
+
+<details>
+<summary>ℹ️ <strong>Hangi siteler WARP kullanır ve yapılandırma nasıl kontrol edilir?</strong></summary>
+
+Kurulum aracı, Xray yapılandırmasına `warp-masque` adlı bir giden bağlantı ve üç yönlendirme kuralı ekler:
+
+- **WARP - RU:** `geosite:category-ru` listesindeki Rus alan adları.
+- **WARP - RU2:** `geoip:ru` listesindeki IP adresleri.
+- **WARP - RU3:** `ipify.org`, `ifconfig.me`, `checkip.amazonaws.com`, `ipapi.is`, `iplocate.io`, `ip.sb` ve `2gis.com`.
+
+Kurallar yönlendirme listesinin sonuna eklenir; önceki kurallar önceliğini korur. Bu, istemciler için ayrı bir bağlantı profili veya sistem genelinde çalışan bir VPN değildir: yönlendirme Xray içinde yapılır.
+
+Kurulumdan sonra 3X-UI panelinde **Xray → Outbounds** bölümünde `warp-masque` bağlantısını, **Xray → Routing** bölümünde ise yukarıdaki üç kuralı kontrol edin. Ayarlar, 3X-UI yapılandırmasıyla birlikte Backup v3 içinde saklanır.
+
+</details>
+
+---
+
+<a id="7--adguard-home--dns-over-https"></a>
 <a id="6--adguard-home--dns-over-https"></a>
 
-### 7. 🛡️ AdGuard Home + DNS-over-HTTPS
+### 8. 🛡️ AdGuard Home + DNS-over-HTTPS
 
 > `Install and configure AdGuard Home? [y/N]:`
 
@@ -251,7 +285,9 @@ sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "
 
 <a id="7--otomatik-istemci-ve-abonelik-oluşturma"></a>
 
-### 8. 👤 Otomatik istemci ve abonelik oluşturma
+<a id="8--otomatik-istemci-ve-abonelik-oluşturma"></a>
+
+### 9. 👤 Otomatik istemci ve abonelik oluşturma
 
 > `Create a client in 3X-UI and display a subscription link after installation? [Y/n]:`
 
@@ -263,7 +299,7 @@ Abonelik bağlantısı kurulum sonu raporunda gösterilir. Bu seçeneği reddede
 
 ---
 
-Kurulum sonunda **panel adresi, kullanıcı adı ve parola, tanılama adresi ve abonelik bağlantısı** (otomatik istemci oluşturulduysa) gösterilir. AdGuard Home seçildiyse yönetim adresi, parolası ve DoH uç noktası da görüntülenir.
+Kurulum sonunda **panel adresi, kullanıcı adı ve parola, tanılama adresi ve abonelik bağlantısı** (otomatik istemci oluşturulduysa) gösterilir. AdGuard Home seçildiyse yönetim adresi, parolası ve DoH uç noktası da görüntülenir. WARP yapılandırmasının sonucu da raporda gösterilir.
 
 İşletim sistemi güncellemesi yeniden başlatma gerektiriyorsa kurulum aracı bunu bildirir. **İlk yeniden başlatma elle yapılır:** `sudo reboot`.
 

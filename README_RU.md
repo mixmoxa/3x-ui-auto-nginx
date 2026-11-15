@@ -43,6 +43,10 @@
 
 [ 6. 🌐 VLESS + XHTTP для CDN ](README.md#xhttp-cdn)
 
+<a id="warp-ru"></a>
+
+[ 7. 🌐 Российские сайты через Cloudflare WARP ](README.md#warp-ru)
+
 <a id="6--adguard-home--dns-over-https"></a>
 
 <a id="6-️-adguard-home--dns-over-https"></a>

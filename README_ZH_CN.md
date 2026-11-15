@@ -19,18 +19,18 @@
 
 </div>
 
-**3X-UI AUTO NGINX** 是一款免费安装工具，可在自己的 VPS 上自动部署 [3x-ui](https://github.com/MHSanaei/3x-ui) 和 Xray。它负责配置 Nginx、HTTPS 证书、REALITY、XHTTP、Hysteria2、订阅和诊断功能。通过交互式管理菜单，你可以安装服务器、更换域名，以及管理 Backup/Restore v3。XTLS Vision、AmneziaWG 3.1 和带 DNS-over-HTTPS（DoH）的 AdGuard Home 均为可选功能。
+**3X-UI AUTO NGINX** 是一款免费安装工具，可在自己的 VPS 上自动部署 [3x-ui](https://github.com/MHSanaei/3x-ui) 和 Xray。它负责配置 Nginx、HTTPS 证书、REALITY、XHTTP、Hysteria2、订阅和诊断功能。通过交互式管理菜单，你可以安装服务器、更换域名，以及管理 Backup/Restore v3。XTLS Vision、AmneziaWG 3.1、用于俄罗斯网站的 Cloudflare WARP，以及支持 DNS-over-HTTPS（DoH）的 AdGuard Home 均为可选功能。
 
-**不只是常规的 3x-ui 安装：**全新部署会为面板和 REALITY 分别生成独立、个性化的多页面网站。在 REALITY 域名上，普通的 TCP HTTPS 请求和未经认证的 UDP HTTP/3 请求会显示同一个网站。所有功能均利用现有的 Nginx 和 Xray，无须 Docker 或额外的 Web 服务器。v2.4.0 的改进不会自动应用到此前安装的 VPS。
+**不只是常规的 3x-ui 安装：**全新部署会为面板和 REALITY 分别生成独立、个性化的多页面网站。在 REALITY 域名上，普通的 TCP HTTPS 请求和未经认证的 UDP HTTP/3 请求会显示同一个网站。所有功能均利用现有的 Nginx 和 Xray，无须 Docker 或额外的 Web 服务器。
 
 ## ✨ 为什么选择这个项目？
 
 | | |
 | --- | --- |
-| **开箱即用的连接**<br>安装时默认启用 REALITY、XHTTP 和 Hysteria2；还可按需选择其他传输方式。 | **完整的伪装网站**<br>六套适配移动设备的多页面模板，每次全新安装都会进行一次个性化配置。 |
+| **开箱即用的连接**<br>安装时默认启用 REALITY、XHTTP 和 Hysteria2；还可按需选择其他传输方式。 | **完整的伪装网站**<br>六套多页面模板可生成丰富多样的设计。每次安装都会重新组合网站名称、配色、文案和图片，让每台 VPS 都拥有个性化的网站。 |
 | **Hysteria2 HTTP/3 伪装**<br>REALITY 域名下，普通 TCP HTTPS 请求与未经认证的 UDP HTTP/3 请求显示同一网站。 | **内部管理接口隔离**<br>面板和订阅通过 Nginx 和 HTTPS 提供，内部端口不会直接暴露到互联网。 |
 | **Backup / Restore v3**<br>支持备份、恢复及迁移到其他 VPS，并保留用户数据与个性化网站。 | **管理菜单与域名更换**<br>提供俄语和英语菜单；无需重装即可更换面板域名、REALITY 域名或两者。 |
-| **自动证书与安全设置**<br>自动申请和续期 Let's Encrypt 证书；可选 SSH 防护与自动安全更新。 | **可选功能**<br>XTLS Vision、AmneziaWG 3.1、面向 CDN 的 XHTTP，以及支持 DoH 的 AdGuard Home。 |
+| **自动证书与安全设置**<br>自动申请和续期 Let's Encrypt 证书；可选 SSH 防护与自动安全更新。 | **可选功能**<br>XTLS Vision、AmneziaWG 3.1、面向 CDN 的 XHTTP、Cloudflare WARP，以及支持 DoH 的 AdGuard Home。 |
 
 <a id="installation"></a>
 
@@ -55,7 +55,7 @@ curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x
 <details>
 <summary><strong>备用下载 — GitHub Releases 不可用时</strong></summary>
 
-**`main` 分支用于开发。**其中可能包含尚未纳入稳定版本的更改，包括测试不充分的功能或已知、未知错误。日常安装建议使用上方的稳定版本。
+**`main` 分支包含项目的 Alpha 测试版。** 不建议安装。请使用上方主命令安装稳定版本。
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
@@ -203,9 +203,43 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ---
 
+<a id="warp-ru"></a>
+
+### 7. 🌐 通过 Cloudflare WARP 访问俄罗斯网站
+
+> `Route Russian websites through Cloudflare WARP to hide your VPS IP? [y/N]:`
+
+*可选路由功能 · 俄语菜单默认启用（`Y`），英语菜单默认关闭（`N`）*
+
+选择 `Y` 后，安装程序会配置 Cloudflare WARP（MASQUE），让俄罗斯网站及部分网络服务看到 Cloudflare 的 IP 地址，而不是 VPS 的 IP 地址。这是为了保护 VPS 的 IP 地址。
+
+该设置仅影响经过 VPS 的流量。如果应用直接访问网站，服务器上的 WARP 不会影响这类连接。
+
+启用该功能时，安装程序会向 Cloudflare 注册一台设备并接受其服务条款。
+
+如果 WARP 配置失败，安装仍会继续，但不会启用 WARP，最终报告会标明部分步骤未完成。如果无法确认配置已成功回滚，请在面板中检查 Xray 是否正常运行。
+
+<details>
+<summary>ℹ️ <strong>哪些网站会使用 WARP，以及如何检查配置</strong></summary>
+
+安装程序会在 Xray 配置中新增一个名为 `warp-masque` 的出站连接和三条路由规则：
+
+- **WARP - RU：** `geosite:category-ru` 中的俄罗斯域名。
+- **WARP - RU2：** `geoip:ru` 中的 IP 地址。
+- **WARP - RU3：** `ipify.org`、`ifconfig.me`、`checkip.amazonaws.com`、`ipapi.is`、`iplocate.io`、`ip.sb` 和 `2gis.com`。
+
+这些规则会追加到路由列表末尾，前面的规则仍具有更高优先级。这不是独立的客户端连接配置，也不是整个系统的 VPN：路由只在 Xray 内生效。
+
+安装后，在 3X-UI 面板的 **Xray → Outbounds** 中确认存在 `warp-masque`，并在 **Xray → Routing** 中确认存在上述三条规则。相关设置会随 3X-UI 配置一起保存到 Backup v3。
+
+</details>
+
+---
+
+<a id="7--adguard-home--dns-over-https"></a>
 <a id="6--adguard-home--dns-over-https"></a>
 
-### 7. 🛡️ AdGuard Home + DNS-over-HTTPS
+### 8. 🛡️ AdGuard Home + DNS-over-HTTPS
 
 > `Install and configure AdGuard Home? [y/N]:`
 
@@ -251,7 +285,9 @@ sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "
 
 <a id="7--自动创建客户端和订阅"></a>
 
-### 8. 👤 自动创建客户端和订阅
+<a id="8--自动创建客户端和订阅"></a>
+
+### 9. 👤 自动创建客户端和订阅
 
 > `Create a client in 3X-UI and display a subscription link after installation? [Y/n]:`
 
@@ -263,7 +299,7 @@ sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "
 
 ---
 
-安装报告会显示 **面板地址、用户名和密码、诊断地址及订阅链接**（如果选择自动创建客户端）。启用 AdGuard Home 时，还会显示其管理地址、密码和 DoH 端点。
+安装报告会显示 **面板地址、用户名和密码、诊断地址及订阅链接**（如果选择自动创建客户端）。启用 AdGuard Home 时，还会显示其管理地址、密码和 DoH 端点。 报告中还会显示 WARP 的配置结果。
 
 如果操作系统更新后需要重启，安装程序会给出提示。**首次重启需手动执行** `sudo reboot`。
 

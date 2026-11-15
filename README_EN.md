@@ -19,18 +19,18 @@ Two domains, a clean VPS, and a few minutes to install.
 
 </div>
 
-**3X-UI AUTO NGINX** is a free installer for deploying [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray on your own VPS. It configures Nginx, HTTPS certificates, REALITY, XHTTP, Hysteria2, subscriptions, and diagnostics. Its interactive manager handles server installation, domain changes, and Backup/Restore v3. Optional features include XTLS Vision, AmneziaWG 3.1, and AdGuard Home with DNS-over-HTTPS (DoH).
+**3X-UI AUTO NGINX** is a free installer for deploying [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray on your own VPS. It configures Nginx, HTTPS certificates, REALITY, XHTTP, Hysteria2, subscriptions, and diagnostics. Its interactive manager handles server installation, domain changes, and Backup/Restore v3. Optional features include XTLS Vision, AmneziaWG 3.1, Cloudflare WARP for Russian websites, and AdGuard Home with DNS-over-HTTPS (DoH).
 
-**More than a standard 3x-ui installation:** fresh deployments get separate, personalized multi-page websites for the panel and REALITY. On the REALITY domain, ordinary HTTPS requests over TCP and unauthenticated HTTP/3 requests over UDP serve the same website. The existing Nginx and Xray components handle everything, with no Docker or additional web servers. The v2.4.0 changes are not applied automatically to previously installed VPS servers.
+**More than a standard 3x-ui installation:** fresh deployments get separate, personalized multi-page websites for the panel and REALITY. On the REALITY domain, ordinary HTTPS requests over TCP and unauthenticated HTTP/3 requests over UDP serve the same website. The existing Nginx and Xray components handle everything, with no Docker or additional web servers.
 
 ## ✨ Why this project?
 
 | | |
 | --- | --- |
-| **Ready-to-use connections**<br>REALITY, XHTTP, and Hysteria2 are enabled on installation; additional transports are available as options. | **Complete cover websites**<br>Six responsive, multi-page templates with one-time personalization for every fresh installation. |
+| **Ready-to-use connections**<br>REALITY, XHTTP, and Hysteria2 are enabled on installation; additional transports are available as options. | **Complete cover websites**<br>Six multi-page templates with many design variations: names, colors, text, and images change on every installation. Each VPS gets its own personalized website. |
 | **Hysteria2 HTTP/3 cover**<br>Ordinary HTTPS requests over TCP and unauthenticated HTTP/3 requests over UDP serve the same site on the REALITY domain. | **Isolated internal interfaces**<br>The panel and subscriptions use Nginx and HTTPS; their internal ports are not exposed directly to the internet. |
 | **Backup / Restore v3**<br>Backup, recovery, and migration to another VPS while preserving user data and personalized sites. | **Manager and domain changes**<br>English and Russian menus; change the panel domain, REALITY domain, or both without reinstalling. |
-| **Automatic certificates and security**<br>Let's Encrypt with automatic renewal; optional SSH protection and automatic security updates. | **Optional features**<br>XTLS Vision, AmneziaWG 3.1, CDN-ready XHTTP, and AdGuard Home with DoH. |
+| **Automatic certificates and security**<br>Let's Encrypt with automatic renewal; optional SSH protection and automatic security updates. | **Optional features**<br>XTLS Vision, AmneziaWG 3.1, CDN-ready XHTTP, Cloudflare WARP, and AdGuard Home with DoH. |
 
 <a id="installation"></a>
 
@@ -55,7 +55,7 @@ The menu requires an interactive SSH terminal.
 <details>
 <summary><strong>Fallback download — if GitHub Releases is unavailable</strong></summary>
 
-**The `main` branch is used for development.** It may contain changes not yet included in a stable release, including insufficiently tested features or bugs. For normal installations, use the stable release above.
+**The `main` branch contains an alpha version of the project.** Installing it is not recommended. Use the stable release from the main command above.
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
@@ -203,9 +203,43 @@ To use a CDN, configure your provider yourself and adjust the Host settings in 3
 
 ---
 
+<a id="warp-ru"></a>
+
+### 7. 🌐 Russian websites via Cloudflare WARP
+
+> `Route Russian websites through Cloudflare WARP to hide your VPS IP? [y/N]:`
+
+*Optional routing · Enabled by default in the Russian menu (`Y`), disabled in the English menu (`N`)*
+
+Selecting `Y` configures Cloudflare WARP (MASQUE) so Russian websites and certain network services see a Cloudflare IP address instead of your VPS IP address. This is needed to protect your VPS IP address.
+
+The setting only affects traffic routed through your VPS. If an app accesses a website directly, WARP on the server has no effect.
+
+When enabled, the installer registers a device with Cloudflare and accepts its terms of service.
+
+If WARP setup fails, installation continues without it, and the final report indicates a partial result. If the rollback cannot be verified, check Xray in the panel.
+
+<details>
+<summary>ℹ️ <strong>Which sites use WARP and how to check the setup</strong></summary>
+
+The installer adds an outbound named `warp-masque` and three routing rules to the Xray configuration:
+
+- **WARP - RU:** Russian domains from `geosite:category-ru`.
+- **WARP - RU2:** IP addresses from `geoip:ru`.
+- **WARP - RU3:** `ipify.org`, `ifconfig.me`, `checkip.amazonaws.com`, `ipapi.is`, `iplocate.io`, `ip.sb`, and `2gis.com`.
+
+The rules are appended to the routing list. Earlier rules keep their priority. This is not a separate client connection profile or a system-wide VPN: routing happens inside Xray.
+
+After installation, check **Xray → Outbounds** for `warp-masque` and **Xray → Routing** for the three named rules in the 3X-UI panel. The settings are included in Backup v3 along with the 3X-UI configuration.
+
+</details>
+
+---
+
+<a id="7--adguard-home--dns-over-https"></a>
 <a id="6--adguard-home--dns-over-https"></a>
 
-### 7. 🛡️ AdGuard Home + DNS-over-HTTPS
+### 8. 🛡️ AdGuard Home + DNS-over-HTTPS
 
 > `Install and configure AdGuard Home? [y/N]:`
 
@@ -251,7 +285,9 @@ sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "
 
 <a id="7--automatic-client-and-subscription"></a>
 
-### 8. 👤 Automatic client and subscription
+<a id="8--automatic-client-and-subscription"></a>
+
+### 9. 👤 Automatic client and subscription
 
 > `Create a client in 3X-UI and display a subscription link after installation? [Y/n]:`
 
@@ -263,7 +299,7 @@ The link appears in the final installation report. If you decline, you can creat
 
 ---
 
-The installation report displays the **panel URL, username and password, diagnostics address, and subscription link** (if you chose to create a client). For AdGuard Home, it also includes the admin address, password, and DoH endpoint.
+The installation report displays the **panel URL, username and password, diagnostics address, and subscription link** (if you chose to create a client). For AdGuard Home, it also includes the admin address, password, and DoH endpoint. The report also shows the WARP setup result.
 
 If an OS update requires a reboot, the installer will notify you. **The initial reboot is manual**: run `sudo reboot`.
 
