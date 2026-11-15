@@ -117,6 +117,10 @@ def function(name, source=SOURCE):
     if len(matches) != 1:
         raise AssertionError(f"Expected one {name} function")
     body = matches[0]
+    if name == 'main':
+        # Existing isolated main fixtures decline the new option. WARP cases
+        # supply their selector explicitly; other component assertions stay intact.
+        body = 'declare -F select_warp_ru >/dev/null || select_warp_ru() { INSTALL_WARP_RU=n; };\n' + body
     return (function('ui_text', source) + '\n' if name != 'ui_text' and 'ui_text ' in body else '') + body
 
 

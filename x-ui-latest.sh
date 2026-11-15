@@ -206,6 +206,7 @@ DNS_FINALIZED=n
 DNS_ROLLBACK_ATTEMPTED=n
 DNS_ROLLBACK_RESULT=not_requested
 INSTALL_VISION=n
+INSTALL_WARP_RU=n
 CREATE_CLIENT=n
 vision_domain=''
 
@@ -2411,6 +2412,54 @@ select_xhttp_cdn() {
     done
 }
 
+select_warp_ru() {
+    INSTALL_WARP_RU=n
+    WARP_RESULT=not_requested
+    local answer baseline
+    # Questions precede the Python bootstrap and creation of PANEL_STAGE.
+    baseline=$(verified_panel_release | sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p')
+    if [[ -n ${PANEL_VERSION:-} && "v${PANEL_VERSION#v}" != "$baseline" ]]; then
+        ui_note 'Cloudflare WARP: skipped; this step is available only with the verified 3X-UI version.\n' 'Cloudflare WARP: шаг пропущен, он доступен только с проверенной версией 3X-UI.\n'
+        return 0
+    fi
+    ui_note 'Russian websites will see a Cloudflare IP instead of your VPS IP. This is not a Russian IP: some sites may be slower or may not open. It only affects traffic that goes through the VPS; if your app opens Russian sites directly, it will not help. The installer registers a device with Cloudflare and accepts their terms of service. If this fails, installation continues without it and the final report says so.\n' 'Российские сайты будут видеть IP Cloudflare, а не IP вашего VPS. Это не российский IP: часть сайтов может открываться медленнее или не открываться. Работает только для трафика, который идёт через VPS: если приложение само открывает российские сайты напрямую, это не поможет. Установщик зарегистрирует устройство в Cloudflare и примет их условия использования. Если не получится, установка продолжится без этого, об этом будет написано в итоговом отчёте.\n'
+    while true; do
+        ui_text 'Route Russian websites through Cloudflare WARP to hide your VPS IP? [y/N]: ' 'Скрыть IP вашего VPS от российских сайтов через Cloudflare WARP? [Y/n]: '
+        IFS= read -r answer || return 0
+        case "$answer" in
+            '') [[ ${UI_LANG:-en} != ru ]] || INSTALL_WARP_RU=y; return 0 ;;
+            n|N) return 0 ;;
+            y|Y) INSTALL_WARP_RU=y; return 0 ;;
+            *) ui_text 'Please enter y or n.\n' 'Введите y или n.\n' ;;
+        esac
+    done
+}
+
+install_warp_ru() {
+    [[ ${INSTALL_WARP_RU:-n} == y ]] || return 0
+    WARP_RESULT=failed
+    check_xray_runtime || return 1
+    local transaction output status=0 rollback_ok=n
+    transaction=$(mktemp -d "${PANEL_STAGE:?Release preflight is required}/warp.XXXXXX") || return 1
+    output=$(printf '%s\0%s' "$config_username" "$config_password" | python3 "$PANEL_STAGE/managed-warp.py" \
+        apply "$AWG_HELPER" "$domain" "$panel_path" "$transaction") || status=$?
+    if [[ $status == 0 && "$output" == applied_pending_health ]]; then
+        if check_installation; then WARP_RESULT=configured
+        else output=failed_needs_rollback; fi
+    fi
+    if [[ "$WARP_RESULT" != configured && ( "$output" == failed_needs_rollback || -e "$transaction/save-attempted" ) ]]; then
+        WARP_RESULT=failed_unverified
+        status=0
+        output=$(printf '%s\0%s' "$config_username" "$config_password" | python3 "$PANEL_STAGE/managed-warp.py" \
+            rollback "$AWG_HELPER" "$domain" "$panel_path" "$transaction") || status=$?
+        [[ $status != 0 || "$output" != restored_pending_health ]] || rollback_ok=y
+        if check_installation && [[ "$rollback_ok" == y ]]; then WARP_RESULT=failed_rolled_back; fi
+    fi
+    # No later rollback: even unverified originals and sessions are discarded.
+    rm -rf -- "$transaction" || return 1
+    [[ "$WARP_RESULT" == configured ]]
+}
+
 preflight_xhttp_cdn() {
     XHTTP_CDN_PREVIOUS_SHA=''
     if [[ -e /etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf || -L /etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf ]]; then
@@ -2804,7 +2853,7 @@ show_results() {
         msg_inf '============================================================'
     fi
     # The core passed its initial gate; optional rollback may leave its current health unverified.
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${WARP_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_err "$(ui_text ' [!] 3X-UI / Xray           Post-rollback health not verified' ' [!] 3X-UI / Xray           Работа после отката не подтверждена')"
     else
         msg_ok "$(ui_text ' [✓] 3X-UI / Xray           Running%s' ' [✓] 3X-UI / Xray           Работает%s' "$version_label")"
@@ -2814,7 +2863,7 @@ show_results() {
         warn) msg_warn "$(ui_text ' [!] CPU support             %s' ' [!] Поддержка CPU          %s' "$CPU_SUPPORT_TEXT")" ;;
         *)    msg_inf "$(ui_text ' [i] CPU support             %s' ' [i] Поддержка CPU          %s' "${CPU_SUPPORT_TEXT:-$(ui_text 'Compatible (acceleration not assessed)' 'Совместим (ускорение не проверялось)')}")" ;;
     esac
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${WARP_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_err "$(ui_text ' [!] nginx                  Post-rollback health not verified' ' [!] nginx                  Работа после отката не подтверждена')"
     else
         msg_ok "$(ui_text ' [✓] nginx                  Running' ' [✓] nginx                  Работает')"
@@ -2826,12 +2875,12 @@ show_results() {
     else
         msg_warn "$(ui_text ' [!] TLS certificates       Check certificate files' ' [!] Сертификаты TLS        Проверьте файлы сертификатов')"
     fi
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${WARP_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_err "$(ui_text ' [!] XHTTP                  Post-rollback health not verified' ' [!] XHTTP                  Работа после отката не подтверждена')"
     else
         msg_ok "$(ui_text ' [✓] XHTTP                  Ready' ' [✓] XHTTP                  Готов')"
     fi
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${WARP_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_err "$(ui_text ' [!] Diagnostics            Post-rollback health not verified' ' [!] Диагностика            Работа после отката не подтверждена')"
     elif [[ -s /var/www/diagnostics/index.html && -s /var/www/diagnostics/speedtest.js &&
           -s /var/www/diagnostics/speedtest_worker.js && -s /usr/local/lib/3x-ui-pro/mtr-backend.py ]]; then
@@ -2852,6 +2901,23 @@ show_results() {
     case "${AWG_RESULT:-not_requested}" in
         configured) msg_ok "$(ui_text ' [✓] AmneziaWG              Configured (UDP/8443)' ' [✓] AmneziaWG              Настроен (UDP/8443)')" ;;
         failed) msg_warn "$(ui_text ' [!] AmneziaWG              Not configured' ' [!] AmneziaWG              Не настроен')" ;;
+    esac
+    local warp_core_note
+    warp_core_note=$(ui_text 'The core stack works.' 'Основной стек работает.')
+    if [[ "${CORE_RESULT:-configured}" == failed_unverified ]]; then
+        warp_core_note=$(ui_text 'Core health is not verified.' 'Работа основного стека не подтверждена.')
+    fi
+    case "${WARP_RESULT:-not_requested}" in
+        configured)
+            if [[ "${CORE_RESULT:-configured}" == failed_unverified ]]; then
+                msg_warn "$(ui_text ' [!] Cloudflare WARP        Configured, but core health is not verified: check Xray in the panel.' ' [!] Cloudflare WARP        Настроен, но работа основного стека не подтверждена: проверьте Xray в панели.')"
+            else
+                msg_ok "$(ui_text ' [✓] Cloudflare WARP        Configured: Russian sites and selected domains use WARP (3 rules)' ' [✓] Cloudflare WARP        Настроен: российские сайты и выбранные домены идут через WARP (3 правила)')"
+            fi
+            ;;
+        failed) msg_warn "$(ui_text ' [!] Cloudflare WARP        Not configured; rules not enabled. %s' ' [!] Cloudflare WARP        Не настроен, правила не включены. %s' "$warp_core_note")" ;;
+        failed_rolled_back) msg_warn "$(ui_text ' [!] Cloudflare WARP        Not configured; rules not enabled. %s Xray configuration restored and verified.' ' [!] Cloudflare WARP        Не настроен, правила не включены. %s Конфигурация Xray возвращена и проверена.' "$warp_core_note")" ;;
+        failed_unverified) msg_err "$(ui_text ' [!] Cloudflare WARP        Configuration rollback not verified: check Xray in the panel.' ' [!] Cloudflare WARP        Откат конфигурации не подтверждён: проверьте Xray в панели.')" ;;
     esac
     local component state
     for component in "Global DoT:${DOT_RESULT:-not_requested}" "Fail2ban:${F2BAN_RESULT:-not_requested}" "APT security:${APT_RESULT:-not_requested}"; do
@@ -2894,7 +2960,7 @@ show_results() {
             msg_err "$(ui_text ' [!] AdGuard Home           Failed — rollback not verified' ' [!] AdGuard Home           Ошибка — откат не подтверждён')"
             msg_err "$(ui_text ' [!] DNS-over-HTTPS         State not verified' ' [!] DNS-over-HTTPS         Состояние не подтверждено')" ;;
     esac
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${WARP_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_err "$(ui_text ' [!] Certificate renewal    Post-rollback health not verified' ' [!] Продление сертификатов Работа после отката не подтверждена')"
     else
         msg_ok "$(ui_text ' [✓] Certificate renewal    Webroot + systemd timer' ' [✓] Продление сертификатов Webroot + таймер systemd')"
@@ -2940,10 +3006,16 @@ show_results() {
         AGH_PASSWORD=''
     elif [[ "${AGH_RESULT:-not_requested}" == failed_rolled_back ]]; then
         msg_warn "$(ui_text ' AdGuard Home was not installed. The core 3X-UI stack remains operational.' ' AdGuard Home не установлен. Основной стек 3X-UI продолжает работать.')"
-    elif [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
+    elif [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${WARP_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_err "$(ui_text ' Post-rollback core health could not be verified. Inspect nginx and core services.' ' Работа основного стека после отката не подтверждена. Проверьте nginx и основные службы.')"
     fi
     [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text 'OTHER INFORMATION' 'ПРОЧАЯ ИНФОРМАЦИЯ')"
+    case "${WARP_RESULT:-not_requested}" in
+        failed|failed_rolled_back)
+            msg_warn "$(ui_text ' WARP is not configured: Russian websites still see your VPS IP. If you need it, add WARP in the 3X-UI panel (Xray, Outbounds, WARP) and send the sites you need to it in Routing.' ' WARP не настроен: российские сайты по-прежнему видят IP вашего VPS. Если он нужен, добавьте WARP в панели 3X-UI (Xray, Outbounds, WARP) и направьте на него нужные сайты в разделе Routing.')" ;;
+        failed_unverified)
+            msg_err "$(ui_text ' Check Xray: Outbounds: warp-masque; Routing: WARP - RU, WARP - RU2, WARP - RU3. To restore the template, open the basic Xray template, choose Reset to Default, confirm, then Save and check that Xray is running.' ' Проверьте Xray: Outbounds: warp-masque; Routing: WARP - RU, WARP - RU2, WARP - RU3. Для возврата шаблона откройте базовый шаблон Xray, выберите «Восстановить настройки по умолчанию», подтвердите, затем нажмите «Сохранить» и проверьте работу Xray.')" ;;
+    esac
     msg_inf "$(ui_text ' [i] Base OS                %s (full upgrade is not rollbackable)' ' [i] Базовая ОС             %s (полное обновление нельзя откатить)' "${BASE_OS_RESULT:-not_prepared}")"
     msg_inf "$(ui_text ' [i] Local timezone         %s' ' [i] Часовой пояс           %s' "$(timedatectl show -p Timezone --value)")"
     if [[ "${APT_RESULT:-not_requested}" == configured ]]; then
@@ -3070,17 +3142,20 @@ preflight_integrated_features() {
            ( -n "$PANEL_TAG" && "$PANEL_TAG" == "$(verified_panel_release | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')" ) ]] || {
             msg_err "$(ui_text 'Vision and initial client require the verified baseline or historical 3X-UI v3.9.0/v3.10.0/v3.10.2; select N with other versions.' 'Для Vision и первоначального клиента нужна проверенная базовая версия или 3X-UI v3.9.0/v3.10.0/v3.10.2; с другими версиями выберите N.')"; return 1;
         }
+    fi
+    if [[ "${INSTALL_VISION:-n}" == y || "${CREATE_CLIENT:-n}" == y || "${INSTALL_WARP_RU:-n}" == y ]]; then
         # Reuse the existing authenticated local HTTPS/CSRF implementation.
         AWG_HELPER="$PANEL_STAGE/managed-amneziawg.py"
         if [[ ! -s "$AWG_HELPER" ]]; then
             curl -fsSL --connect-timeout 15 --max-time 60 "$GITHUB_RAW/assets/amneziawg/managed.py" -o "$AWG_HELPER" || { msg_err "Panel API helper download failed; stopped before cleanup."; return 1; }
         fi
     fi
-    for feature in security vision client; do
+    for feature in security vision client warp; do
         case "$feature" in
             security) [[ "${INSTALL_SECURITY:-n}" == y ]] || continue ;;
             vision) [[ "${INSTALL_VISION:-n}" == y || -e /etc/nginx/sites-available/vision.conf || -e /etc/nginx/sites-available/vision-acme.conf ]] || continue ;;
             client) [[ "${CREATE_CLIENT:-n}" == y ]] || continue ;;
+            warp) [[ "${INSTALL_WARP_RU:-n}" == y ]] || continue ;;
         esac
         curl -fsSL --connect-timeout 15 --max-time 60 "$GITHUB_RAW/assets/$feature/managed.py" -o "$PANEL_STAGE/managed-$feature.py" || { msg_err "$feature helper download failed; stopped before cleanup."; return 1; }
         python3 - "$PANEL_STAGE/managed-$feature.py" <<'PYCHECK' || { msg_err "$feature helper syntax is invalid; stopped before cleanup."; return 1; }
@@ -3260,6 +3335,7 @@ main() {
     select_vision || exit 1
     select_amneziawg || exit 1
     select_xhttp_cdn || exit 1
+    select_warp_ru || exit 1
     select_adguard || exit 1
     select_client || exit 1
     [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text '[1] SYSTEM PREPARATION' '[1] ПОДГОТОВКА СИСТЕМЫ')"
@@ -3345,6 +3421,10 @@ main() {
     if [[ "${INSTALL_SECURITY:-n}" == y ]]; then
         install_security || install_result=1
     fi
+    WARP_RESULT=not_requested
+    if [[ "${INSTALL_WARP_RU:-n}" == y ]]; then
+        install_warp_ru || install_result=1
+    fi
     if [[ "${CREATE_CLIENT:-n}" == y ]]; then
         # A retained unverified Vision inbound may lack its public SNI route.
         if [[ "$VISION_RESULT" != failed_unverified ]] && check_installation; then
@@ -3356,7 +3436,7 @@ main() {
     fi
     [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text '[8] FINAL CHECK' '[8] ФИНАЛЬНАЯ ПРОВЕРКА')"
     CORE_RESULT=configured
-    if [[ "${INSTALL_SECURITY:-n}${INSTALL_VISION:-n}${INSTALL_AWG:-n}${INSTALL_AGH:-n}${CREATE_CLIENT:-n}${INSTALL_XHTTP_CDN:-n}" != nnnnnn ]]; then
+    if [[ "${INSTALL_SECURITY:-n}${INSTALL_VISION:-n}${INSTALL_AWG:-n}${INSTALL_AGH:-n}${CREATE_CLIENT:-n}${INSTALL_XHTTP_CDN:-n}${INSTALL_WARP_RU:-n}" != nnnnnnn ]]; then
         if ! check_installation; then CORE_RESULT=failed_unverified; install_result=1; fi
     fi
     if [[ "$CORE_RESULT" == configured ]]; then

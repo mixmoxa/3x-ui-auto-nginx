@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
+from urllib.parse import urlencode
 
 
 def validate(inbound, domain, port=8443):
@@ -41,10 +43,11 @@ def validate(inbound, domain, port=8443):
 
 
 class Panel:
-    def __init__(self, base, username, password, directory, options=()):
+    def __init__(self, base, username, password, directory, options=(), *, deadline=None):
         self.base = base
         self.directory = Path(directory)
         self.options = list(options)
+        self.deadline = deadline
         self.cookie = self.directory/'cookies'
         self.cookie.touch(mode=0o600)
         self.headers = self.directory/'csrf-header'
@@ -54,19 +57,28 @@ class Panel:
         self.request('login', {'username':username,'password':password})
         self.token = self.request('csrf-token')['obj']
 
-    def request(self, path, data=None):
+    def request(self, path, data=None, *, method=None, form=False, timeout=20):
+        max_time, process_timeout = timeout, timeout + 5
+        if self.deadline is not None:
+            remaining = self.deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Panel request budget exhausted')
+            max_time, process_timeout = min(max_time, remaining), min(process_timeout, remaining)
         argv = ['curl','-q','--fail','--silent','--show-error','--noproxy','*',
-                '--connect-timeout','5','--max-time','20',*self.options,
+                '--connect-timeout','5','--max-time',str(max_time),*self.options,
                 '--cookie',str(self.cookie),'--cookie-jar',str(self.cookie)]
+        if method is not None:
+            argv += ['--request', method]
         if self.token:
             # Session secrets stay in the private temporary directory, never argv.
             self.headers.write_text('X-CSRF-Token: '+self.token+'\n')
             argv += ['--header','@'+str(self.headers)]
         if data is not None:
-            argv += ['--header','Content-Type: application/json','--data-binary','@-']
+            content_type = 'application/x-www-form-urlencoded' if form else 'application/json'
+            argv += ['--header','Content-Type: '+content_type,'--data-binary','@-']
         argv.append(self.base+path)
-        result = subprocess.run(argv,input=json.dumps(data).encode() if data is not None else None,
-                                capture_output=True,timeout=25)
+        body = (urlencode(data) if form else json.dumps(data)).encode() if data is not None else None
+        result = subprocess.run(argv,input=body, capture_output=True,timeout=process_timeout)
         if result.returncode:
             raise ValueError('AmneziaWG panel request failed: '+path)
         value = json.loads(result.stdout)

@@ -68,8 +68,8 @@ def install(scenario, ref):
         if scenario == 'dependency':
             Path('/etc/apt/preferences.d/pilot-mandatory-failure').write_text(
                 'Package: nginx-full\nPin: version *\nPin-Priority: -1\n')
-        answers = b'y\ny\nvision.example.test\ny\ny\ny\ny\n' if scenario != 'dot-outage' else b'y\nn\nn\nn\nn\ny\n'
-        if scenario == 'restore-source': answers = b'n\nn\nn\nn\nn\nn\n'
+        answers = b'y\ny\nvision.example.test\ny\ny\nn\ny\ny\n' if scenario != 'dot-outage' else b'y\nn\nn\nn\nn\nn\ny\n'
+        if scenario == 'restore-source': answers = b'n\nn\nn\nn\nn\nn\nn\n'
         started = time.monotonic()
         with (ROOT/'installer.raw.log').open('wb') as log:
             result = subprocess.run(['bash', str(ROOT/'x-ui-latest.sh'), '-subdomain',

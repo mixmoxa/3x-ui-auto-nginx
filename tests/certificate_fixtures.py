@@ -16,6 +16,9 @@ def function(name, source=INSTALLER):
     found = re.findall(r'^' + re.escape(name) + r'\(\)\s*\{.*?^\}', source, re.M | re.S)
     assert len(found) == 1, name
     body = found[0]
+    if name == 'main':
+        # Legacy isolated component scenarios leave the new WARP option off.
+        body = 'declare -F select_warp_ru >/dev/null || select_warp_ru() { INSTALL_WARP_RU=n; };\n' + body
     return (function('ui_text', source) + '\n' if name != 'ui_text' and 'ui_text ' in body else '') + body
 
 
