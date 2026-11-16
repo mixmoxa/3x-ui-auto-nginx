@@ -28,8 +28,8 @@ class CIScope(unittest.TestCase):
             text=(ROOT/name).read_text()
             self.assertEqual(text.count('<a id="xhttp-cdn"></a>'),1,name)
             self.assertTrue(re.search(r'(?m)^### 6\. 🌐 .+XHTTP.*',text),name)
-            self.assertIn('### 7. 🛡️ AdGuard Home + DNS-over-HTTPS',text)
-            self.assertRegex(text,r'(?m)^### 8\. 👤 ')
+            self.assertIn('### 8. 🛡️ AdGuard Home + DNS-over-HTTPS',text)
+            self.assertRegex(text,r'(?m)^### 9\. 👤 ')
             self.assertIn('<a id="6--adguard-home--dns-over-https"></a>',text)
             prompt='Добавить дополнительное подключение XHTTP, совместимое с CDN? [y/N]:' if not language else 'Add an additional CDN-compatible XHTTP connection? [y/N]:'
             self.assertIn('> `'+prompt+'`',text)
