@@ -272,12 +272,16 @@ else: sys.exit(1)
             root=Path(directory)
             paths=('tests/test_fixture.py','x-ui-latest.sh','assets/clash/clash.yaml',
                    'assets/diagnostics/mtr-backend.py','.github/workflows/upstream-canary.yml',
-                   'assets/amneziawg/managed.py','assets/vision/managed.py','assets/client/managed.py','assets/xhttp-cdn/managed.py')
+                   'assets/amneziawg/managed.py','assets/vision/managed.py','assets/client/managed.py','assets/xhttp-cdn/managed.py',
+                   'assets/cascade/managed.py')
             for name in paths:
                 path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('fixture')
             with patch.object(upstream_canary,'ROOT',root):
                 original=upstream_canary.fingerprint()
                 (root/'assets/amneziawg/managed.py').write_text('changed AWG contract')
+                self.assertNotEqual(original,upstream_canary.fingerprint())
+                original=upstream_canary.fingerprint()
+                (root/'assets/cascade/managed.py').write_text('changed Cascade contract')
                 self.assertNotEqual(original,upstream_canary.fingerprint())
 
     def test_helper_download_precedes_cleanup_and_is_reused(self):

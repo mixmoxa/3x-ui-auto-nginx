@@ -25,6 +25,8 @@ SUITES = {
         'test_warp.Warp',
         'test_cascade.Cascade',
         'test_cascade_entry.CascadeEntry',
+        'test_cascade_health.CascadeHealth',
+        'test_cascade_manager.CascadeManager',
         'test_certificate_renewal.CertificateRenewal',
         'test_adguard.AdGuardInstaller',
         'test_audit_findings.AuditInstaller',
@@ -33,6 +35,7 @@ SUITES = {
     'integration': ('test_real_integration.RealIntegration',),
     'services': ('test_real_services.RealServices',),
     'root': (
+        'test_cascade_manager.CascadeManagerLock',
         'test_domains.Domains',
         'test_manager.ManagerBackup',
         'test_cover_sites.CoverPublication',

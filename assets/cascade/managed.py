@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 from urllib.parse import parse_qs, urlsplit
 import uuid
 
@@ -16,6 +17,8 @@ FLOW = 'xtls-rprx-vision'
 ENTRY_TAG = 'cascade-exit'
 ENTRY_COMMENTS = ('CASCADE - RU', 'CASCADE - RU2', 'CASCADE - EXIT')
 WARP_COMMENTS = ('WARP - RU', 'WARP - RU2', 'WARP - RU3')
+HEALTH_WINDOW = 15
+HEALTH_INTERVAL = 1
 CONDITIONS = ('domain', 'ip', 'port', 'sourcePort', 'source', 'user', 'inboundTag',
               'protocol', 'attrs', 'localIP', 'localPort', 'vlessRoute', 'process', 'localOS')
 # Xray's webhook is an action; the other fields are targets or panel metadata.
@@ -288,8 +291,71 @@ def entry_state(template):
 
 
 def warp_present(template):
-    return (any(o.get('tag') == 'warp-masque' for o in template['outbounds']) or
-            any(isinstance(r, dict) and r.get('comment') in WARP_COMMENTS for r in template['routing']['rules']))
+    details = warp_details(template)
+    return details['warp_outbound'] or bool(details['warp_rules'])
+
+
+def warp_details(template):
+    return dict(warp_outbound=any(o.get('tag') == 'warp-masque' for o in template['outbounds']),
+                warp_rules=[c for c in WARP_COMMENTS if any(isinstance(r, dict) and r.get('comment') == c
+                            for r in template['routing']['rules'])])
+
+
+def custom_rules(template):
+    # 3x-ui v3.11.0 internal/web/service/config.json. No other installer
+    # rules exist apart from WARP (a separate refusal) and cascade itself.
+    defaults = (dict(inboundTag=['api'], outboundTag='api'),
+                dict(ip=['geoip:private'], outboundTag='blocked'),
+                dict(protocol=['bittorrent'], outboundTag='blocked'))
+    result = []
+    for index, rule in enumerate(template['routing']['rules']):
+        if owned_rule(rule):
+            break
+        if not isinstance(rule, dict):
+            result.append(index + 1)
+            continue
+        if rule.get('enabled') is False:
+            continue
+        meaningful = {k: v for k, v in rule.items() if k not in ('comment', 'enabled', 'type', 'ruleTag')}
+        if meaningful not in defaults:
+            result.append(index + 1)
+    return result
+
+
+def read_xray(panel):
+    value = panel.request('panel/api/server/status')['obj']['xray']
+    state = value.get('state')
+    return (state if state in ('running', 'stop', 'error') else 'unknown', bool(value.get('errorMsg')))
+
+
+def wait_entry_health(panel, deadline, *, routes=False):
+    previous_deadline = getattr(panel, 'deadline', None)
+    panel.deadline = min(previous_deadline, deadline) if previous_deadline is not None else deadline
+    healthy = False
+    try:
+        while time.monotonic() < deadline:
+            try:
+                state, error = read_xray(panel)
+                healthy = state == 'running' and not error
+            except Exception:
+                healthy = False
+            if healthy:
+                try:
+                    if routes:
+                        for domain, tag in (('yandex.ru', 'direct'), ('example.com', ENTRY_TAG)):
+                            result = panel.request('panel/api/xray/routeTest',
+                                dict(network='tcp', port=443, domain=domain), method='POST', form=True, timeout=10)['obj']
+                            if not isinstance(result, dict) or result.get('matched') is not True or result.get('outboundTag') != tag:
+                                raise Refusal('route_test_failed')
+                    return None
+                except Exception:
+                    pass
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(HEALTH_INTERVAL, remaining))
+        return 'route_test_failed' if healthy else 'xray_unhealthy'
+    finally:
+        panel.deadline = previous_deadline
 
 
 def interception(rules):
@@ -354,16 +420,26 @@ def entry_readback_matches(current, original, outbound):
             foreign_lists(current) == foreign_lists(original))
 
 
-def foreign_reference(template):
-    if any(not owned_rule(r) and r.get('outboundTag') == ENTRY_TAG for r in template['routing']['rules']):
-        return True
-    for balancer in template['routing'].get('balancers', []):
+def foreign_references(template):
+    rules = [i + 1 for i, r in enumerate(template['routing']['rules'])
+             if isinstance(r, dict) and not owned_rule(r) and r.get('outboundTag') == ENTRY_TAG]
+    found = []
+    balancers = template['routing'].get('balancers')
+    for index, balancer in enumerate(balancers if isinstance(balancers, list) else []):
+        if not isinstance(balancer, dict):
+            continue
         selectors = balancer.get('selector', [])
         if isinstance(selectors, str):
             selectors = selectors.split(',')  # Xray conf.StringList accepts both wire shapes.
-        if balancer.get('fallbackTag') == ENTRY_TAG or any(ENTRY_TAG.startswith(s) for s in selectors):
-            return True
-    return False
+        if not isinstance(selectors, list):
+            selectors = []
+        if balancer.get('fallbackTag') == ENTRY_TAG or any(isinstance(s, str) and ENTRY_TAG.startswith(s) for s in selectors):
+            found.append(index + 1)
+    return dict(foreign_rules=rules, foreign_balancers=found)
+
+
+def foreign_reference(template):
+    return any(foreign_references(template).values())
 
 
 def remove_entry_elements(template, *, keep_outbound=False):
@@ -375,9 +451,11 @@ def remove_entry_elements(template, *, keep_outbound=False):
 
 
 def rollback_entry(panel, reason):
+    result = dict(state='failed_rollback', reason=reason, config_may_contain_changes=True)
     try:
         current, test_url = read_entry_template(panel)
-        keep = foreign_reference(current)
+        references = foreign_references(current)
+        keep = any(references.values())
         candidate = remove_entry_elements(current, keep_outbound=keep)
         if candidate != current:
             try:
@@ -386,24 +464,28 @@ def rollback_entry(panel, reason):
                 pass  # A lost response may still have committed; always read back.
         current, _ = read_entry_template(panel)
         if keep:
-            return dict(state='failed_rollback', reason='foreign_reference', config_may_contain_changes=True)
-        if entry_state(current)['state'] == 'absent':
-            return dict(state='failed', reason=reason)
+            result.update(reason='foreign_reference', **foreign_references(current))
+        elif entry_state(current)['state'] == 'absent':
+            result = dict(state='failed', reason=reason)
     except Exception:
         pass
-    return dict(state='failed_rollback', reason=reason, config_may_contain_changes=True)
+    if wait_entry_health(panel, time.monotonic() + HEALTH_WINDOW) is not None:
+        result.update(state='failed_rollback', config_may_contain_changes=True, xray_running=False)
+    return result
 
 
 def connect_entry(panel, template, test_url, outbound):
     if entry_state(template)['state'] != 'absent':
         return dict(state='already_connected')
     if warp_present(template):
-        return dict(state='warp_active')
+        return dict(state='warp_active', **warp_details(template))
     refusal = interception(template['routing']['rules'])
     if refusal:
         return refusal
     if not any(o.get('tag') == 'direct' for o in template['outbounds']):
         return dict(state='failed', reason='missing_direct')
+    if read_xray(panel)[0] != 'running':
+        return dict(state='failed', reason='xray_not_running')
     try:
         probe = panel.request('panel/api/xray/testOutbound', dict(outbound=json.dumps(outbound), mode='real'),
                               method='POST', form=True, timeout=30)['obj']
@@ -419,27 +501,25 @@ def connect_entry(panel, template, test_url, outbound):
     reason = 'save_failed'
     try:
         save_entry_template(panel, candidate, test_url)
+        deadline = time.monotonic() + HEALTH_WINDOW
         reason = 'readback_failed'
         current, _ = read_entry_template(panel)
         reason = 'readback_mismatch'
         if not entry_readback_matches(current, template, outbound):
             raise Refusal(reason)
-        reason = 'route_test_failed'
-        for domain, tag in (('yandex.ru', 'direct'), ('example.com', ENTRY_TAG)):
-            result = panel.request('panel/api/xray/routeTest', dict(network='tcp', port=443, domain=domain),
-                                   method='POST', form=True, timeout=10)['obj']
-            if not isinstance(result, dict) or result.get('matched') is not True or result.get('outboundTag') != tag:
-                raise Refusal(reason)
+        reason = wait_entry_health(panel, deadline, routes=True)
+        if reason:
+            raise Refusal(reason)
     except Exception:
         return rollback_entry(panel, reason)
-    return dict(state='connected')
+    return dict(state='connected', custom_rules=custom_rules(template))
 
 
 def disable_entry(panel, template, test_url):
     if entry_state(template)['state'] == 'absent':
         return dict(state='absent')
     if foreign_reference(template):
-        return dict(state='foreign_reference')
+        return dict(state='foreign_reference', **foreign_references(template))
     save_failed = False
     try:
         save_entry_template(panel, remove_entry_elements(template), test_url)
@@ -452,7 +532,9 @@ def disable_entry(panel, template, test_url):
         return dict(state='failed', reason='save_failed_actual_unknown' if save_failed else 'readback_failed')
     if save_failed:
         return dict(state='failed', reason='save_failed_actual_' + actual.get('reason', actual['state']))
-    return dict(state='removed') if actual['state'] == 'absent' else dict(state='failed', reason='remove_unverified')
+    if actual['state'] == 'absent':
+        return dict(state='removed', xray_running=wait_entry_health(panel, time.monotonic() + HEALTH_WINDOW) is None)
+    return dict(state='failed', reason='remove_unverified')
 
 
 def execute_entry(mode, panel, link=None):
@@ -464,7 +546,12 @@ def execute_entry(mode, panel, link=None):
     try:
         template, test_url = read_entry_template(panel)
         if mode == 'entry-status':
-            return dict(**entry_state(template), warp=warp_present(template))
+            try:
+                xray = read_xray(panel)[0]
+            except Exception:
+                xray = 'unknown'
+            return dict(**entry_state(template), warp=warp_present(template), **warp_details(template),
+                        xray=xray, custom_rules=custom_rules(template))
         if mode == 'entry-disable':
             return disable_entry(panel, template, test_url)
         return connect_entry(panel, template, test_url, outbound)

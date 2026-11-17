@@ -56,6 +56,8 @@ class FakePanel:
 
     def request(self, path, data=None, **options):
         self.calls.append((path, copy.deepcopy(data), options))
+        if path == 'panel/api/server/status':
+            return dict(success=True, obj=dict(xray=dict(state='running', errorMsg='')))
         if path == 'panel/api/xray/':
             self.reads += 1
             if self.fault == 'panel' or (self.fault == 'readback' and self.reads == 2):
@@ -103,6 +105,13 @@ class FakePanel:
 class CascadeEntry(unittest.TestCase):
     def setUp(self):
         self.module = exit_fixtures.helper()
+        self.now = 0
+        def sleep(seconds):
+            self.now += seconds
+        timer = SimpleNamespace(monotonic=lambda: self.now, sleep=sleep)
+        clock = patch.object(self.module, 'time', timer)
+        clock.start()
+        self.addCleanup(clock.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
 
@@ -149,7 +158,7 @@ class CascadeEntry(unittest.TestCase):
     def test_exact_outbound_rules_at_end_and_unchanged_foreign_template(self):
         for strings in (False, True):
             panel = FakePanel(strings=strings)
-            self.assertEqual(self.run_entry('entry-connect', panel), dict(state='connected'))
+            self.assertEqual(self.run_entry('entry-connect', panel), dict(state='connected', custom_rules=[]))
             expected = copy.deepcopy(ORIGINAL)
             expected['outbounds'].append(outbound())
             expected['routing']['rules'].extend(rules())
@@ -162,7 +171,7 @@ class CascadeEntry(unittest.TestCase):
             self.assertEqual(routes, [(dict(network='tcp', port=443, domain=d),
                                       dict(method='POST', form=True, timeout=10)) for d in ('yandex.ru', 'example.com')])
             for path, _, options in panel.calls:
-                self.assertEqual(options['method'], 'POST')
+                self.assertEqual(options.get('method', 'GET'), 'GET' if path.endswith('/status') else 'POST')
                 if path.endswith('/update'):
                     self.assertIs(options['form'], True)
 
@@ -186,7 +195,7 @@ class CascadeEntry(unittest.TestCase):
             else:
                 panel.template['routing']['rules'].append(item)
             original = copy.deepcopy(panel.template)
-            self.assertEqual(self.run_entry('entry-connect', panel), dict(state='warp_active'))
+            self.assertEqual(self.run_entry('entry-connect', panel), dict(state='warp_active', warp_outbound='tag' in item, warp_rules=[] if 'tag' in item else [item['comment']]))
             self.assertEqual(panel.template, original)
             self.assertEqual(panel.saves, 0)
 
@@ -276,16 +285,16 @@ class CascadeEntry(unittest.TestCase):
             p.template['routing']['rules'][-1]['ruleTag'] = 'generated'
             p.template['routing']['rules'][0]['enabled'] = True
         panel.on_save = normalize
-        self.assertEqual(self.run_entry('entry-connect', panel), dict(state='connected'))
+        self.assertEqual(self.run_entry('entry-connect', panel), dict(state='connected', custom_rules=[]))
         self.assertEqual(panel.saves, 1)
 
     def test_string_settings_are_saved_as_native_xray_objects(self):
         panel = FakePanel(strings=True)
-        self.assertEqual(self.run_entry('entry-connect', panel), dict(state='connected'))
+        self.assertEqual(self.run_entry('entry-connect', panel), dict(state='connected', custom_rules=[]))
         saved = next(json.loads(body['xraySetting']) for path, body, _ in panel.calls if path.endswith('/update'))
         self.assertEqual(saved['outbounds'][0]['settings'], {})
         self.assertEqual(saved['outbounds'][-1], outbound())
-        self.assertEqual(self.run_entry('entry-disable', panel), dict(state='removed'))
+        self.assertEqual(self.run_entry('entry-disable', panel), dict(state='removed', xray_running=True))
         self.assertEqual(panel.template, ORIGINAL)
 
     def test_readback_detects_own_field_rule_order_and_foreign_list_changes(self):
@@ -344,11 +353,12 @@ class CascadeEntry(unittest.TestCase):
                         p.template['routing']['rules'].insert(1, dict(outboundTag=TAG, domain=['full:admin.test']))
             panel.on_save = admin
             result = self.run_entry('entry-connect', panel)
-            self.assertEqual(result, dict(state='failed_rollback', reason='foreign_reference', config_may_contain_changes=True))
+            self.assertEqual(result, dict(state='failed_rollback', reason='foreign_reference', config_may_contain_changes=True,
+                                          foreign_rules=[] if balancer else [2], foreign_balancers=[1] if balancer else []))
             self.assertEqual(panel.saves, 2)
             self.assertTrue(any(o.get('tag') == TAG for o in panel.template['outbounds']))
             self.assertFalse(any(r.get('comment') in COMMENTS for r in panel.template['routing']['rules']))
-            self.assertEqual(self.run_entry('entry-disable', panel), dict(state='foreign_reference'))
+            self.assertEqual(self.run_entry('entry-disable', panel), dict(state='foreign_reference', foreign_rules=[] if balancer else [2], foreign_balancers=[1] if balancer else []))
         panel = FakePanel(fault='route')
         panel.on_save = lambda p: p.template['outbounds'].append(outbound()) if p.saves == 2 else None
         self.assertEqual(self.run_entry('entry-connect', panel)['state'], 'failed_rollback')
@@ -364,7 +374,8 @@ class CascadeEntry(unittest.TestCase):
                     p.template['routing']['balancers'] = [dict(tag='admin', selector=['cascade'])]
             panel.on_save = admin
             result = self.run_entry('entry-connect', panel)
-            self.assertEqual(result, dict(state='failed_rollback', reason='foreign_reference', config_may_contain_changes=True))
+            self.assertEqual(result, dict(state='failed_rollback', reason='foreign_reference', config_may_contain_changes=True,
+                                      foreign_rules=[3] if reference == 'rule' else [], foreign_balancers=[1] if reference == 'balancer' else []))
             self.assertTrue(any(o.get('tag') == TAG for o in panel.template['outbounds']))
             self.assertFalse(any(r.get('comment') in COMMENTS for r in panel.template['routing']['rules']))
             if reference == 'rule':
@@ -374,35 +385,35 @@ class CascadeEntry(unittest.TestCase):
 
     def test_status_absent_active_missing_outbound_rules_wrong_order_and_warp(self):
         panel = FakePanel()
-        self.assertEqual(self.run_entry('entry-status', panel), dict(state='absent', warp=False))
+        self.assertEqual(self.run_entry('entry-status', panel), dict(state='absent', warp=False, warp_outbound=False, warp_rules=[], xray='running', custom_rules=[]))
         panel = FakePanel(active=True)
-        self.assertEqual(self.run_entry('entry-status', panel), dict(state='active', warp=False))
+        self.assertEqual(self.run_entry('entry-status', panel), dict(state='active', warp=False, warp_outbound=False, warp_rules=[], xray='running', custom_rules=[]))
         panel.template['outbounds'].append(dict(tag='warp-masque'))
-        self.assertEqual(self.run_entry('entry-status', panel), dict(state='active', warp=True))
+        self.assertEqual(self.run_entry('entry-status', panel), dict(state='active', warp=True, warp_outbound=True, warp_rules=[], xray='running', custom_rules=[]))
         panel = FakePanel(active=True)
         panel.template['outbounds'].pop()
-        self.assertEqual(self.run_entry('entry-status', panel), dict(state='inconsistent', reason='missing_outbound', warp=False))
+        self.assertEqual(self.run_entry('entry-status', panel), dict(state='inconsistent', reason='missing_outbound', warp=False, warp_outbound=False, warp_rules=[], xray='running', custom_rules=[]))
         panel = FakePanel(active=True)
         panel.template['routing']['rules'].pop()
-        self.assertEqual(self.run_entry('entry-status', panel), dict(state='inconsistent', reason='missing_rules', warp=False))
+        self.assertEqual(self.run_entry('entry-status', panel), dict(state='inconsistent', reason='missing_rules', warp=False, warp_outbound=False, warp_rules=[], xray='running', custom_rules=[]))
         panel = FakePanel(active=True)
         panel.template['routing']['rules'][-3:] = list(reversed(panel.template['routing']['rules'][-3:]))
-        self.assertEqual(self.run_entry('entry-status', panel), dict(state='inconsistent', reason='wrong_order', warp=False))
+        self.assertEqual(self.run_entry('entry-status', panel), dict(state='inconsistent', reason='wrong_order', warp=False, warp_outbound=False, warp_rules=[], xray='running', custom_rules=[]))
         panel = FakePanel()
         panel.template['routing']['rules'].append(dict(comment='WARP - RU2'))
-        self.assertEqual(self.run_entry('entry-status', panel), dict(state='absent', warp=True))
+        self.assertEqual(self.run_entry('entry-status', panel), dict(state='absent', warp=True, warp_outbound=False, warp_rules=['WARP - RU2'], xray='running', custom_rules=[3]))
         self.assertEqual(self.run_entry('entry-status', FakePanel(fault='panel'))['state'], 'panel_error')
 
     def test_status_checks_relative_order_and_does_not_fetch_client_or_probe(self):
         panel = FakePanel(active=True, strings=True)
         panel.template['routing']['rules'].insert(-1, dict(outboundTag='direct', domain=['full:admin.test']))
-        self.assertEqual(self.run_entry('entry-status', panel), dict(state='active', warp=False))
-        self.assertEqual([p for p,_,_ in panel.calls], ['panel/api/xray/'])
+        self.assertEqual(self.run_entry('entry-status', panel), dict(state='active', warp=False, warp_outbound=False, warp_rules=[], xray='running', custom_rules=[]))
+        self.assertEqual([p for p,_,_ in panel.calls], ['panel/api/xray/', 'panel/api/server/status'])
 
     def test_disable_removed_absent_partial_state_and_repeat_only_one_save(self):
         for strings in (False, True):
             panel = FakePanel(active=True, strings=strings)
-            self.assertEqual(self.run_entry('entry-disable', panel), dict(state='removed'))
+            self.assertEqual(self.run_entry('entry-disable', panel), dict(state='removed', xray_running=True))
             self.assertEqual(self.module.normalized(panel.template), ORIGINAL)
             self.assertEqual(panel.saves, 1)
             self.assertEqual(self.run_entry('entry-disable', panel), dict(state='absent'))
@@ -411,7 +422,7 @@ class CascadeEntry(unittest.TestCase):
             panel = FakePanel(active=True)
             if keep_outbound: panel.template['routing']['rules'] = panel.template['routing']['rules'][:2]
             else: panel.template['outbounds'].pop()
-            self.assertEqual(self.run_entry('entry-disable', panel), dict(state='removed'))
+            self.assertEqual(self.run_entry('entry-disable', panel), dict(state='removed', xray_running=True))
             self.assertEqual(self.module.normalized(panel.template), ORIGINAL)
 
     def test_disable_foreign_rules_balancer_exact_prefix_and_fallback_refuse(self):
@@ -427,7 +438,7 @@ class CascadeEntry(unittest.TestCase):
             else:
                 panel.template['routing']['balancers'] = [ref['balancer']]
             original = copy.deepcopy(panel.template)
-            self.assertEqual(self.run_entry('entry-disable', panel), dict(state='foreign_reference'))
+            self.assertEqual(self.run_entry('entry-disable', panel), dict(state='foreign_reference', foreign_rules=[6] if 'rule' in ref else [], foreign_balancers=[1] if 'balancer' in ref else []))
             self.assertEqual(panel.template, original)
             self.assertEqual(panel.saves, 0)
 
@@ -437,7 +448,7 @@ class CascadeEntry(unittest.TestCase):
         foreign = dict(comment='CASCADE - administrator', outboundTag='direct', domain=['full:admin.test'])
         panel.template['routing']['rules'].insert(1, foreign)
         panel.template['routing']['balancers'] = [dict(tag='admin', selector=['cascade-exit-admin'])]
-        self.assertEqual(self.run_entry('entry-disable', panel), dict(state='removed'))
+        self.assertEqual(self.run_entry('entry-disable', panel), dict(state='removed', xray_running=True))
         self.assertEqual(panel.template['outbounds'][-1]['tag'], 'cascade-exit-admin')
         self.assertEqual(panel.template['routing']['rules'][1], foreign)
         self.assertIn('balancers', panel.template['routing'])
@@ -449,7 +460,7 @@ class CascadeEntry(unittest.TestCase):
             with self.subTest(selector=selector):
                 panel = FakePanel(active=True)
                 panel.template['routing']['balancers'] = [dict(tag='admin', selector=selector)]
-                self.assertEqual(self.run_entry('entry-disable', panel), dict(state=expected))
+                self.assertEqual(self.run_entry('entry-disable', panel), dict(state=expected, **(dict(xray_running=True) if expected == 'removed' else dict(foreign_rules=[], foreign_balancers=[1]))))
                 self.assertEqual(panel.saves, 1 if expected == 'removed' else 0)
 
     def test_disable_save_error_reports_actual_state_even_if_applied(self):
@@ -570,6 +581,8 @@ class Panel:
         assert (username, password) == ('fixture-user', 'fixture-password')
         assert Path(directory).stat().st_mode & 0o777 == 0o700
     def request(self, path, data=None, **options):
+        if path == 'panel/api/server/status':
+            return dict(success=True, obj=dict(xray=dict(state='running', errorMsg='')))
         assert path == 'panel/api/xray/'
         return dict(success=True, obj=json.dumps(dict(xraySetting=dict(outbounds=[], routing=dict(rules=[])),
                                                      outboundTestUrl='https://fixture.test')))
@@ -581,7 +594,7 @@ class Panel:
              str(helper), 'panel.example', 'panel', str(session_root)],
             input='fixture-user\0fixture-password', text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout, '{"state": "absent", "warp": false}\n')
+        self.assertEqual(result.stdout, '{"state": "absent", "warp": false, "warp_outbound": false, "warp_rules": [], "xray": "running", "custom_rules": []}\n')
         self.assertEqual(result.stderr, '')
         self.assertEqual(list(session_root.iterdir()), [])
         for secret in SECRETS:

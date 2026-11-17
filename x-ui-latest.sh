@@ -3999,6 +3999,390 @@ telegram_manager_action() (
     exit "$status"
 )
 
+# Cascade credentials/results exist only inside one action's subshell. The
+# helper boundary is stdin, including JSON parsing: never put private data in argv.
+cascade_field() {
+    printf '%s' "$cascade_result" | python3 -I -c 'import json,sys
+try:
+    value=json.load(sys.stdin).get(sys.argv[1], "")
+    if isinstance(value,list): print(", ".join(map(str,value)))
+    elif isinstance(value,bool): print(str(value).lower())
+    else: print(value)
+except Exception: sys.exit(1)' "$1"
+}
+
+prepare_cascade_tools() {
+    [[ -n ${PROJECT_SOURCE_SHA:-} && $PROJECT_SOURCE_SHA == "${PROJECT_REF:-}" ]] || pin_project_source || return 1
+    CASCADE_STAGE=$(mktemp -d /run/xui-cascade.XXXXXXXX) || return 1
+    chmod 0700 "$CASCADE_STAGE" || return 1
+    local feature
+    for feature in cascade amneziawg; do
+        curl -q -fsSL --connect-timeout 10 --max-time 30 "$GITHUB_RAW/assets/$feature/managed.py" \
+            -o "$CASCADE_STAGE/$feature.py" || return 1
+        chmod 0600 "$CASCADE_STAGE/$feature.py" || return 1
+        python3 -I -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$CASCADE_STAGE/$feature.py" || return 1
+    done
+}
+
+cascade_panel_context() {
+    local context
+    context=$(python3 -I - "$XUIDB" <<'CASCADE_CONTEXT'
+import pathlib, sqlite3, sys
+with sqlite3.connect('file:'+sys.argv[1]+'?mode=ro', uri=True) as db:
+    settings=dict(db.execute("SELECT key,value FROM settings WHERE key IN ('webCertFile','webBasePath')"))
+cert=pathlib.PurePosixPath(settings['webCertFile'])
+if cert.parent.parent != pathlib.PurePosixPath('/root/cert') or cert.name != 'fullchain.pem':
+    sys.exit(1)
+print(cert.parent.name)
+print(settings['webBasePath'].strip('/'))
+CASCADE_CONTEXT
+    ) || return 1
+    { IFS= read -r cascade_domain; IFS= read -r cascade_path; } <<< "$context"
+}
+
+cascade_tool() {
+    python3 -I "$CASCADE_STAGE/cascade.py" "$1" "$CASCADE_STAGE/amneziawg.py" \
+        "$cascade_domain" "$cascade_path" "$CASCADE_STAGE"
+}
+
+cascade_credentials() {
+    (( cascade_attempt += 1 ))
+    ui_text 'Panel login (hidden): ' 'Логин панели (скрыт): '
+    IFS= read -rs cascade_username || { printf '\n'; return 1; }
+    printf '\n'
+    ui_text 'Panel password (hidden, login and password are not saved): ' 'Пароль панели (скрыт, логин и пароль нигде не сохраняются): '
+    IFS= read -rs cascade_password || { printf '\n'; return 1; }
+    printf '\n'
+}
+
+cascade_call() {
+    local mode=$1 reason
+    while true; do
+        cascade_code=0
+        cascade_result=$({
+            printf '%s\0%s' "$cascade_username" "$cascade_password"
+            [[ $mode != entry-connect ]] || printf '\0%s' "$cascade_link"
+        } | cascade_tool "$mode" 2>/dev/null) || cascade_code=$?
+        cascade_state=$(cascade_field state) || {
+            cascade_result='{"state":"panel_error","reason":"module_failed"}'
+            cascade_state=panel_error
+        }
+        reason=$(cascade_field reason)
+        [[ $reason == session_failed ]] || return 0
+        ui_refuse "$(ui_text 'Could not sign in to the panel. This request made no changes. Check your login and password, and that the panel opens in your browser.' 'Не удалось войти в панель. Этот запрос ничего не изменил. Проверьте логин и пароль, а также открывается ли панель в браузере.')"
+        (( cascade_attempt < 3 )) || return 1
+        cascade_credentials || return 1
+    done
+}
+
+cascade_awg_notice() {
+    ui_wrap '38;5;208' "$(ui_text 'Cascade does not work with AmneziaWG. AmneziaWG connections will not go through the exit server.' 'Каскад не работает с AmneziaWG. Подключения по AmneziaWG через выходной сервер не пойдут.')"
+}
+
+cascade_custom_warning() {
+    local numbers
+    numbers=$(cascade_field custom_rules)
+    [[ -n $numbers ]] || return 0
+    printf '\n'; ui_frame
+    msg_warn "$(ui_text '  [!] YOUR ROUTING RULES' '  [!] ВАШИ ПРАВИЛА МАРШРУТИЗАЦИИ')"
+    ui_frame
+    if [[ ${1:-} == brief ]]; then
+        ui_wrap '1;31' "$(ui_text 'Remember: your earlier rules %s still choose the path for traffic they catch instead of the exit server. If you only need Cascade, delete these rules in Routing; keep the standard panel rules.' 'Помните: ваши ранние правила %s по-прежнему выбирают путь пойманного ими трафика вместо выходного сервера. Если нужен только каскад, удалите эти правила в разделе «Маршрутизация»; стандартные правила панели сохраните.' "$numbers")"
+    else
+        ui_wrap '1;31' "$(ui_text 'Your routing rules, which choose where traffic goes, stand above the Cascade rules: %s. Traffic they catch follows those rules instead of the exit server, so Cascade may work differently than expected. If you only need Cascade, delete these rules in the panel under Routing. Leave the standard panel rules (api, local addresses and bittorrent) in place. Nothing was changed by this warning.' 'Ваши правила маршрутизации, которые выбирают путь трафика, стоят выше правил каскада: %s. Пойманный ими трафик пойдёт по этим правилам, а не через выходной сервер. Поэтому каскад может работать не так, как ожидается. Если нужен только каскад, удалите эти правила в панели в разделе «Маршрутизация». Стандартные правила панели (api, локальные адреса и bittorrent) трогать не нужно. Само предупреждение ничего не меняет.' "$numbers")"
+    fi
+    ui_frame
+}
+
+cascade_warp_notice() {
+    ui_refuse "$(ui_text 'WARP was found. Cascade cannot connect while these elements remain. Nothing was changed. In the panel, delete the listed outbound under Outbounds and the listed rules under Routing, then try connecting again. Even disabled WARP rules must be deleted.' 'Найден WARP. Пока эти элементы остаются, подключить каскад нельзя. Ничего не изменено. В панели удалите указанное исходящее подключение в разделе «Исходящие» и указанные правила в разделе «Маршрутизация», затем повторите подключение. Выключенные правила WARP тоже нужно удалить.')"
+    if [[ $(cascade_field warp_outbound) == true ]]; then
+        ui_text '  Outbound (connection): warp-masque\n' '  Исходящее подключение: warp-masque\n'
+    fi
+    local names
+    names=$(cascade_field warp_rules)
+    [[ -z $names ]] || ui_text '  Routing rules: %s\n' '  Правила маршрутизации: %s\n' "$names"
+    return 0
+}
+
+cascade_foreign_notice() {
+    local numbers
+    ui_wrap '38;5;208' "$(ui_text 'The cascade-exit connection is still used by your routing rule or balancer, which chooses between connections. It was kept. In the panel, remove your reference to cascade-exit in Routing or in Xray Configs, Balancers, then try again. The manager does not change your rules or balancers.' 'Подключение cascade-exit ещё используется вашим правилом маршрутизации или балансировщиком, который выбирает между подключениями. Оно оставлено. Уберите свою ссылку на cascade-exit в панели в разделе «Маршрутизация» или «Конфигурации Xray», «Балансировщик», затем повторите действие. Менеджер ваши правила и балансировщики не меняет.')"
+    numbers=$(cascade_field foreign_rules)
+    [[ -z $numbers ]] || ui_text '  Your routing rule numbers: %s\n' '  Номера ваших правил маршрутизации: %s\n' "$numbers"
+    numbers=$(cascade_field foreign_balancers)
+    [[ -z $numbers ]] || ui_text '  Balancer positions in the list: %s\n' '  Номера балансировщиков в списке: %s\n' "$numbers"
+    return 0
+}
+
+cascade_xray_notice() {
+    case "$(cascade_field xray)" in
+        running) ui_text 'Xray, the service carrying connections, is running.\n' 'Xray, служба передачи подключений, работает.\n' ;;
+        stop) ui_text 'Xray is stopped. Start it in the panel and check the status again.\n' 'Xray остановлен. Запустите его в панели и снова проверьте состояние.\n' ;;
+        error) ui_text 'Xray has an error. Check Xray Configs in the panel, correct the settings and start Xray.\n' 'В Xray ошибка. Проверьте «Конфигурации Xray» в панели, исправьте настройки и запустите Xray.\n' ;;
+        *) ui_text 'Could not check Xray. Open the panel, check that Xray is running and retry.\n' 'Не удалось проверить Xray. Откройте панель, проверьте, что Xray работает, и повторите действие.\n' ;;
+    esac
+}
+
+cascade_link_reason() {
+    case "$1" in
+        wrong_scheme) ui_text 'The link must start with vless://.' 'Ссылка должна начинаться с vless://.' ;;
+        invalid_uuid|uuid_mismatch) ui_text 'The client identifier in the link is missing or does not match.' 'Идентификатор клиента в ссылке отсутствует или не совпадает.' ;;
+        missing_host) ui_text 'The server address is missing from the link.' 'В ссылке отсутствует адрес сервера.' ;;
+        invalid_port|wrong_port|internal_port_8443) ui_text 'The server port in the link is missing or unsuitable.' 'Порт сервера в ссылке отсутствует или не подходит.' ;;
+        invalid_encryption) ui_text 'The encryption setting in the link is unsuitable.' 'В ссылке не подходит параметр шифрования.' ;;
+        invalid_security) ui_text 'The link does not contain the required REALITY protection setting.' 'В ссылке нет нужного параметра защиты REALITY.' ;;
+        invalid_type) ui_text 'The link uses an unsuitable connection type.' 'В ссылке не подходит тип подключения.' ;;
+        invalid_flow) ui_text 'The link does not contain the required Vision connection setting.' 'В ссылке нет нужного параметра подключения Vision.' ;;
+        invalid_sni) ui_text 'The domain used for the protected connection is missing or invalid.' 'Домен для защищённого подключения отсутствует или неверен.' ;;
+        invalid_pbk) ui_text 'The public connection key is missing or invalid.' 'Открытый ключ подключения отсутствует или неверен.' ;;
+        invalid_sid) ui_text 'The short connection identifier is missing or invalid.' 'Короткий идентификатор подключения отсутствует или неверен.' ;;
+        invalid_fp) ui_text 'The browser profile for the protected connection is missing or invalid.' 'Профиль браузера для защищённого подключения отсутствует или неверен.' ;;
+        link_count) ui_text 'The panel did not provide one clearly identifiable link.' 'Панель не выдала одну однозначно подходящую ссылку.' ;;
+        *) ui_text 'The link could not be read completely.' 'Не удалось прочитать ссылку целиком.' ;;
+    esac
+}
+
+cascade_failure_text() {
+    local mode=$1 reason=$2 number=$3
+    if [[ $reason == session_failed ]]; then
+        ui_text 'Could not sign in to the panel. This request made no changes. Check your login and password and retry.\n' 'Не удалось войти в панель. Этот запрос ничего не изменил. Проверьте логин и пароль и повторите действие.\n'
+        return 0
+    fi
+    if [[ $mode == entry-disable ]]; then
+        case "$reason" in
+            readback_failed) ui_text 'Removal was sent, but the saved settings could not be read back. Some Cascade settings may remain; no rollback was done. Check cascade-exit and the CASCADE rules in the panel before retrying.\n' 'Удаление отправлено, но сохранённые настройки не удалось прочитать. Часть настроек каскада могла остаться; откат не выполнялся. Перед повтором проверьте cascade-exit и правила CASCADE в панели.\n' ;;
+            save_failed_actual_unknown) ui_text 'The panel reported a save error and its current settings could not be read. Some Cascade settings may remain; no rollback was done. Check panel access and inspect cascade-exit and the CASCADE rules before retrying.\n' 'Панель сообщила об ошибке сохранения, её текущие настройки не удалось прочитать. Часть настроек каскада могла остаться; откат не выполнялся. Проверьте доступ к панели, cascade-exit и правила CASCADE перед повтором.\n' ;;
+            save_failed_actual_absent) ui_text 'The panel reported a save error, but Cascade elements were removed. No rollback was done. Check Xray in the panel before continuing.\n' 'Панель сообщила об ошибке сохранения, но элементы каскада удалены. Откат не выполнялся. Перед продолжением проверьте Xray в панели.\n' ;;
+            save_failed_actual_active) ui_text 'The save failed and Cascade remains configured. No rollback was done. Check panel access and retry Disable.\n' 'Сохранение не удалось, каскад остался настроен. Откат не выполнялся. Проверьте доступ к панели и повторите «Отключить».\n' ;;
+            save_failed_actual_missing_outbound|save_failed_actual_missing_rules|save_failed_actual_wrong_order)
+                ui_text 'The save failed and the remaining Cascade settings are incomplete. No rollback was done. Inspect cascade-exit and the CASCADE rules in the panel, then retry Disable.\n' 'Сохранение не удалось, оставшиеся настройки каскада неполны. Откат не выполнялся. Проверьте cascade-exit и правила CASCADE в панели, затем повторите «Отключить».\n' ;;
+            remove_unverified) ui_text 'The panel still contains Cascade elements after removal. No rollback was done. Inspect cascade-exit and the CASCADE rules in the panel and retry Disable.\n' 'После удаления в панели остались элементы каскада. Откат не выполнялся. Проверьте cascade-exit и правила CASCADE в панели и повторите «Отключить».\n' ;;
+            *) ui_text 'Could not confirm removal. Some Cascade settings may remain; no rollback was done. Open the panel and inspect cascade-exit and the CASCADE rules before retrying.\n' 'Не удалось подтвердить удаление. Часть настроек каскада могла остаться; откат не выполнялся. Перед повтором откройте панель и проверьте cascade-exit и правила CASCADE.\n' ;;
+        esac
+        return 0
+    fi
+    if [[ $mode == exit-remove ]]; then
+        case "$reason" in
+            identity_changed) ui_text 'The cascade client changed during removal and was left in place. Open Clients in the panel and check which client should be removed.\n' 'Клиент cascade изменился во время удаления и оставлен на месте. Откройте «Клиенты» в панели и проверьте, какой клиент нужно удалить.\n' ;;
+            manifest_invalid) ui_text 'The saved exit-server identity could not be confirmed. Nothing was deleted. Check the local managed installation before retrying.\n' 'Не удалось подтвердить сохранённые сведения о выходном сервере. Ничего не удалено. Перед повтором проверьте управляемую установку на этом сервере.\n' ;;
+            *) ui_text 'Could not confirm deletion of the cascade client. It may remain. Check Clients in the panel before retrying; do not delete a different client.\n' 'Не удалось подтвердить удаление клиента cascade. Он мог остаться. Перед повтором проверьте «Клиенты» в панели; другого клиента не удаляйте.\n' ;;
+        esac
+        return 0
+    fi
+    case "$reason" in
+        save_failed) ui_text 'The panel could not confirm saving the connection. Cascade changes were rolled back and Xray is running. Check panel access and reconnect.\n' 'Панель не подтвердила сохранение подключения. Изменения каскада отменены, Xray работает. Проверьте доступ к панели и повторите подключение.\n' ;;
+        readback_failed)
+            if [[ $mode == entry-connect ]]; then
+                ui_text 'Could not read the saved settings back. Cascade changes were rolled back and Xray is running. Check panel access and reconnect.\n' 'Не удалось прочитать сохранённые настройки. Изменения каскада отменены, Xray работает. Проверьте доступ к панели и повторите подключение.\n'
+            else ui_text 'Could not read back the new client. The client created by this action was removed or is absent. Check Clients in the panel and create the key again.\n' 'Не удалось прочитать созданного клиента. Созданный этим действием клиент удалён либо отсутствует. Проверьте «Клиенты» в панели и повторите создание ключа.\n'; fi ;;
+        readback_mismatch) ui_text 'The saved settings did not match the requested connection. Cascade changes were rolled back and Xray is running. Check the panel settings before reconnecting.\n' 'Сохранённые настройки не совпали с нужным подключением. Изменения каскада отменены, Xray работает. Перед повторным подключением проверьте настройки панели.\n' ;;
+        route_test_failed) ui_text 'The routing check did not pass within 15 seconds. Cascade changes were rolled back and Xray is running. Check your routing rules and retry connecting.\n' 'Проверка маршрутов не прошла за 15 секунд. Изменения каскада отменены, Xray работает. Проверьте свои правила маршрутизации и повторите подключение.\n' ;;
+        xray_unhealthy) ui_text 'Xray did not become healthy within 15 seconds after saving. Cascade changes were rolled back and Xray is running again. Check Xray Configs in the panel before reconnecting.\n' 'После сохранения Xray не заработал без ошибок за 15 секунд. Изменения каскада отменены, Xray снова работает. Перед повтором проверьте «Конфигурации Xray» в панели.\n' ;;
+        xray_not_running) ui_text 'Xray is not running. Nothing was changed. Start Xray in the panel and reconnect.\n' 'Xray не запущен. Ничего не изменено. Запустите Xray в панели и повторите подключение.\n' ;;
+        missing_direct) ui_text 'The direct connection for direct internet access is missing. Nothing was changed. Restore the direct outbound in the panel under Outbounds and reconnect.\n' 'Отсутствует подключение direct для прямого выхода в интернет. Ничего не изменено. Восстановите исходящее direct в разделе «Исходящие» панели и повторите подключение.\n' ;;
+        invalid_rule) ui_text 'Routing rule %s could not be read. Nothing was changed. Fix or remove this rule in the panel under Routing and reconnect.\n' 'Не удалось прочитать правило маршрутизации %s. Ничего не изменено. Исправьте или удалите это правило в разделе «Маршрутизация» панели и повторите подключение.\n' "$number" ;;
+        invalid_network) ui_text 'Routing rule %s has an unreadable connection-type setting. Nothing was changed. Fix this rule in the panel under Routing and reconnect.\n' 'В правиле маршрутизации %s не удалось прочитать тип соединения. Ничего не изменено. Исправьте это правило в разделе «Маршрутизация» панели и повторите подключение.\n' "$number" ;;
+        panel_request_failed)
+            if [[ $mode == entry-connect ]]; then
+                ui_text 'Could not read the panel settings or Xray status. Nothing was changed. Check that the panel is available and retry.\n' 'Не удалось прочитать настройки панели или состояние Xray. Ничего не изменено. Проверьте доступность панели и повторите действие.\n'
+            else ui_text 'A panel request failed. The new client was removed if its identity could be confirmed; a different client was left untouched. Check Clients in the panel before creating another key.\n' 'Запрос к панели не удался. Новый клиент удалён, если удалось подтвердить его принадлежность этому действию; другой клиент не затронут. Перед созданием нового ключа проверьте «Клиенты» в панели.\n'; fi ;;
+        client_absent) ui_text 'The panel did not create the cascade client. No new client remains. Check panel access and create the key again.\n' 'Панель не создала клиента cascade. Нового клиента нет. Проверьте доступ к панели и повторите создание ключа.\n' ;;
+        identity_changed) ui_text 'The cascade client now belongs to a different creation attempt. It was not deleted. Check Clients in the panel before creating a key again.\n' 'Клиент cascade теперь относится к другому созданию. Он не удалён. Перед повторным созданием ключа проверьте «Клиенты» в панели.\n' ;;
+        disabled) ui_text 'The new cascade client was disabled and has been removed. Check client settings in the panel and create the key again.\n' 'Созданный клиент cascade оказался выключен и удалён. Проверьте настройки клиентов в панели и повторите создание ключа.\n' ;;
+        wrong_binding) ui_text 'The new cascade client was attached to the wrong connection and has been removed. Check the REALITY inbound in the panel and create the key again.\n' 'Созданный клиент cascade был привязан не к тому подключению и удалён. Проверьте входящее подключение REALITY в панели и повторите создание ключа.\n' ;;
+        wrong_flow) ui_text 'The new cascade client had an unsuitable Vision setting and has been removed. Check the REALITY inbound in the panel and create the key again.\n' 'У созданного клиента cascade оказался неверный параметр Vision, клиент удалён. Проверьте входящее подключение REALITY в панели и повторите создание ключа.\n' ;;
+        manifest_invalid) ui_text 'The saved server identity could not be confirmed. Nothing was changed. Check the local managed installation before retrying.\n' 'Не удалось подтвердить сохранённые сведения о сервере. Ничего не изменено. Перед повтором проверьте управляемую установку на этом сервере.\n' ;;
+        *) ui_text 'Could not complete the action or confirm its result. Settings may remain. Check Cascade status and the panel before retrying.\n' 'Не удалось завершить действие или подтвердить результат. Настройки могли остаться. Перед повтором проверьте состояние каскада и панель.\n' ;;
+    esac
+}
+
+cascade_show_result() {
+    local mode=$1 state reason number
+    state=$(cascade_field state); reason=$(cascade_field reason)
+    number=$(cascade_field rule_index)
+    [[ $number =~ ^[0-9]+$ ]] && number=$((number + 1))
+    case "$state" in
+        created)
+            ui_frame; msg_ok "$(ui_text '  CASCADE KEY' '  КЛЮЧ КАСКАДА')"; ui_frame
+            cascade_field link; ui_frame
+            ui_wrap '38;5;208' "$(ui_text 'The cascade client was created on this exit server. Copy this key-link and keep it private: it gives access to this client. On the entry server choose Connect exit server and paste it. If you later use Change Domains on this server, the key changes; reconnect Cascade on the entry server.' 'Клиент cascade создан на этом выходном сервере. Скопируйте ключ-ссылку и никому не показывайте: она даёт доступ к этому клиенту. На входном сервере выберите «Подключить выходной сервер» и вставьте её. Если позже на этом сервере выполнить «Смена доменов» (Change Domains), ключ изменится; на входном сервере подключите каскад заново.')" ;;
+        connected)
+            msg_ok "$(ui_text 'Cascade connected.' 'Каскад подключён.')"
+            ui_wrap '36' "$(ui_text 'Added cascade-exit, an outgoing connection to the exit server, and three routing rules at the end of the list. Russian sites and Russian IP addresses go directly. Other traffic not caught by earlier rules goes through the exit server. Applying the settings or restarting Xray may have interrupted all users for a few seconds. You can now use Cascade; check Status if needed.' 'Добавлены cascade-exit, исходящее подключение к выходному серверу, и три правила маршрутизации в конце списка. Российские сайты и российские IP-адреса идут напрямую. Остальной трафик, не пойманный ранними правилами, идёт через выходной сервер. Применение настроек или перезапуск Xray могли на несколько секунд прервать соединения всех пользователей. Теперь каскадом можно пользоваться; при необходимости проверьте «Состояние».')"
+            cascade_awg_notice; cascade_custom_warning brief ;;
+        ready) ui_text 'Exit role: ready. The cascade client is enabled. This check changed nothing. Use its key on the entry server.\n' 'Выходная роль готова. Клиент cascade включён. Проверка ничего не изменила. Используйте его ключ на входном сервере.\n' ;;
+        active) ui_text 'Entry role: configured. This check changed nothing. Check the Xray state below before using Cascade.\n' 'Входная роль настроена. Проверка ничего не изменила. Перед использованием каскада проверьте состояние Xray ниже.\n' ;;
+        absent) ui_text 'Cascade is not configured for this role. Nothing was changed. Choose Create key for an exit server or Connect exit server for an entry server when needed.\n' 'Каскад для этой роли не настроен. Ничего не изменено. При необходимости выберите «Создать ключ» для выходного сервера или «Подключить выходной сервер» для входного.\n' ;;
+        inconsistent)
+            ui_text 'Cascade settings are incomplete. This check changed nothing. ' 'Настройки каскада неполны. Проверка ничего не изменила. '
+            case "$reason" in
+                disabled) ui_text 'The cascade client is disabled. Enable it in Clients or use Disable here before creating a new key.\n' 'Клиент cascade выключен. Включите его в разделе «Клиенты» либо выберите здесь «Отключить» перед созданием нового ключа.\n' ;;
+                wrong_binding) ui_text 'The cascade client is attached to a different inbound connection. Check its attachment in Clients before using the exit.\n' 'Клиент cascade привязан к другому входящему подключению. Перед использованием выхода проверьте его привязку в разделе «Клиенты».\n' ;;
+                wrong_flow) ui_text 'The cascade client has an unsuitable Vision setting. Check this client in Clients before using the exit.\n' 'У клиента cascade неверный параметр Vision. Перед использованием выхода проверьте этого клиента в разделе «Клиенты».\n' ;;
+                missing_outbound) ui_text 'The cascade-exit outgoing connection is missing. Choose Disable, then Connect exit server again.\n' 'Отсутствует исходящее подключение cascade-exit. Выберите «Отключить», затем снова «Подключить выходной сервер».\n' ;;
+                missing_rules) ui_text 'Some CASCADE routing rules are missing. Choose Disable, then Connect exit server again.\n' 'Отсутствует часть правил маршрутизации CASCADE. Выберите «Отключить», затем снова «Подключить выходной сервер».\n' ;;
+                wrong_order) ui_text 'The CASCADE rules do not have their expected relative order. Choose Disable, then Connect exit server again.\n' 'У правил CASCADE нарушен их внутренний порядок. Выберите «Отключить», затем снова «Подключить выходной сервер».\n' ;;
+            esac ;;
+        removed)
+            if [[ $mode == entry-disable ]]; then
+                ui_text 'Entry role disabled: cascade-exit and the CASCADE rules were removed. Your rules and standard panel rules were preserved. ' 'Входная роль отключена: cascade-exit и правила CASCADE удалены. Ваши правила и стандартные правила панели сохранены. '
+                if [[ $(cascade_field xray_running) == false ]]; then
+                    ui_text 'Xray is stopped or has an error. Check its settings, start it in the panel and check Status.\n' 'Xray остановлен или работает с ошибкой. Проверьте его настройки, запустите в панели и проверьте «Состояние».\n'
+                else ui_text 'Xray is running. Check Status if needed.\n' 'Xray работает. При необходимости проверьте «Состояние».\n'; fi
+            else ui_text 'Exit role disabled: the cascade client was deleted. Entry servers using this key can no longer send traffic through this exit. Connect them to another exit if needed.\n' 'Выходная роль отключена: клиент cascade удалён. Входные серверы с этим ключом больше не могут передавать трафик через этот выход. При необходимости подключите их к другому выходу.\n'; fi ;;
+        name_taken) ui_text 'A client named cascade already exists. Nothing was changed. Check it under Clients in the panel; rename your own conflicting client before creating a key.\n' 'Клиент с именем cascade уже существует. Ничего не изменено. Проверьте его в разделе «Клиенты» панели; перед созданием ключа переименуйте своего клиента с совпавшим именем.\n' ;;
+        no_reality) ui_text 'The managed REALITY inbound connection was not found. Nothing was changed. Check the installation and its REALITY connection in the panel before retrying.\n' 'Управляемое входящее подключение REALITY не найдено. Ничего не изменено. Перед повтором проверьте установку и её подключение REALITY в панели.\n' ;;
+        ambiguous_reality) ui_text 'More than one suitable REALITY inbound connection was found. Nothing was changed. Check the installation and select the intended connection in the panel before retrying.\n' 'Найдено несколько подходящих входящих подключений REALITY. Ничего не изменено. Перед повтором проверьте установку и нужное подключение в панели.\n' ;;
+        already_connected) ui_text 'An entry role is already configured or partly configured. Nothing was changed. Choose Disable before connecting an exit again.\n' 'Входная роль уже настроена или настроена частично. Ничего не изменено. Перед новым подключением выхода выберите «Отключить».\n' ;;
+        warp_active) cascade_warp_notice ;;
+        intercepted) ui_text 'Routing rule %s catches traffic before Cascade. Nothing was changed. Disable or delete this rule in the panel under Routing, then reconnect.\n' 'Правило маршрутизации %s перехватывает трафик до каскада. Ничего не изменено. Выключите или удалите это правило в разделе «Маршрутизация» панели, затем повторите подключение.\n' "$number" ;;
+        link_invalid)
+            cascade_link_reason "$reason"; printf '\n'
+            if [[ $mode == exit-create ]]; then
+                ui_text 'The new cascade client was removed. Check the REALITY connection in the panel and create the key again.\n' 'Новый клиент cascade удалён. Проверьте подключение REALITY в панели и повторите создание ключа.\n'
+            else ui_text 'Nothing was changed. Use the complete vless:// key-link from Create key on the exit server; make sure it was not cut off.\n' 'Ничего не изменено. Используйте полную ключ-ссылку vless:// из пункта «Создать ключ» на выходном сервере; проверьте, что она не обрезана.\n'; fi ;;
+        test_failed) ui_text 'The exit connection test failed. Nothing was changed. Check the link, that the exit server is running and reachable on port 443, and that the key was copied after its last Change Domains.\n' 'Проверка подключения к выходу не прошла. Ничего не изменено. Проверьте ссылку, что выходной сервер работает и доступен по порту 443, а ключ скопирован после последней смены доменов (Change Domains).\n' ;;
+        failed) cascade_failure_text "$mode" "$reason" "$number" ;;
+        failed_rollback)
+            ui_refuse "$(ui_text 'Could not confirm rollback. Some Cascade settings may remain. Open Xray Configs in the panel, inspect the CASCADE routing rules and cascade-exit under Outbounds, and remove the remaining Cascade elements if needed before retrying.' 'Не удалось подтвердить откат. Настройки каскада могли остаться. Откройте «Конфигурации Xray» в панели, проверьте правила маршрутизации CASCADE и cascade-exit в разделе «Исходящие». При необходимости удалите оставшиеся элементы каскада перед повтором.')"
+            [[ $reason != foreign_reference ]] || cascade_foreign_notice
+            if [[ $(cascade_field xray_running) == false ]]; then
+                ui_text 'Xray is stopped or has an error. Check its settings, start it in the panel and check Status.\n' 'Xray остановлен или работает с ошибкой. Проверьте его настройки, запустите в панели и проверьте «Состояние».\n'
+            fi ;;
+        failed_cleanup) ui_refuse "$(ui_text 'Could not confirm cleanup of the cascade client. It may remain. Open Clients in the panel, inspect this client and remove it if appropriate before retrying.' 'Не удалось подтвердить удаление клиента cascade после ошибки. Он мог остаться. Откройте «Клиенты» в панели, проверьте этого клиента и при необходимости удалите перед повтором.')" ;;
+        not_ours) ui_text 'The cascade client does not match the exit role created by this manager. Nothing was deleted. Check this client in the panel and decide whether to keep it.\n' 'Клиент cascade не соответствует выходной роли, созданной этим менеджером. Ничего не удалено. Проверьте этого клиента в панели и решите, нужно ли его сохранять.\n' ;;
+        foreign_reference) cascade_foreign_notice ;;
+        panel_error)
+            if [[ $reason == session_failed ]]; then cascade_failure_text "$mode" "$reason" "$number"
+            else ui_refuse "$(ui_text 'Could not read the panel settings. This request made no changes. Check panel access and the local installation, then retry.' 'Не удалось прочитать настройки панели. Этот запрос ничего не изменил. Проверьте доступ к панели и локальную установку, затем повторите действие.')"; fi ;;
+        *) ui_refuse "$(ui_text 'Could not read or confirm the panel result. This check made no changes; an earlier operation may still need inspection. Open the panel and check Cascade status before retrying.' 'Не удалось прочитать или подтвердить ответ панели. Эта проверка ничего не изменила; результат предыдущего действия может требовать проверки. Откройте панель и проверьте состояние каскада перед повтором.')" ;;
+    esac
+    if [[ $mode == entry-status && $state != panel_error ]]; then
+        cascade_xray_notice
+        [[ $(cascade_field warp) != true ]] || cascade_warp_notice
+        cascade_custom_warning
+        [[ $state != active && $state != inconsistent ]] || cascade_awg_notice
+        ui_text 'This status check changed no settings.\n' 'Проверка состояния ничего не изменила в настройках.\n'
+    fi
+    return 0
+}
+
+cascade_read_roles() {
+    cascade_call exit-status || return 1
+    cascade_exit_result=$cascade_result
+    cascade_call entry-status || return 1
+    cascade_entry_result=$cascade_result
+}
+
+cascade_confirm() {
+    local answer
+    ui_text 'Continue? [y/N]: ' 'Продолжить? [y/N]: '
+    IFS= read -r answer || return 1
+    [[ $answer == y || $answer == Y ]]
+}
+
+cascade_action() (
+    # Disable tracing before reading any credential or link, including inherited
+    # exported variables. Subshell scope also clears everything on cancellation.
+    set +x
+    unset cascade_username cascade_password cascade_link cascade_result cascade_exit_result cascade_entry_result
+    local action=$1 CASCADE_STAGE='' cascade_username='' cascade_password='' cascade_link=''
+    local cascade_result='' cascade_exit_result='' cascade_entry_result='' cascade_attempt=0 cascade_code=0 cascade_state=''
+    local cascade_domain='' cascade_path='' state answer cascade_action_result=0
+    trap 'unset cascade_username cascade_password cascade_link cascade_result cascade_exit_result cascade_entry_result; [[ -z "$CASCADE_STAGE" ]] || rm -rf -- "$CASCADE_STAGE"' EXIT
+    trap 'ui_refuse "$(ui_text "Action interrupted. Changes may remain. Open the panel and check Cascade status before retrying." "Действие прервано. Изменения могли остаться. Перед повтором откройте панель и проверьте состояние каскада.")"; exit 130' INT
+    trap 'exit 143' TERM
+    acquire_stack_lock || exit $?
+    recover_domain_operation || exit $?
+    prepare_cascade_tools && cascade_panel_context || {
+        ui_refuse "$(ui_text 'Could not prepare the Cascade helper or read the local panel address. Nothing was changed. Check that this is a working managed installation and retry.' 'Не удалось подготовить модуль каскада или прочитать адрес локальной панели. Ничего не изменено. Проверьте, что это работающая управляемая установка, и повторите действие.')"
+        exit 1
+    }
+    ui_title "$(ui_text 'CASCADE' 'КАСКАД')"
+    case "$action" in
+        1) ui_wrap '36' "$(ui_text 'Create a key-link on this exit server. It will add one cascade client; existing clients will be preserved. Copy the resulting key to your entry server.' 'Создание ключа-ссылки на этом выходном сервере. Будет добавлен один клиент cascade; существующие клиенты сохранятся. Полученный ключ скопируйте на входной сервер.')" ;;
+        2) ui_wrap '36' "$(ui_text 'Connect this entry server to an exit server using its key-link. The manager checks the settings before asking for the link. Applying changes may briefly interrupt all users.' 'Подключение этого входного сервера к выходному по ключу-ссылке. Менеджер проверит настройки до запроса ссылки. Применение изменений может ненадолго прервать соединения всех пользователей.')"; cascade_awg_notice ;;
+        3) ui_wrap '36' "$(ui_text 'Check the exit and entry roles on this server. This action only reads settings and changes nothing. Use the summary to choose your next action.' 'Проверка выходной и входной ролей этого сервера. Действие только читает настройки и ничего не меняет. По сводке выберите следующее действие.')" ;;
+        4) ui_wrap '36' "$(ui_text 'Check which Cascade roles exist, then confirm removal separately for each role. Nothing is deleted without confirmation. Review the consequences before continuing.' 'Проверка ролей каскада и отдельное подтверждение удаления каждой роли. Без подтверждения ничего не удаляется. Перед продолжением прочитайте последствия.')" ;;
+    esac
+    ui_frame
+    cascade_credentials || exit 0
+    case "$action" in
+        1) cascade_call exit-create || exit 1; cascade_show_result exit-create; exit "$cascade_code" ;;
+        2)
+            cascade_call entry-status || exit 1
+            state=$cascade_state
+            case "$state" in
+                active|inconsistent) cascade_result='{"state":"already_connected"}'; cascade_show_result entry-connect; exit 1 ;;
+                absent) ;;
+                *) cascade_show_result entry-status; exit 1 ;;
+            esac
+            if [[ $(cascade_field xray) != running ]]; then
+                cascade_xray_notice
+                ui_text 'Nothing was changed. Retry connecting after Xray starts.\n' 'Ничего не изменено. Повторите подключение после запуска Xray.\n'
+                exit 1
+            fi
+            if [[ $(cascade_field warp) == true ]]; then cascade_warp_notice; exit 1; fi
+            if [[ -n $(cascade_field custom_rules) ]]; then
+                cascade_custom_warning
+                ui_text 'Continue connecting? [y/N]: ' 'Продолжить подключение? [y/N]: '
+                IFS= read -r answer || exit 0
+                [[ $answer == y || $answer == Y ]] || { ui_text 'Cancelled. Nothing was changed.\n' 'Отменено. Ничего не изменено.\n'; exit 0; }
+            fi
+            ui_text 'Paste the exit key-link (visible, not saved): ' 'Вставьте ключ-ссылку выхода (ввод видимый, нигде не сохраняется): '
+            IFS= read -r cascade_link || exit 0
+            cascade_call entry-connect || exit 1
+            cascade_show_result entry-connect
+            exit "$cascade_code" ;;
+        3)
+            cascade_read_roles || exit 1
+            ui_section "$(ui_text 'EXIT ROLE' 'ВЫХОДНАЯ РОЛЬ')"
+            cascade_result=$cascade_exit_result; cascade_show_result exit-status
+            [[ $(cascade_field state) != panel_error ]] || cascade_action_result=1
+            ui_section "$(ui_text 'ENTRY ROLE' 'ВХОДНАЯ РОЛЬ')"
+            cascade_result=$cascade_entry_result; cascade_show_result entry-status
+            [[ $(cascade_field state) != panel_error ]] || cascade_action_result=1 ;;
+        4)
+            cascade_read_roles || exit 1
+            cascade_result=$cascade_exit_result; state=$(cascade_field state)
+            if [[ $state == ready || $state == inconsistent ]]; then
+                ui_title "$(ui_text 'DISABLE EXIT ROLE' 'ОТКЛЮЧЕНИЕ ВЫХОДНОЙ РОЛИ')"
+                ui_wrap '38;5;208' "$(ui_text 'The cascade client will be deleted. Entry servers using this exit will no longer send traffic through it. Nothing has been deleted yet. Confirm only if you want to disconnect these servers.' 'Клиент cascade будет удалён. Входные серверы, использующие этот выход, больше не смогут передавать через него трафик. Пока ничего не удалено. Подтверждайте, только если хотите отключить эти серверы.')"
+                if cascade_confirm; then
+                    cascade_call exit-remove || exit 1; cascade_show_result exit-remove
+                    (( cascade_code == 0 )) || cascade_action_result=1
+                fi
+            else cascade_show_result exit-status; [[ $state != panel_error ]] || cascade_action_result=1; fi
+            cascade_result=$cascade_entry_result; state=$(cascade_field state)
+            if [[ $state == active || $state == inconsistent ]]; then
+                ui_title "$(ui_text 'DISABLE ENTRY ROLE' 'ОТКЛЮЧЕНИЕ ВХОДНОЙ РОЛИ')"
+                ui_wrap '38;5;208' "$(ui_text 'The cascade-exit outgoing connection and three CASCADE routing rules will be removed. Your rules and standard panel rules will be preserved. Applying changes may briefly interrupt all users. Nothing has been removed yet. Confirm to stop using the exit server.' 'Будут удалены исходящее подключение cascade-exit и три правила маршрутизации CASCADE. Ваши правила и стандартные правила панели сохранятся. Применение изменений может ненадолго прервать соединения всех пользователей. Пока ничего не удалено. Подтвердите, чтобы перестать использовать выходной сервер.')"
+                if cascade_confirm; then
+                    cascade_call entry-disable || exit 1; cascade_show_result entry-disable
+                    (( cascade_code == 0 )) || cascade_action_result=1
+                fi
+            else cascade_show_result entry-status; [[ $state != panel_error ]] || cascade_action_result=1; fi ;;
+    esac
+    exit "$cascade_action_result"
+)
+
+cascade_menu() {
+    local choice status
+    while true; do
+        ui_header "$(ui_text 'CASCADE' 'КАСКАД')"
+        ui_text '\n  1. Create key (exit server)\n  2. Connect exit server (entry server)\n  3. Status\n  4. Disable\n' '\n  1. Создать ключ (выходной сервер)\n  2. Подключить выходной сервер (входной сервер)\n  3. Состояние\n  4. Отключить\n'
+        ui_back "$(ui_text '  0. Back' '  0. Назад')"
+        printf '\n'; ui_prompt
+        IFS= read -r choice || return 0
+        case "$choice" in
+            0) return 0 ;;
+            1|2|3|4) cascade_action "$choice"; status=$?; (( status != 130 && status != 143 )) || return "$status" ;;
+            *) ui_text 'Invalid selection.\n' 'Неверный выбор.\n' ;;
+        esac
+    done
+}
+
 manager_menu() {
     local choice status=0 reported=0 completion
     UI_INTERACTIVE=1
@@ -4006,7 +4390,7 @@ manager_menu() {
     while true; do
         reported=0
         ui_header "$(ui_text 'MAIN MENU' 'ГЛАВНОЕ МЕНЮ')"
-        ui_text '\n  1. Installation\n  2. Change Domains\n  3. Backups\n  4. Telegram Web Proxy Manager\n\n' '\n  1. Установка\n  2. Смена доменов\n  3. Резервные копии\n  4. Telegram Web Proxy Manager\n\n'
+        ui_text '\n  1. Installation\n  2. Change Domains\n  3. Backups\n  4. Telegram Web Proxy Manager\n  5. Cascade\n\n' '\n  1. Установка\n  2. Смена доменов\n  3. Резервные копии\n  4. Telegram Web Proxy Manager\n  5. Каскад\n\n'
         ui_back "$(ui_text '  0. Exit' '  0. Выход')"
         printf '\n'; ui_prompt
         IFS= read -r choice || return "$status"
@@ -4050,6 +4434,7 @@ manager_menu() {
                     status=$?
                 } 4>&1
                 if (( status == 0 )) && [[ $completion == completed ]]; then return 0; fi ;;
+            5) cascade_menu; status=$?; reported=1 ;;
             *) ui_text 'Invalid selection.\n' 'Неверный выбор.\n'; continue ;;
         esac
         if (( status )); then
