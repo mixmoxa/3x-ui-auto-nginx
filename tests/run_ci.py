@@ -24,6 +24,7 @@ SUITES = {
         'test_amneziawg.AmneziaWG',
         'test_warp.Warp',
         'test_cascade.Cascade',
+        'test_cascade_entry.CascadeEntry',
         'test_certificate_renewal.CertificateRenewal',
         'test_adguard.AdGuardInstaller',
         'test_audit_findings.AuditInstaller',
