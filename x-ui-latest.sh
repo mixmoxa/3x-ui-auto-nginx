@@ -4211,11 +4211,11 @@ cascade_show_result() {
             msg_ok "$(ui_text 'Cascade connected.' 'Каскад подключён.')"
             ui_wrap '36' "$(ui_text 'Added cascade-exit, an outgoing connection to the exit server, and three routing rules at the end of the list. Russian sites and Russian IP addresses go directly. Other traffic not caught by earlier rules goes through the exit server. Applying the settings or restarting Xray may have interrupted all users for a few seconds. You can now use Cascade; check Status if needed.' 'Добавлены cascade-exit, исходящее подключение к выходному серверу, и три правила маршрутизации в конце списка. Российские сайты и российские IP-адреса идут напрямую. Остальной трафик, не пойманный ранними правилами, идёт через выходной сервер. Применение настроек или перезапуск Xray могли на несколько секунд прервать соединения всех пользователей. Теперь каскадом можно пользоваться; при необходимости проверьте «Состояние».')"
             cascade_awg_notice; cascade_custom_warning brief ;;
-        ready) ui_text 'Exit role: ready. The cascade client is enabled. This check changed nothing. Use its key on the entry server.\n' 'Выходная роль готова. Клиент cascade включён. Проверка ничего не изменила. Используйте его ключ на входном сервере.\n' ;;
-        active) ui_text 'Entry role: configured. This check changed nothing. Check the Xray state below before using Cascade.\n' 'Входная роль настроена. Проверка ничего не изменила. Перед использованием каскада проверьте состояние Xray ниже.\n' ;;
+        ready) msg_ok "$(ui_text 'Exit role: ready. The cascade client is enabled. This check changed nothing. Use its key on the entry server.' 'Выходная роль готова. Клиент cascade включён. Проверка ничего не изменила. Используйте его ключ на входном сервере.')" ;;
+        active) msg_ok "$(ui_text 'Entry role: configured. This check changed nothing. Check the Xray state below before using Cascade.' 'Входная роль настроена. Проверка ничего не изменила. Перед использованием каскада проверьте состояние Xray ниже.')" ;;
         absent) ui_text 'Cascade is not configured for this role. Nothing was changed. Choose Create key for an exit server or Connect exit server for an entry server when needed.\n' 'Каскад для этой роли не настроен. Ничего не изменено. При необходимости выберите «Создать ключ» для выходного сервера или «Подключить выходной сервер» для входного.\n' ;;
         inconsistent)
-            ui_text 'Cascade settings are incomplete. This check changed nothing. ' 'Настройки каскада неполны. Проверка ничего не изменила. '
+            msg_err "$(ui_text 'Cascade settings are incomplete. This check changed nothing.' 'Настройки каскада неполны. Проверка ничего не изменила.')"
             case "$reason" in
                 disabled) ui_text 'The cascade client is disabled. Enable it in Clients or use Disable here before creating a new key.\n' 'Клиент cascade выключен. Включите его в разделе «Клиенты» либо выберите здесь «Отключить» перед созданием нового ключа.\n' ;;
                 wrong_binding) ui_text 'The cascade client is attached to a different inbound connection. Check its attachment in Clients before using the exit.\n' 'Клиент cascade привязан к другому входящему подключению. Перед использованием выхода проверьте его привязку в разделе «Клиенты».\n' ;;
@@ -4258,7 +4258,7 @@ cascade_show_result() {
             else ui_refuse "$(ui_text 'Could not read the panel settings. This request made no changes. Check panel access and the local installation, then retry.' 'Не удалось прочитать настройки панели. Этот запрос ничего не изменил. Проверьте доступ к панели и локальную установку, затем повторите действие.')"; fi ;;
         *) ui_refuse "$(ui_text 'Could not read or confirm the panel result. This check made no changes; an earlier operation may still need inspection. Open the panel and check Cascade status before retrying.' 'Не удалось прочитать или подтвердить ответ панели. Эта проверка ничего не изменила; результат предыдущего действия может требовать проверки. Откройте панель и проверьте состояние каскада перед повтором.')" ;;
     esac
-    if [[ $mode == entry-status && $state != panel_error ]]; then
+    if [[ $mode == entry-status && ( $state == active || $state == inconsistent ) ]]; then
         cascade_xray_notice
         [[ $(cascade_field warp) != true ]] || cascade_warp_notice
         cascade_custom_warning
@@ -4289,7 +4289,7 @@ cascade_action() (
     unset cascade_username cascade_password cascade_link cascade_result cascade_exit_result cascade_entry_result
     local action=$1 CASCADE_STAGE='' cascade_username='' cascade_password='' cascade_link=''
     local cascade_result='' cascade_exit_result='' cascade_entry_result='' cascade_attempt=0 cascade_code=0 cascade_state=''
-    local cascade_domain='' cascade_path='' state answer cascade_action_result=0
+    local cascade_domain='' cascade_path='' state answer cascade_action_result=0 cascade_removed_exit=0
     trap 'unset cascade_username cascade_password cascade_link cascade_result cascade_exit_result cascade_entry_result; [[ -z "$CASCADE_STAGE" ]] || rm -rf -- "$CASCADE_STAGE"' EXIT
     trap 'ui_refuse "$(ui_text "Action interrupted. Changes may remain. Open the panel and check Cascade status before retrying." "Действие прервано. Изменения могли остаться. Перед повтором откройте панель и проверьте состояние каскада.")"; exit 130' INT
     trap 'exit 143' TERM
@@ -4351,7 +4351,7 @@ cascade_action() (
                 ui_wrap '38;5;208' "$(ui_text 'The cascade client will be deleted. Entry servers using this exit will no longer send traffic through it. Nothing has been deleted yet. Confirm only if you want to disconnect these servers.' 'Клиент cascade будет удалён. Входные серверы, использующие этот выход, больше не смогут передавать через него трафик. Пока ничего не удалено. Подтверждайте, только если хотите отключить эти серверы.')"
                 if cascade_confirm; then
                     cascade_call exit-remove || exit 1; cascade_show_result exit-remove
-                    (( cascade_code == 0 )) || cascade_action_result=1
+                    if (( cascade_code == 0 )); then cascade_removed_exit=1; else cascade_action_result=1; fi
                 fi
             else cascade_show_result exit-status; [[ $state != panel_error ]] || cascade_action_result=1; fi
             cascade_result=$cascade_entry_result; state=$(cascade_field state)
@@ -4362,7 +4362,10 @@ cascade_action() (
                     cascade_call entry-disable || exit 1; cascade_show_result entry-disable
                     (( cascade_code == 0 )) || cascade_action_result=1
                 fi
-            else cascade_show_result entry-status; [[ $state != panel_error ]] || cascade_action_result=1; fi ;;
+            else
+                if [[ $state != absent ]] || (( ! cascade_removed_exit )); then cascade_show_result entry-status; fi
+                [[ $state != panel_error ]] || cascade_action_result=1
+            fi ;;
     esac
     exit "$cascade_action_result"
 )

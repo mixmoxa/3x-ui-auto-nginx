@@ -211,6 +211,90 @@ cascade_action "$3"
         self.assertEqual(result.stdout.count('Panel login (hidden):'), 1)
         self.assertIn('Xray is stopped or has an error.', result.stdout)
 
+    def test_absent_entry_with_warp_status_and_disable(self):
+        entry = dict(state='absent', xray='running', warp=True, warp_outbound=True,
+                     warp_rules=['WARP - RU'], custom_rules=[3])
+        for language in ('en', 'ru'):
+            for action, replies, answers in (
+                (3, [dict(state='absent'), entry], 'fixture-user\nfixture-password\n'),
+                (4, [dict(state='ready'), entry, dict(state='removed')], 'fixture-user\nfixture-password\ny\n'),
+                (4, [dict(state='absent'), entry], 'fixture-user\nfixture-password\n'),
+            ):
+                with self.subTest(language=language, action=action, replies=replies):
+                    result, calls = self.action(action, replies, answers, language)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    for text in ('[FAIL]', 'WARP was found', 'Найден WARP', 'YOUR ROUTING RULES',
+                                 'ВАШИ ПРАВИЛА МАРШРУТИЗАЦИИ'):
+                        self.assertNotIn(text, result.stdout)
+                    if len(replies) == 3:
+                        self.assertIn('disabled' if language == 'en' else 'отключена', result.stdout)
+
+    def test_active_entry_keeps_warp_and_rule_warnings(self):
+        for state in ('active', 'inconsistent'):
+            entry = dict(state=state, reason='missing_rules', xray='running', warp=True,
+                         warp_outbound=True, warp_rules=['WARP - RU'], custom_rules=[3])
+            result, _ = self.action(3, [dict(state='absent'), entry], 'fixture-user\nfixture-password\n')
+            self.assertEqual(result.returncode, 0)
+            self.assertIn('WARP was found', result.stdout)
+            self.assertIn('YOUR ROUTING RULES', result.stdout)
+
+    def test_status_colors_obey_terminal_and_no_color(self):
+        cases = [('exit-status', dict(state='ready'), 'Exit role: ready', '1;32'),
+                 ('entry-status', dict(state='active', xray='running'), 'Entry role: configured', '1;32'),
+                 ('entry-status', dict(state='inconsistent', reason='missing_rules', xray='running'), 'Cascade settings are incomplete', '1;31'),
+                 ('exit-status', dict(state='panel_error'), 'Could not read the panel settings', '1;31'),
+                 ('entry-status', dict(state='absent'), 'Cascade is not configured', None)]
+        for language in ('en', 'ru'):
+            for mode, value, phrase, color in cases:
+                with self.subTest(language=language, mode=mode, state=value['state']):
+                    body = 'cascade_result=$2; UI_LANG=$3; cascade_show_result "$4"'
+                    args = ['bash', '-c', 'source "$1"; '+body, 'fixture', str(ROOT/'x-ui-latest.sh'),
+                            json.dumps(value), language, mode]
+                    env = {k: v for k, v in os.environ.items() if k != 'NO_COLOR'} | {'TERM': 'xterm'}
+                    master, slave = pty.openpty()
+                    try:
+                        proc = subprocess.run(args, stdout=slave, stderr=subprocess.PIPE, env=env, timeout=10)
+                        os.close(slave); slave = -1
+                        output = b''
+                        while True:
+                            try:
+                                chunk = os.read(master, 65536)
+                            except OSError:
+                                break
+                            if not chunk: break
+                            output += chunk
+                    finally:
+                        os.close(master)
+                        if slave != -1: os.close(slave)
+                    self.assertEqual(proc.returncode, 0)
+                    if language == 'en':
+                        self.assertIn(phrase.encode(), output)
+                    if color:
+                        self.assertIn(('\x1b['+color+'m').encode(), output)
+                    else:
+                        self.assertNotIn(b'\x1b[', output)
+                    piped = subprocess.run(args, capture_output=True, env=env, timeout=10)
+                    self.assertEqual(piped.returncode, 0)
+                    self.assertNotIn(b'\x1b[', piped.stdout)
+                    master, slave = pty.openpty()
+                    try:
+                        no_color = subprocess.run(args, stdout=slave, stderr=subprocess.PIPE,
+                                                  env=env | {'NO_COLOR': '1'}, timeout=10)
+                        os.close(slave); slave = -1
+                        output = b''
+                        while True:
+                            try:
+                                chunk = os.read(master, 65536)
+                            except OSError:
+                                break
+                            if not chunk: break
+                            output += chunk
+                    finally:
+                        os.close(master)
+                        if slave != -1: os.close(slave)
+                    self.assertEqual(no_color.returncode, 0)
+                    self.assertNotIn(b'\x1b[', output)
+
     def test_created_link_is_the_only_deliberate_private_output(self):
         for language in ('ru', 'en'):
             link='vless://fixture-generated-key'
