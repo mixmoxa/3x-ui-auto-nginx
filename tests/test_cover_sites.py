@@ -19,9 +19,11 @@ def helper():
 
 class CoverResources(unittest.TestCase):
     def test_all_supplied_variants_and_local_resources(self):
-        result=subprocess.run(['python3',str(SOURCE/'tools/test_variants.py')],capture_output=True,text=True,timeout=120)
+        result=subprocess.run(['python3',str(SOURCE/'tools/test_variants.py')],capture_output=True,text=True,timeout=572)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual(result.stdout.count('144 combinations'),6)
+        self.assertEqual(result.stdout.count('432 combinations'),6)
+        content=subprocess.run(['python3',str(SOURCE/'tools/test_content.py')],capture_output=True,text=True,timeout=120)
+        self.assertEqual(content.returncode,0,content.stderr)
         tracked=subprocess.check_output(['git','-c','safe.directory='+str(ROOT),'ls-files','assets/cover-sites'],cwd=ROOT,text=True)
         self.assertNotIn('__pycache__',tracked);self.assertNotIn('.pyc',tracked)
         self.assertEqual(set(p.name for p in (SOURCE/'templates').iterdir()),{'A1','A2','A3','B1','B2','B3'})

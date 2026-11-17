@@ -42,6 +42,22 @@
       {
         "home_headline": "Good projects start with clarity.",
         "home_lede": "Keep the reasoning, practical steps and important references in view. A thoughtful workspace model helps progress make sense."
+      },
+      {
+        "home_headline": "Keep the work easy to follow.",
+        "home_lede": "Give each project a clear purpose, a visible next step and notes that explain decisions. The simplest useful workspace is one people can read."
+      },
+      {
+        "home_headline": "Turn uncertainty into a plan.",
+        "home_lede": "Find a practical shape for open questions, small tasks and changing priorities. Keep the context alongside the work instead of losing it in updates."
+      },
+      {
+        "home_headline": "A clearer path from idea to done.",
+        "home_lede": "Start with a modest scope, choose work you can check and write down why choices were made. Clarity grows through careful revisions."
+      },
+      {
+        "home_headline": "Make the next step obvious.",
+        "home_lede": "Put the work and its reasons in one readable place. A good plan gives enough context to act without making every action complicated."
       }
     ]
   },
@@ -90,6 +106,26 @@
         "home_headline": "A more considered way to build systems.",
         "home_lede": "Practical engineering starts with observation, clear boundaries and the discipline to choose changes that solve real problems.",
         "about_lede": "A technical practice focused on understanding complex systems, reducing unnecessary risk and documenting the decisions that matter."
+      },
+      {
+        "home_headline": "Engineering with clear boundaries.",
+        "home_lede": "Understand the contracts between components before making changes. Practical field notes explain how observation shapes safer technical decisions.",
+        "about_lede": "An independent technical practice exploring reliable interfaces, observable failures and decisions supported by specific evidence."
+      },
+      {
+        "home_headline": "Keep the reasoning close to the code.",
+        "home_lede": "Read operational notes on service behaviour, changes and handoffs. Each argument begins with a concrete problem rather than a fashionable framework.",
+        "about_lede": "A technical writing and engineering practice concerned with useful constraints, maintainable systems and transparent uncertainty."
+      },
+      {
+        "home_headline": "Build from what you can observe today.",
+        "home_lede": "A clear failure boundary and a small test can reveal more than a large diagram. Explore focused notes on dependable system operation.",
+        "about_lede": "An independent practice that documents boundaries, operational choices and the evidence needed to revisit them."
+      },
+      {
+        "home_headline": "Choose dependable, readable systems.",
+        "home_lede": "Work through careful explanations of release decisions, incident records and service responsibilities. The emphasis stays on observable results.",
+        "about_lede": "A small independent collection of engineering methods for inspecting systems, limiting changes and writing useful decisions."
       }
     ]
   },
@@ -136,6 +172,22 @@
       {
         "home_headline": "Keep reliability within view.",
         "home_lede": "Build useful service indicators, make alerts actionable and improve the handoff from observation to response with clear reference material."
+      },
+      {
+        "home_headline": "Read the signals with context.",
+        "home_lede": "A useful monitoring view begins with the question behind a chart. Follow practical notes on latency, dependencies and decisions during incidents."
+      },
+      {
+        "home_headline": "Make monitoring explain itself.",
+        "home_lede": "See how a service objective, a runbook and an alert fit together. Use small examples to understand the limits of operational metrics."
+      },
+      {
+        "home_headline": "Know what needs attention.",
+        "home_lede": "Connect changes in service behaviour to measurements a responder can interpret. Explore simple explanations before adding another noisy alert."
+      },
+      {
+        "home_headline": "Turn measurements into decisions.",
+        "home_lede": "Use clear definitions for availability, response time and failure signals. The notes explain where measurements help and where they mislead."
       }
     ]
   },
@@ -184,6 +236,26 @@
         "home_headline": "A practical kit for web work.",
         "home_lede": "Keep the everyday mechanics of web development understandable: a few browser utilities, accurate HTTP notes and no hidden service requirements.",
         "about_lede": "An open set of straightforward developer utilities, with explicit boundaries and reference material you can use without an account."
+      },
+      {
+        "home_headline": "Useful tools for precise work.",
+        "home_lede": "Format a JSON document, transform a URL component and check everyday HTTP behaviour without an account. Each operation stays in the browser.",
+        "about_lede": "A small reference library for common browser and HTTP tasks, with local utilities and clear explanations of their limits."
+      },
+      {
+        "home_headline": "Understand the output you see.",
+        "home_lede": "Try local formatting utilities and practical notes on request methods, caching and redirects. The tools do their work without a remote API.",
+        "about_lede": "Browser-based utilities paired with readable HTTP references that explain what the controls do and do not promise."
+      },
+      {
+        "home_headline": "Keep web mechanics readable.",
+        "home_lede": "Work through JSON, URL encoding and the meaning of web responses with small local examples. Use only the tools and reference pages you need.",
+        "about_lede": "Straightforward local developer tools and concise explanations of ordinary request and response behaviour."
+      },
+      {
+        "home_headline": "A small bench for web tasks.",
+        "home_lede": "Read exact HTTP notes and use simple browser tools for text transformations. Results are produced locally, without sending input to a server.",
+        "about_lede": "An independent set of compact utilities and reference pages for predictable everyday browser work."
       }
     ]
   },
@@ -230,6 +302,22 @@
       {
         "home_headline": "Understand what the web returns.",
         "home_lede": "A compact public reference for ordinary HTTP behaviour: methods, response codes, redirects and cache validation, explained without unnecessary machinery."
+      },
+      {
+        "home_headline": "Read the response, not the guess.",
+        "home_lede": "Follow ordinary HTTP exchanges from method and status to cache validation. Each guide uses concrete examples and explains where assumptions can fail."
+      },
+      {
+        "home_headline": "Find the meaning in each header.",
+        "home_lede": "A public reference to requests, representations, redirects and caching. Move from basic terms to examples without relying on hidden services."
+      },
+      {
+        "home_headline": "HTTP, explained from first principles.",
+        "home_lede": "Trace how a client asks for a resource and what the server returns. The reference stays close to everyday behaviour and practical checks."
+      },
+      {
+        "home_headline": "Make sense of everyday requests.",
+        "home_lede": "Understand why response codes, content types and validators matter. Short chapters link protocol definitions to checks you can repeat."
       }
     ]
   },
@@ -278,6 +366,26 @@
         "home_headline": "Made to be seen. Built to make sense.",
         "home_lede": "Explorations in graphic systems and visual communication, with open notes about how each concept develops and what remains untested.",
         "about_lede": "An independent collection of design experiments guided by clarity, readable structure and transparent limits."
+      },
+      {
+        "home_headline": "Clarity begins with better questions.",
+        "home_lede": "Self-initiated design studies explore reading order, legibility and thoughtful structure. See the assumptions and open questions behind each concept.",
+        "about_lede": "Independent visual research concerned with understandable interfaces, careful composition and honest limits."
+      },
+      {
+        "home_headline": "A studio for clear and readable ideas.",
+        "home_lede": "Explore original conceptual work in information design and visual hierarchy. Each study records its choices without pretending to be a commissioned result.",
+        "about_lede": "A collection of original design experiments in visual systems, useful information and considered restraint."
+      },
+      {
+        "home_headline": "See the thinking behind each form.",
+        "home_lede": "The studies document decisions about spacing, movement and navigation, including what still needs testing before any real-world deployment.",
+        "about_lede": "An independent studio practice for exploring clear visual language and how people read unfamiliar layouts."
+      },
+      {
+        "home_headline": "Make information easier to find.",
+        "home_lede": "From type systems to speculative wayfinding, these concepts examine the details that help readers understand an unfamiliar page or place.",
+        "about_lede": "Self-directed experiments in layout, wayfinding and content hierarchy, published with explicit boundaries."
       }
     ]
   }
