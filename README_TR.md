@@ -15,22 +15,22 @@
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Support](https://img.shields.io/badge/Support-Donate-EA4AAA)](docs/SUPPORT_TR.md)
 
-[📦 Sürümler](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ Destek](#support-development) · [🐛 Sorun bildir](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 İletişim](https://t.me/promsdev)
+[📦 Sürümler](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [🔗 Kaskad](#cascade) · [🌐 Kamuflaj siteleri](#cover-sites) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ Destek](#support-development) · [💬 İletişim](https://t.me/promsdev)
 
 </div>
 
-**3X-UI AUTO NGINX**, kendi VPS sunucunuzda [3x-ui](https://github.com/MHSanaei/3x-ui) ve Xray kurmak için ücretsiz bir yükleyicidir. Nginx, HTTPS sertifikaları, REALITY, XHTTP, Hysteria2, abonelikler ve tanılama araçlarını yapılandırır. Etkileşimli yöneticiyle sunucu kurulumu, alan adı değişikliği ve Backup/Restore v3 işlemlerini gerçekleştirebilirsiniz. XTLS Vision, AmneziaWG 3.1, Rus siteleri için Cloudflare WARP ve DNS-over-HTTPS (DoH) destekli AdGuard Home isteğe bağlıdır.
+**3X-UI AUTO NGINX**, kendi VPS sunucunuzda [3x-ui](https://github.com/MHSanaei/3x-ui) ve Xray kurmak için ücretsiz bir yükleyicidir. Nginx, HTTPS sertifikaları, REALITY, XHTTP, Hysteria2, abonelikler ve tanılama araçlarını yapılandırır. Etkileşimli yöneticiyle sunucu kurulumunu, alan adı değişikliklerini, Backup/Restore v3 işlemlerini ve iki VPS arasında Kaskad bağlantısını yönetebilirsiniz. XTLS Vision, AmneziaWG 3.1, Rus siteleri için Cloudflare WARP ve DNS-over-HTTPS (DoH) destekli AdGuard Home isteğe bağlıdır.
 
-**Standart bir 3x-ui kurulumundan fazlası:** yeni kurulumlarda panel ve REALITY için birbirinden farklı, kişiselleştirilmiş çok sayfalı web siteleri oluşturulur. REALITY alan adında TCP üzerinden normal HTTPS istekleri ve UDP üzerinden kimlik doğrulaması yapılmamış HTTP/3 istekleri aynı web sitesini gösterir. Tüm bunlar mevcut Nginx ve Xray ile çalışır; Docker veya ek web sunucusu gerekmez.
+**Standart bir 3x-ui kurulumundan fazlası:** yeni sunucular, panel ve REALITY için kendilerine özel çok sayfalı siteler alır. En az 2592 hazır tasarım ve metin kombinasyonu bulunur; her kurulumda renkler, simgeler ve tarihler de değişir. Sitelerde çalışan gezinme bağlantıları ve ek sayfalar vardır. REALITY alan adında TCP üzerinden normal HTTPS istekleri ve UDP üzerinden kimlik doğrulaması yapılmamış HTTP/3 istekleri aynı web sitesini gösterir. Tüm bunlar mevcut Nginx ve Xray ile çalışır; Docker veya ek web sunucusu gerekmez.
 
 ## ✨ Neden bu proje?
 
 | | |
 | --- | --- |
-| **Kullanıma hazır bağlantılar**<br>REALITY, XHTTP ve Hysteria2 kurulumda etkinleştirilir; ek taşıma yöntemleri isteğe bağlıdır. | **Eksiksiz kamuflaj siteleri**<br>Altı çok sayfalı şablon, çok sayıda tasarım seçeneği sunar. Her kurulumda adlar, renkler, metinler ve görseller değiştirilerek her VPS için kişiselleştirilmiş bir site oluşturulur. |
-| **Hysteria2 için HTTP/3 kamuflajı**<br>REALITY alan adında TCP üzerinden normal HTTPS ve UDP üzerinden kimliği doğrulanmamış HTTP/3 istekleri aynı siteyi gösterir. | **Yalıtılmış dahili arayüzler**<br>Panel ve abonelikler Nginx ve HTTPS üzerinden çalışır; dahili portları doğrudan internete açılmaz. |
-| **Backup / Restore v3**<br>Verileri ve kişiselleştirilmiş siteleri koruyarak yedekleme, kurtarma ve başka bir VPS'e taşıma. | **Yönetici ve alan adı değişikliği**<br>Rusça ve İngilizce menü; panelin, REALITY'nin veya her ikisinin alan adını yeniden kurmadan değiştirin. |
-| **Otomatik sertifikalar ve güvenlik**<br>Let's Encrypt sertifikaları otomatik yenilenir; SSH koruması ve güvenlik güncellemeleri isteğe bağlıdır. | **Ek özellikler**<br>XTLS Vision, AmneziaWG 3.1, CDN için XHTTP, Cloudflare WARP ve DoH destekli AdGuard Home. |
+| **Kullanıma hazır bağlantılar**<br>REALITY, XHTTP ve Hysteria2 otomatik yapılandırılır. Kurulumda seçilen XTLS Vision, AmneziaWG ve CDN için XHTTP bağlantıları da otomatik ayarlanır. | **Eksiksiz kamuflaj siteleri**<br>En az 2592 hazır tasarım ve metin kombinasyonu. Çalışan gezinme bağlantıları, özgün metinler ve görseller içeren çok sayfalı siteler; Hysteria2 için HTTP/3 kamuflajı. |
+| **İki VPS ile Kaskad**<br>İki sunucuyu menü üzerinden birbirine bağlayın. Rus siteleri ve IP adresleri giriş sunucusundan doğrudan açılır; diğer trafik çıkış sunucusundan geçer. | **Kendi Nginx ve HTTPS altyapınız**<br>Gelen TCP bağlantılarını VPS'inizdeki Nginx karşılar. Panel ve aboneliklere kendi alan adınız üzerinden HTTPS ile erişilir; dahili portlar internete doğrudan açılmaz. |
+| **Backup / Restore v3**<br>Verileri ve kişiselleştirilmiş siteleri koruyarak yedekleme, kurtarma ve başka bir VPS'e taşıma. | **Yönetici ve alan adı değişikliği**<br>3X-UI veya diğer hizmetleri yeniden kurmadan panelin, REALITY'nin veya ikisinin alan adını değiştirin. |
+| **Otomatik sertifikalar ve güvenlik**<br>Let's Encrypt sertifikaları Nginx durdurulmadan otomatik yenilenir; SSH koruması ve otomatik VPS güvenlik güncellemeleri isteğe bağlıdır. | **Ek özellikler**<br>XTLS Vision, AmneziaWG 3.1, CDN için XHTTP, Cloudflare WARP, DoH destekli AdGuard Home ve Kaskad kurulumu. |
 
 <a id="installation"></a>
 
@@ -48,6 +48,7 @@ Betiği çalıştırdıktan sonra **1 — English** veya **2 — Русский*
 - **2 — Change Domains:** panel alan adını, REALITY alan adını veya ikisini yeniden kurmadan değiştirme.
 - **3 — Backups:** yedek oluşturma, listeleme ve geri yükleme.
 - **4 — Telegram Web Proxy Manager:** bağımsız Telegram proxy yöneticisini başlatma veya kurma.
+- **5 — Cascade:** iki sunucuyu bağlama, durumu denetleme veya bağlantıyı kesme.
 - **0 — Exit:** çıkış.
 
 Menü, etkileşimli bir SSH terminali gerektirir.
@@ -78,7 +79,7 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 <summary><strong>Nasıl güncellenir?</strong></summary>
 
 - **3X-UI ve Xray:** panelin kendi güncelleme araçlarını kullanın. Yeni sürümlerin bu projenin yapılandırmasıyla uyumluluğu henüz doğrulanmamış olabilir.
-- **3X-UI AUTO NGINX:** mevcut kurulumun yerinde güncellenmesi desteklenmez. Yeni yöneticinin özelliklerini kullanmak için güncel betiği indirip istediğiniz işlemi seçebilirsiniz; yönetici kurulu yapılandırmanın uyumluluğunu kontrol eder.
+- **3X-UI AUTO NGINX:** mevcut kurulu sistemin yerinde güncellenmesi desteklenmez. **5 — Cascade** gibi yeni yönetici özelliklerini kullanmak için güncel betiği indirip ilgili işlemi seçin. Yönetici, mevcut yapılandırmanın uyumluluğunu kontrol eder.
 - **Backup / Restore:** verileri yedekler ve geri yükler; kurulu sistemi güncellemez.
 
 **Yalnızca güncelleme amacıyla Installation seçmeyin!** nginx, Linux çekirdeği ve diğer sistem paketlerini işletim sisteminizin araçlarıyla güncelleyin.
@@ -211,6 +212,8 @@ CDN kullanmak için sağlayıcınızı kendiniz yapılandırmalı ve 3X-UI için
 
 *İsteğe bağlı yönlendirme · Rusça menüde varsayılan olarak açık (`Y`), İngilizce menüde kapalı (`N`)*
 
+Bu VPS'i Kaskad giriş sunucusu olarak kullanacaksanız `N` seçin. WARP giriş sunucusuyla uyumlu değildir, ancak çıkış sunucusunda kullanılabilir.
+
 `Y` seçildiğinde kurulum aracı Cloudflare WARP (MASQUE) yapılandırır. Böylece Rus web siteleri ve bazı ağ hizmetleri VPS'inizin IP adresi yerine Cloudflare'a ait bir IP adresi görür. Bu, VPS IP adresinizi korumak için gereklidir.
 
 Bu ayar yalnızca VPS üzerinden geçen trafiği etkiler. Bir uygulama siteye doğrudan bağlanıyorsa sunucudaki WARP bu bağlantıyı etkilemez.
@@ -303,11 +306,13 @@ Kurulum sonunda **panel adresi, kullanıcı adı ve parola, tanılama adresi ve 
 
 İşletim sistemi güncellemesi yeniden başlatma gerektiriyorsa kurulum aracı bunu bildirir. **İlk yeniden başlatma elle yapılır:** `sudo reboot`.
 
+<a id="cover-sites"></a>
+
 ## 🌐 Kamuflaj siteleri ve HTTP/3
 
-**Basit yer tutucu sayfalar yerine gerçek web siteleri.** Yeni kurulumlarda panel ve REALITY için otomatik olarak farklı, çok sayfalı siteler oluşturulur. Çalışan gezinme bağlantıları, görseller ve mobil uyumlu tasarımlar içeren altı modern şablon bulunur. İsteğe bağlı XTLS Vision için ayrı bir site seçilir.
+**Basit yer tutucu sayfalar yerine gerçek web siteleri.** Yeni kurulumlarda panel ve REALITY için otomatik olarak farklı, çok sayfalı siteler oluşturulur. Çalışan gezinme bağlantıları, görseller ve mobil uyumlu tasarımlarla birlikte en az 2592 hazır tasarım ve metin kombinasyonu bulunur. İsteğe bağlı XTLS Vision için ayrı bir site seçilir.
 
-**Her kurulumun görünümü farklıdır.** Site adı, renk paleti, görseller ve metinler otomatik olarak kişiselleştirilir. Seçilen tasarım Backup/Restore ve alan adı değişiklikleri sırasında korunur.
+**Her kurulumun görünümü farklıdır.** Site adları, renkler, görseller, simgeler ve metinler otomatik olarak kişiselleştirilir. Ek sayfalarda farklı içerikler ve yayın tarihleri bulunur. Seçilen tasarım Backup/Restore ve alan adı değişiklikleri sırasında korunur.
 
 **HTTP/3 kamuflajlı Hysteria2.** REALITY alan adında TCP üzerinden normal HTTPS ve UDP üzerinden kimlik doğrulaması yapılmamış HTTP/3 istekleri aynı eksiksiz web sitesini görüntüler. Panel ve abonelikler, halka açık HTTP/3 kamuflajından ayrı tutulur.
 
@@ -369,6 +374,95 @@ Arşivler `/var/backups/x-ui/` dizinine kaydedilir.
 > **Yedekler hassas bilgiler içerir:** istemci veritabanı, parolalar ve sertifika özel anahtarları. Bir kopyayı mutlaka **VPS dışında** saklayın ve yalnızca güvendiğiniz arşivleri geri yükleyin.
 
 [Yeni bir VPS'e geri yükleme](#restore-on-new-vps).
+
+<a id="cascade"></a>
+
+## 🔗 İki sunuculu Kaskad
+
+Kaskad, 3X-UI AUTO NGINX kurulu iki VPS'i birbirine bağlar: cihazlar giriş sunucusuna bağlanır ve internete çıkış sunucusu üzerinden erişir. Bir VPS'e bağlanmakta sorun yaşıyorsanız veya başka bir ülkedeki sunucu üzerinden internete çıkmanız gerekiyorsa yararlı olabilir.
+
+**Cihaz → Giriş VPS → Çıkış VPS → İnternet**
+
+Rus siteleri ve Rus IP adreslerine giriş sunucusundan doğrudan erişilir. Kurulumdan sonra giriş VPS'inin yönlendirme kurallarından bu davranışı kapatabilirsiniz. Önceki yönlendirme kurallarının eşleşmediği diğer trafik çıkış sunucusundan geçer.
+
+Kurulum için ana menüden **5 — Cascade** seçin. Yapılandırma dosyalarını elle düzenlemeniz gerekmez.
+
+<details>
+<summary><strong>Kaskad kurulumu, durum kontrolü ve bağlantıyı kesme</strong></summary>
+
+### Gerekenler
+
+- 3X-UI AUTO NGINX çalışan iki VPS.
+- Her sunucunun 3X-UI panel kullanıcı adı ve parolası.
+- Menüde **5 — Cascade** bulunan güncel kurulum betiği.
+- Giriş sunucusunda WARP kurulu olmamalıdır (elle kaldırabilirsiniz).
+
+### 1. Çıkış sunucusunda anahtar oluşturma
+
+İnternete çıkış için kullanacağınız VPS'te güncel kurulum betiğini çalıştırın.
+
+**5 — Cascade → 1 — Create key (exit server)** seçin.
+
+3X-UI panel kullanıcı adı ve parolasını girin. Giriş sırasında karakterler gizlenir ve bilgiler kaydedilmez. Yönetici, mevcut REALITY bağlantısında `cascade` adlı bir istemci oluşturur ve `vless://` ile başlayan bir anahtar bağlantısı gösterir.
+
+Bağlantıyı kopyalayın. İkinci sunucuda kullanacaksınız.
+
+**Anahtar bağlantısını paylaşmayın:** bu bağlantıya sahip olanlar istemciyi kullanarak bağlanabilir.
+
+Mevcut istemciler değişmez.
+
+### 2. Giriş sunucusunu bağlama
+
+Cihazlarınızın bağlandığı VPS'te güncel kurulum betiğini çalıştırın.
+
+**5 — Cascade → 2 — Connect exit server (entry server)** seçin.
+
+3X-UI panel kullanıcı adı ve parolasını girin (kaydedilmezler), ardından ilk adımdaki anahtar bağlantısını yapıştırın. Yapıştırdığınız bağlantı terminalde görünür ancak kaydedilmez.
+
+Yönetici önce çıkış sunucusuyla bağlantıyı test eder. Başarılı olursa `cascade-exit` adlı giden bağlantıyı ve üç `CASCADE` yönlendirme kuralını ekler.
+
+Rus siteleri ve IP adresleri, ilgili kuralları daha sonra kapatmadığınız sürece giriş sunucusundan doğrudan açılır. Diğer uygun trafik çıkış sunucusundan geçer.
+
+**Ayarlar uygulanırken tüm kullanıcıların bağlantısı birkaç saniyeliğine kesilebilir.** Denetim başarısız olursa yönetici önceki yapılandırmayı geri yüklemeyi dener ve sonucu bildirir.
+
+Mevcut istemci bağlantıları ve abonelikler kullanılmaya devam eder. Kaskad için ayrı istemci profili oluşturmanız gerekmez.
+
+### 3. Durumu kontrol etme
+
+Her VPS'te **5 — Cascade → 3 — Status** bölümünü açın.
+
+Yönetici diğer işlemlerde olduğu gibi panel kullanıcı adını ve parolasını sorar.
+
+Sunucudaki giriş ve çıkış rollerinin yapılandırılıp yapılandırılmadığını ve Xray'in çalışıp çalışmadığını gösterir. Bu işlem ayarları değiştirmez.
+
+### 4. Kaskad bağlantısını kesme
+
+İlgili VPS'te **5 — Cascade → 4 — Disable** bölümünü açın.
+
+**Giriş sunucusunda** yönetici `cascade-exit` bağlantısını ve üç `CASCADE` kuralını kaldırmayı önerir. Diğer bağlantılar ve panel kuralları korunur.
+
+**Çıkış sunucusunda** yalnızca `cascade` istemcisi silinir. Bu anahtarı kullanan giriş sunucuları artık ilgili çıkış üzerinden trafik gönderemez.
+
+Her rolün kaldırılması ayrı onay gerektirir. Giriş sunucusundaki değişiklikler kullanıcı bağlantılarını kısa süreliğine kesebilir.
+
+### Bilinmesi gerekenler
+
+- **WARP:** giriş sunucusuyla uyumlu değildir. Yapılandırılmışsa bağlamadan önce 3X-UI panelinden giden bağlantısını ve kurallarını kaldırın. Çıkış sunucusunda kullanılabilir.
+- **AmneziaWG:** bu bağlantılar çıkış sunucusundan geçmez.
+- **Yönlendirme kuralları:** daha önce tanımlanan kurallar trafiğin bir kısmını başka yollara yönlendirebilir. Yönetici bağlanmadan önce uyarır.
+- **Çıkışa ulaşılamazsa:** bu çıkışa yönlendirilen trafik bağlantı geri gelene kadar çalışmaz. Otomatik yedek çıkış yoktur.
+- **Vision üzerinden QUIC:** UDP/443 bu Kaskad üzerinden geçmez.
+- **Alan adı değişikliği:** çıkış VPS'inin alan adlarını değiştirirseniz giriş sunucusundan yeniden bağlamanız gerekir.
+
+### Yedeklemeler
+
+Backup v3, Kaskad ayarlarını kaydeder. Giriş sunucusunda yedek geri yüklendiğinde Kaskad yapılandırması diğer 3X-UI verileriyle birlikte korunur.
+
+Kaskad, REALITY, XHTTP ve Hysteria2 ile iki gerçek VPS üzerinde test edilmiştir. Tüm istemci uygulamaları ve yapılandırmalarla uyumluluğu doğrulanmamıştır.
+
+Hata bulursanız [GitHub'da bildirin](https://github.com/xPROMSx/3x-ui-auto-nginx/issues).
+
+</details>
 
 ## 🔐 Güvenlik
 

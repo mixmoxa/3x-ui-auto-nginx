@@ -15,22 +15,22 @@ Dos dominios, un VPS limpio y unos minutos para completar la instalación.
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Support](https://img.shields.io/badge/Support-Donate-EA4AAA)](docs/SUPPORT_ES.md)
 
-[📦 Versiones](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ Apoyar](#support-development) · [🐛 Informar de un problema](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 Contacto](https://t.me/promsdev)
+[📦 Versiones](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [🔗 Cascada](#cascade) · [🌐 Sitios de camuflaje](#cover-sites) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ Apoyar](#support-development) · [💬 Contacto](https://t.me/promsdev)
 
 </div>
 
-**3X-UI AUTO NGINX** es un instalador gratuito de [3x-ui](https://github.com/MHSanaei/3x-ui) y Xray para tu propio VPS. Configura Nginx, certificados HTTPS, REALITY, XHTTP, Hysteria2, suscripciones y herramientas de diagnóstico. Su gestor interactivo permite instalar el servidor, cambiar dominios y administrar Backup/Restore v3. Entre las funciones opcionales están XTLS Vision, AmneziaWG 3.1, Cloudflare WARP para sitios rusos y AdGuard Home con DNS-over-HTTPS (DoH).
+**3X-UI AUTO NGINX** es un instalador gratuito de [3x-ui](https://github.com/MHSanaei/3x-ui) y Xray para tu propio VPS. Configura Nginx, certificados HTTPS, REALITY, XHTTP, Hysteria2, suscripciones y herramientas de diagnóstico. Su gestor interactivo permite instalar el servidor, cambiar dominios, administrar Backup/Restore v3 y configurar una cascada entre dos VPS. Entre las funciones opcionales están XTLS Vision, AmneziaWG 3.1, Cloudflare WARP para sitios rusos y AdGuard Home con DNS-over-HTTPS (DoH).
 
-**Más que una instalación estándar de 3x-ui:** cada instalación nueva recibe sitios web multipágina distintos y personalizados para el panel y REALITY. En el dominio de REALITY, las solicitudes HTTPS habituales por TCP y las solicitudes HTTP/3 no autenticadas por UDP muestran el mismo sitio. Todo funciona con Nginx y Xray, sin Docker ni servidores web adicionales.
+**Más que una instalación estándar de 3x-ui:** cada servidor nuevo recibe sitios web multipágina propios para el panel y REALITY. Hay al menos 2592 combinaciones preparadas de diseño y textos, y en cada instalación también cambian los colores, los iconos y las fechas. Los sitios tienen navegación funcional y páginas adicionales. En el dominio de REALITY, las solicitudes HTTPS habituales por TCP y las solicitudes HTTP/3 no autenticadas por UDP muestran el mismo sitio. Todo funciona con Nginx y Xray, sin Docker ni servidores web adicionales.
 
 ## ✨ ¿Por qué elegir este proyecto?
 
 | | |
 | --- | --- |
-| **Conexiones listas para usar**<br>REALITY, XHTTP y Hysteria2 quedan activados al instalar; hay transportes adicionales opcionales. | **Sitios de camuflaje completos**<br>Seis plantillas multipágina con muchas variantes de diseño: en cada instalación cambian los nombres, colores, textos e imágenes. Cada VPS recibe su propio sitio personalizado. |
-| **Camuflaje HTTP/3 de Hysteria2**<br>Las solicitudes HTTPS normales por TCP y las HTTP/3 no autenticadas por UDP muestran el mismo sitio en el dominio REALITY. | **Interfaces internas aisladas**<br>El panel y las suscripciones utilizan Nginx y HTTPS; sus puertos internos no se exponen directamente a internet. |
-| **Backup / Restore v3**<br>Copias de seguridad, recuperación y migración a otro VPS conservando los datos y los sitios personalizados. | **Gestor y cambio de dominios**<br>Menú en ruso e inglés; cambia el dominio del panel, el de REALITY o ambos sin reinstalar. |
-| **Certificados y seguridad automáticos**<br>Let's Encrypt con renovación automática; protección SSH y actualizaciones de seguridad opcionales. | **Funciones adicionales**<br>XTLS Vision, AmneziaWG 3.1, XHTTP para CDN, Cloudflare WARP y AdGuard Home con DoH. |
+| **Conexiones listas para usar**<br>REALITY, XHTTP y Hysteria2 se configuran automáticamente. XTLS Vision, AmneziaWG y XHTTP para CDN también se configuran automáticamente si los eliges al instalar. | **Sitios de camuflaje completos**<br>Al menos 2592 combinaciones preparadas de diseño y textos. Sitios multipágina con navegación funcional, textos e imágenes propios y camuflaje HTTP/3 de Hysteria2. |
+| **Cascada entre dos VPS**<br>Conecta dos servidores desde el menú. Los sitios y las IP de Rusia se abren directamente desde el servidor de entrada; el resto del tráfico pasa por el de salida. | **Nginx y HTTPS propios**<br>Nginx en tu VPS recibe las conexiones TCP entrantes. El panel y las suscripciones usan HTTPS en tu dominio, sin exponer directamente los puertos internos a internet. |
+| **Backup / Restore v3**<br>Copias de seguridad, recuperación y migración a otro VPS conservando los datos y los sitios personalizados. | **Gestor y cambio de dominios**<br>Cambia el dominio del panel, el de REALITY o ambos sin reinstalar 3X-UI ni otros servicios. |
+| **Certificados y seguridad automáticos**<br>Certificados Let's Encrypt con renovación automática sin detener Nginx; protección SSH y actualizaciones de seguridad del VPS opcionales. | **Funciones adicionales**<br>XTLS Vision, AmneziaWG 3.1, XHTTP para CDN, Cloudflare WARP, AdGuard Home con DoH y configuración de cascada. |
 
 <a id="installation"></a>
 
@@ -48,6 +48,7 @@ Al ejecutar el script, elige **1 — English** o **2 — Русский**. Despu
 - **2 — Change Domains:** cambiar el dominio del panel, de REALITY o ambos sin reinstalar.
 - **3 — Backups:** crear, consultar y restaurar copias de seguridad.
 - **4 — Telegram Web Proxy Manager:** abrir o instalar el gestor independiente del proxy de Telegram.
+- **5 — Cascade:** conectar dos servidores, consultar el estado o desconectarlos.
 - **0 — Exit:** salir.
 
 El menú requiere una sesión SSH con terminal interactiva.
@@ -78,7 +79,7 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 <summary><strong>¿Cómo se actualiza?</strong></summary>
 
 - **3X-UI y Xray:** utiliza las herramientas de actualización del panel. Es posible que las nuevas versiones aún no se hayan probado con la configuración del proyecto.
-- **3X-UI AUTO NGINX:** no se admite actualizar los componentes instalados sin reinstalarlos. Para usar funciones del gestor más reciente, descarga el script actual y elige la operación necesaria; el gestor comprobará si la instalación es compatible.
+- **3X-UI AUTO NGINX:** no se admite actualizar los componentes instalados sin reinstalarlos. Para usar las funciones nuevas del gestor, como **5 — Cascade**, descarga el script actual y selecciona la operación. El gestor comprobará si la instalación es compatible.
 - **Backup / Restore:** guarda y restaura los datos, pero no actualiza los componentes.
 
 **¡No selecciones Installation solo para actualizar!** Actualiza nginx, el kernel de Linux y otros paquetes con las herramientas del sistema operativo.
@@ -211,6 +212,8 @@ Para utilizar una CDN, debes configurar tu proveedor y ajustar los parámetros d
 
 *Enrutamiento opcional · Activado por defecto en el menú ruso (`Y`) y desactivado en el inglés (`N`)*
 
+Si vas a usar este VPS como servidor de entrada de una cascada, elige `N`. WARP no es compatible con el servidor de entrada, pero sí puede usarse en el de salida.
+
 Al elegir `Y`, el instalador configura Cloudflare WARP (MASQUE) para que los sitios web rusos y determinados servicios de red vean una dirección IP de Cloudflare en lugar de la IP de tu VPS. Esto es necesario para proteger la IP de tu VPS.
 
 Esta configuración solo afecta al tráfico que pasa por el VPS. Si una aplicación se conecta directamente a un sitio, WARP en el servidor no interviene.
@@ -303,11 +306,13 @@ Al terminar se mostrarán **la URL del panel, el usuario y la contraseña, la UR
 
 Si una actualización del sistema operativo requiere reiniciar, el instalador lo indicará. **El primer reinicio es manual**: ejecuta `sudo reboot`.
 
+<a id="cover-sites"></a>
+
 ## 🌐 Sitios de camuflaje y HTTP/3
 
-**Sitios web completos en lugar de páginas de relleno.** Cada instalación nueva crea automáticamente sitios multipágina distintos para el panel y REALITY. Hay seis plantillas modernas con navegación funcional, ilustraciones y diseño adaptable a móviles. XTLS Vision, si se activa, recibe su propio sitio.
+**Sitios web completos en lugar de páginas de relleno.** Cada instalación nueva crea automáticamente sitios multipágina distintos para el panel y REALITY. Hay al menos 2592 combinaciones preparadas de diseño y textos, con navegación funcional, ilustraciones y diseño adaptable a móviles. XTLS Vision, si se activa, recibe su propio sitio.
 
-**Cada instalación tiene su propia apariencia.** El nombre, la paleta de colores, las imágenes y los textos se personalizan automáticamente. El diseño elegido se conserva al realizar Backup/Restore y al cambiar dominios.
+**Cada instalación tiene su propia apariencia.** Los nombres, colores, imágenes, iconos y textos se personalizan automáticamente. Las páginas adicionales contienen distintos artículos y fechas de publicación. El diseño elegido se conserva al realizar Backup/Restore y al cambiar dominios.
 
 **Hysteria2 con camuflaje HTTP/3.** Las solicitudes HTTPS normales por TCP y las solicitudes HTTP/3 no autenticadas por UDP en el dominio de REALITY muestran el mismo sitio completo. El panel y las suscripciones permanecen aislados del camuflaje HTTP/3 público.
 
@@ -369,6 +374,95 @@ Los archivos se guardan en `/var/backups/x-ui/`.
 > **Las copias contienen información sensible:** base de datos de clientes, contraseñas y claves privadas de certificados. Conserva una copia **fuera del VPS** y restaura únicamente archivos de confianza.
 
 [Restauración en un VPS nuevo](#restore-on-new-vps).
+
+<a id="cascade"></a>
+
+## 🔗 Cascada entre dos servidores
+
+La cascada conecta dos VPS con 3X-UI AUTO NGINX: tus dispositivos se conectan al servidor de entrada y acceden a internet a través del servidor de salida. Puede ser útil si tienes problemas para conectarte a un VPS o necesitas salir a internet a través de un servidor en otro país.
+
+**Dispositivo → VPS de entrada → VPS de salida → Internet**
+
+Los sitios web rusos y las direcciones IP rusas se abren directamente desde el servidor de entrada. Después de configurar la cascada, puedes desactivar este comportamiento en las reglas de enrutamiento del VPS de entrada. El tráfico que no coincida con reglas anteriores pasa por el servidor de salida.
+
+La configuración se realiza desde **5 — Cascade** en el menú principal, sin editar archivos manualmente.
+
+<details>
+<summary><strong>Cómo configurar la cascada, comprobar el estado y desconectarla</strong></summary>
+
+### Qué necesitas
+
+- Dos VPS con instalaciones operativas de 3X-UI AUTO NGINX.
+- El usuario y la contraseña del panel 3X-UI de cada servidor.
+- El instalador actual con la opción **5 — Cascade**.
+- No debe haber WARP configurado en el servidor de entrada (puedes quitarlo manualmente).
+
+### 1. Crear la clave en el servidor de salida
+
+Ejecuta el instalador actual en el VPS que usarás para acceder a internet.
+
+Selecciona **5 — Cascade → 1 — Create key (exit server)**.
+
+Introduce el usuario y la contraseña del panel 3X-UI. Se escriben de forma oculta y no se guardan. El gestor crea un cliente llamado `cascade` en la conexión REALITY existente y muestra un enlace de clave que empieza por `vless://`.
+
+Copia ese enlace. Lo necesitarás en el segundo servidor.
+
+**No publiques el enlace de clave:** permite conectarse con ese cliente.
+
+Los clientes existentes no se modifican.
+
+### 2. Conectar el servidor de entrada
+
+Ejecuta el instalador actual en el VPS al que se conectan tus dispositivos.
+
+Selecciona **5 — Cascade → 2 — Connect exit server (entry server)**.
+
+Introduce el usuario y la contraseña del panel 3X-UI (tampoco se guardan) y pega el enlace de la primera etapa. Al pegarlo, el enlace se ve en la terminal, pero no se guarda.
+
+El gestor prueba primero la conexión con el servidor de salida. Si funciona, añade una conexión de salida `cascade-exit` y tres reglas de enrutamiento `CASCADE`.
+
+Los sitios y las IP de Rusia se abren directamente desde el servidor de entrada, salvo que desactives esas reglas después. El resto del tráfico correspondiente pasa por el servidor de salida.
+
+**Al aplicar los cambios, las conexiones de todos los usuarios pueden interrumpirse unos segundos.** Si una comprobación falla, el gestor intenta recuperar la configuración anterior e informa del resultado.
+
+Los clientes y las suscripciones existentes siguen utilizándose. No hace falta crear perfiles exclusivos para la cascada.
+
+### 3. Comprobar el estado
+
+En cada VPS, abre **5 — Cascade → 3 — Status**.
+
+El gestor pedirá el usuario y la contraseña del panel, como en las demás operaciones.
+
+Mostrará si están configurados los roles de entrada y salida en ese servidor y si Xray está funcionando. La comprobación no cambia ajustes.
+
+### 4. Desconectar la cascada
+
+En el VPS correspondiente, abre **5 — Cascade → 4 — Disable**.
+
+**En el servidor de entrada**, el gestor propone eliminar `cascade-exit` y las tres reglas `CASCADE`. Las demás conexiones y reglas del panel se conservan.
+
+**En el servidor de salida**, solo se elimina el cliente `cascade`. Los servidores de entrada que usan su clave ya no podrán enviar tráfico por esa salida.
+
+Cada eliminación requiere una confirmación independiente. Al aplicar los cambios en el servidor de entrada, las conexiones pueden interrumpirse brevemente.
+
+### Qué debes saber
+
+- **WARP:** no es compatible con el servidor de entrada. Si está configurado, elimina su conexión de salida y sus reglas desde el panel 3X-UI antes de conectar. En el servidor de salida sí se permite.
+- **AmneziaWG:** estas conexiones no pasan por el servidor de salida.
+- **Reglas de enrutamiento:** las reglas anteriores pueden enviar parte del tráfico por otra ruta. El gestor te avisará antes de conectar.
+- **Salida no disponible:** el tráfico encaminado por ella dejará de funcionar hasta que vuelva la conexión. No existe una salida de reserva automática.
+- **QUIC por Vision:** UDP/443 no pasa por esta cascada.
+- **Cambio de dominios:** si cambias los dominios del VPS de salida, deberás volver a conectarlo desde el de entrada.
+
+### Copias de seguridad
+
+Backup v3 guarda la configuración de la cascada. Al restaurar una copia en el servidor de entrada, se conservan sus ajustes junto con los demás datos de 3X-UI.
+
+La cascada se ha probado en dos VPS reales con REALITY, XHTTP y Hysteria2. No se ha confirmado su compatibilidad con todas las aplicaciones cliente y configuraciones.
+
+Si encuentras un error, [infórmalo en GitHub](https://github.com/xPROMSx/3x-ui-auto-nginx/issues).
+
+</details>
 
 ## 🔐 Seguridad
 

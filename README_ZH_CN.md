@@ -15,22 +15,22 @@
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Support](https://img.shields.io/badge/Support-Donate-EA4AAA)](docs/SUPPORT_ZH_CN.md)
 
-[📦 发布版本](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ 支持开发](#support-development) · [🐛 报告问题](https://github.com/xPROMSx/3x-ui-auto-nginx/issues) · [💬 交流反馈](https://t.me/promsdev)
+[📦 发布版本](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [🔗 级联](#cascade) · [🌐 伪装网站](#cover-sites) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ 支持开发](#support-development) · [💬 交流反馈](https://t.me/promsdev)
 
 </div>
 
-**3X-UI AUTO NGINX** 是一款免费安装工具，可在自己的 VPS 上自动部署 [3x-ui](https://github.com/MHSanaei/3x-ui) 和 Xray。它负责配置 Nginx、HTTPS 证书、REALITY、XHTTP、Hysteria2、订阅和诊断功能。通过交互式管理菜单，你可以安装服务器、更换域名，以及管理 Backup/Restore v3。XTLS Vision、AmneziaWG 3.1、用于俄罗斯网站的 Cloudflare WARP，以及支持 DNS-over-HTTPS（DoH）的 AdGuard Home 均为可选功能。
+**3X-UI AUTO NGINX** 是一款免费安装工具，可在自己的 VPS 上自动部署 [3x-ui](https://github.com/MHSanaei/3x-ui) 和 Xray。它负责配置 Nginx、HTTPS 证书、REALITY、XHTTP、Hysteria2、订阅和诊断功能。通过交互式管理菜单，你可以安装服务器、更换域名、管理 Backup/Restore v3，以及配置两台 VPS 之间的级联。XTLS Vision、AmneziaWG 3.1、用于俄罗斯网站的 Cloudflare WARP，以及支持 DNS-over-HTTPS（DoH）的 AdGuard Home 均为可选功能。
 
-**不只是常规的 3x-ui 安装：**全新部署会为面板和 REALITY 分别生成独立、个性化的多页面网站。在 REALITY 域名上，普通的 TCP HTTPS 请求和未经认证的 UDP HTTP/3 请求会显示同一个网站。所有功能均利用现有的 Nginx 和 Xray，无须 Docker 或额外的 Web 服务器。
+**不只是常规的 3x-ui 安装：**全新部署会为面板和 REALITY 分别生成专属的多页面网站。项目提供至少 2592 种现成的设计与文案组合，每次安装还会调整颜色、图标和日期。网站包含可用的导航和附加页面。在 REALITY 域名上，普通的 TCP HTTPS 请求和未经认证的 UDP HTTP/3 请求会显示同一个网站。所有功能均利用现有的 Nginx 和 Xray，无须 Docker 或额外的 Web 服务器。
 
 ## ✨ 为什么选择这个项目？
 
 | | |
 | --- | --- |
-| **开箱即用的连接**<br>安装时默认启用 REALITY、XHTTP 和 Hysteria2；还可按需选择其他传输方式。 | **完整的伪装网站**<br>六套多页面模板可生成丰富多样的设计。每次安装都会重新组合网站名称、配色、文案和图片，让每台 VPS 都拥有个性化的网站。 |
-| **Hysteria2 HTTP/3 伪装**<br>REALITY 域名下，普通 TCP HTTPS 请求与未经认证的 UDP HTTP/3 请求显示同一网站。 | **内部管理接口隔离**<br>面板和订阅通过 Nginx 和 HTTPS 提供，内部端口不会直接暴露到互联网。 |
-| **Backup / Restore v3**<br>支持备份、恢复及迁移到其他 VPS，并保留用户数据与个性化网站。 | **管理菜单与域名更换**<br>提供俄语和英语菜单；无需重装即可更换面板域名、REALITY 域名或两者。 |
-| **自动证书与安全设置**<br>自动申请和续期 Let's Encrypt 证书；可选 SSH 防护与自动安全更新。 | **可选功能**<br>XTLS Vision、AmneziaWG 3.1、面向 CDN 的 XHTTP、Cloudflare WARP，以及支持 DoH 的 AdGuard Home。 |
+| **自动配置连接**<br>REALITY、XHTTP 和 Hysteria2 会自动配置。安装时选择的 XTLS Vision、AmneziaWG 和面向 CDN 的 XHTTP 也会自动配置。 | **完整的伪装网站**<br>至少 2592 种现成的设计与文案组合。多页面网站配有可用的导航、专属文字和图片，并支持 Hysteria2 的 HTTP/3 伪装。 |
+| **两台 VPS 级联**<br>通过菜单将两台服务器串联。俄罗斯网站及 IP 地址由入口服务器直接访问，其余流量经出口服务器转发。 | **自己的 Nginx 和 HTTPS**<br>由 VPS 上的 Nginx 接收传入的 TCP 连接。面板和订阅通过自有域名的 HTTPS 访问，无须将内部端口直接暴露到互联网。 |
+| **Backup / Restore v3**<br>支持备份、恢复及迁移到其他 VPS，并保留用户数据与个性化网站。 | **管理菜单与域名更换**<br>无需重装 3X-UI 或其他服务，即可更换面板域名、REALITY 域名或两者。 |
+| **自动证书与安全设置**<br>Let's Encrypt 证书自动续期，无须停止 Nginx；可选 SSH 防护和 VPS 自动安全更新。 | **其他功能**<br>XTLS Vision、AmneziaWG 3.1、面向 CDN 的 XHTTP、Cloudflare WARP、支持 DoH 的 AdGuard Home，以及级联配置。 |
 
 <a id="installation"></a>
 
@@ -48,6 +48,7 @@ curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x
 - **2 — Change Domains：**无需重装即可更换面板域名、REALITY 域名或两者。
 - **3 — Backups：**创建、查看和恢复备份。
 - **4 — Telegram Web Proxy Manager：**启动或安装独立的 Telegram 代理管理器。
+- **5 — Cascade：**连接两台服务器、查看状态或断开级联。
 - **0 — Exit：**退出。
 
 菜单需要在交互式 SSH 终端中使用。
@@ -78,7 +79,7 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 <summary><strong>如何更新？</strong></summary>
 
 - **3X-UI 和 Xray：**使用面板自带的更新功能。新版本与项目配置的兼容性可能尚未验证。
-- **3X-UI AUTO NGINX：**不支持直接升级已安装的整套服务。要使用新版管理菜单的功能，可以下载最新脚本并选择相应操作；管理器会检查现有配置是否兼容。
+- **3X-UI AUTO NGINX：**不支持直接升级已安装的整套服务。要使用 **5 — Cascade** 等新版管理功能，可以下载最新脚本并选择对应操作。管理器会检查现有配置是否兼容。
 - **Backup / Restore：**用于保存和恢复数据，不会升级已安装的服务。
 
 **不要为了更新而选择 Installation！** 请使用操作系统的软件包管理工具更新 nginx、Linux 内核和其他系统软件包。
@@ -211,6 +212,8 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 *可选路由功能 · 俄语菜单默认启用（`Y`），英语菜单默认关闭（`N`）*
 
+如果准备将此 VPS 用作级联入口服务器，请选择 `N`。入口服务器不兼容 WARP，但出口服务器可以使用 WARP。
+
 选择 `Y` 后，安装程序会配置 Cloudflare WARP（MASQUE），让俄罗斯网站及部分网络服务看到 Cloudflare 的 IP 地址，而不是 VPS 的 IP 地址。这是为了保护 VPS 的 IP 地址。
 
 该设置仅影响经过 VPS 的流量。如果应用直接访问网站，服务器上的 WARP 不会影响这类连接。
@@ -303,11 +306,13 @@ sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "
 
 如果操作系统更新后需要重启，安装程序会给出提示。**首次重启需手动执行** `sudo reboot`。
 
+<a id="cover-sites"></a>
+
 ## 🌐 伪装网站与 HTTP/3
 
-**告别简单的占位页，使用完整网站。**全新安装会自动为面板和 REALITY 创建两个不同的多页面网站。提供六套现代化模板，包含可用的导航、插图和适配手机的页面布局。启用可选的 XTLS Vision 后，它也会获得独立的网站。
+**告别简单的占位页，使用完整网站。**全新安装会自动为面板和 REALITY 创建不同的多页面网站。项目提供至少 2592 种现成的设计与文案组合，网站包含可用的导航、插图和适配手机的布局。启用可选的 XTLS Vision 后，它也会获得独立的网站。
 
-**每次安装都有自己的风格。**网站名称、配色、图片和文案会自动个性化配置。执行 Backup/Restore 或更换域名时，已选定的设计会保留。
+**每次安装都有自己的风格。**网站名称、配色、图片、图标和文案会自动个性化配置。附加页面包含不同内容和发布日期。执行 Backup/Restore 或更换域名时，已选定的网站会保留。
 
 **Hysteria2 的 HTTP/3 伪装。**在 REALITY 域名下，普通 TCP HTTPS 请求和未经认证的 UDP HTTP/3 请求都会获得同一个完整网站。面板和订阅接口与公开的 HTTP/3 伪装服务保持隔离。
 
@@ -369,6 +374,95 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 > **备份包含敏感数据：** 客户端数据库、密码和证书私钥。请在 **VPS 之外** 保存副本，并且只恢复来源可信的备份文件。
 
 [在新 VPS 上恢复](#restore-on-new-vps)。
+
+<a id="cascade"></a>
+
+## 🔗 两台服务器级联
+
+级联可以将两台运行 3X-UI AUTO NGINX 的 VPS 串联起来：设备连接入口服务器，再通过出口服务器访问互联网。如果你连接某台 VPS 时遇到问题，或者希望通过其他国家的服务器访问互联网，这项功能可能会有帮助。
+
+**设备 → 入口 VPS → 出口 VPS → 互联网**
+
+俄罗斯网站和俄罗斯 IP 地址默认由入口服务器直接访问。完成配置后，可以在入口 VPS 的路由规则中关闭这一行为。其他未被前面路由规则匹配的流量则经出口服务器转发。
+
+在主菜单选择 **5 — Cascade** 即可配置，无须手动修改配置文件。
+
+<details>
+<summary><strong>如何配置级联、检查状态和断开连接</strong></summary>
+
+### 准备工作
+
+- 两台已正常安装 3X-UI AUTO NGINX 的 VPS。
+- 两台服务器各自的 3X-UI 面板用户名和密码。
+- 包含 **5 — Cascade** 菜单项的最新安装脚本。
+- 入口服务器不得配置 WARP（可以手动删除）。
+
+### 1. 在出口服务器创建密钥
+
+在你希望用来访问互联网的 VPS 上运行最新安装脚本。
+
+选择 **5 — Cascade → 1 — Create key (exit server)**。
+
+输入 3X-UI 面板用户名和密码。输入时不会显示字符，凭据也不会保存。管理器会在现有 REALITY 连接中创建名为 `cascade` 的客户端，并显示以 `vless://` 开头的密钥链接。
+
+复制链接，下一步在另一台服务器上使用。
+
+**不要公开密钥链接：**获得它的人可以使用该客户端连接。
+
+现有客户端不会改变。
+
+### 2. 连接入口服务器
+
+在你的设备所连接的 VPS 上运行最新安装脚本。
+
+选择 **5 — Cascade → 2 — Connect exit server (entry server)**。
+
+输入 3X-UI 面板用户名和密码（同样不会保存），然后粘贴第一步复制的密钥链接。粘贴时链接会显示在终端上，但不会保存。
+
+管理器先测试与出口服务器的连接。测试通过后，会添加名为 `cascade-exit` 的出站连接和三条 `CASCADE` 路由规则。
+
+俄罗斯网站和 IP 地址默认从入口服务器直接访问，也可以之后关闭对应规则。其他符合条件的流量经出口服务器转发。
+
+**应用设置时，所有用户的连接可能短暂中断几秒。** 如果检查失败，管理器会尝试恢复原有配置并报告结果。
+
+现有客户端连接和订阅仍可使用，不必为级联单独创建客户端配置。
+
+### 3. 检查状态
+
+在每台 VPS 上选择 **5 — Cascade → 3 — Status**。
+
+与其他操作一样，管理器会要求输入面板用户名和密码。
+
+它会显示该服务器的入口和出口角色是否已配置，以及 Xray 是否运行。此操作不会修改设置。
+
+### 4. 断开级联
+
+在需要操作的 VPS 上选择 **5 — Cascade → 4 — Disable**。
+
+**在入口服务器上，**管理器会询问是否删除 `cascade-exit` 以及三条 `CASCADE` 规则。其他连接和面板规则保留。
+
+**在出口服务器上，**只会删除 `cascade` 客户端。使用这把密钥的入口服务器随后无法再通过该出口转发流量。
+
+每个角色的移除都需要单独确认。在入口服务器应用改动时，用户连接可能短暂中断。
+
+### 注意事项
+
+- **WARP：**入口服务器不兼容 WARP。如果已配置，请先在 3X-UI 面板中删除对应出站连接和路由规则。出口服务器允许使用 WARP。
+- **AmneziaWG：**此类连接不会经过出口服务器。
+- **路由规则：**之前定义的规则可能将部分流量导向其他路径。管理器会在连接前提示。
+- **出口不可用：**经该出口转发的流量会停止，直到出口恢复。没有自动备用出口。
+- **Vision 上的 QUIC：**此级联无法转发 UDP/443。
+- **更换域名：**如果修改出口 VPS 的域名，需要在入口服务器重新连接出口。
+
+### 备份
+
+Backup v3 会保存级联设置。在入口服务器恢复备份后，级联配置会与其他 3X-UI 数据一起保留。
+
+级联已在两台真实 VPS 上通过 REALITY、XHTTP 和 Hysteria2 测试，但尚未验证所有客户端应用和配置。
+
+如发现问题，请[在 GitHub 提交 Issue](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)。
+
+</details>
 
 ## 🔐 安全性
 
