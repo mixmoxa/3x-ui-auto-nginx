@@ -1,3 +1,8 @@
+# 3X-UI AUTO NGINX - https://github.com/xPROMSx/3x-ui-auto-nginx
+# Copyright (C) 2026 xPROMSx contributors
+# SPDX-License-Identifier: GPL-3.0-only
+# Additional attribution terms (GPL-3.0 section 7) apply to material added by xPROMSx contributors: see docs/NOTICE.md
+
 """Bounded domain switch for the project's local SQLite/nginx-stream layout.
 
 The manager owns fd 9 and supplies trusted checks/Backup from its selected tree.

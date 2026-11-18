@@ -1,5 +1,8 @@
 #!/bin/bash
-# 3x-ui Auto Nginx - based on x-ui-pro-refactor by mozaroc (github.com/mozaroc/3x-ui-pro)
+# 3x-ui Auto Nginx - based on x-ui-pro-refactor by mozaroc (github.com/mozaroc/3x-ui-pro), which derives from x-ui-pro by GFW4Fun (github.com/GFW4Fun/x-ui-pro)
+# Copyright (C) 2026 xPROMSx contributors
+# Material added by xPROMSx contributors is licensed GPL-3.0-only; inherited material keeps its authors' rights (see THIRD_PARTY_NOTICES.md).
+# Additional attribution terms (GPL-3.0 section 7) apply to material added by xPROMSx contributors: see docs/NOTICE.md
 
 # ─── Output helpers ──────────────────────────────────────────────────────────
 # Per invocation only: CLI and sourced helpers always start in English.
@@ -55,13 +58,14 @@ ui_refuse() {
 ui_title() {
     printf '\n%s\n' '============================================================'
     msg_inf "  $1"
+    if [[ ${2:-0} == 1 ]]; then ui_back '      © xPROMSx · github.com/xPROMSx/3x-ui-auto-nginx'; fi
     printf '%s\n\n' '============================================================'
 }
 ui_section() {
     printf '\n'; msg_inf "  $1"; ui_rule
 }
 ui_header() {
-    ui_title '                   3X-UI AUTO NGINX'
+    ui_title '                   3X-UI AUTO NGINX' "${2:-0}"
     msg_inf "  $1"; ui_rule
 }
 ui_prompt() {
@@ -102,7 +106,7 @@ ui_archive() {
 select_language() {
     local answer
     while true; do
-        ui_header 'SELECT LANGUAGE / ВЫБЕРИТЕ ЯЗЫК'
+        ui_header 'SELECT LANGUAGE / ВЫБЕРИТЕ ЯЗЫК' 1
         printf '\n  1. English\n  2. Русский\n'
         ui_back '  3. Exit / Выход'
         printf '\n'; ui_rule; printf '  Select / Выбор: '
@@ -4392,7 +4396,7 @@ manager_menu() {
     recover_domain_operation || return $?
     while true; do
         reported=0
-        ui_header "$(ui_text 'MAIN MENU' 'ГЛАВНОЕ МЕНЮ')"
+        ui_header "$(ui_text 'MAIN MENU' 'ГЛАВНОЕ МЕНЮ')" 1
         ui_text '\n  1. Installation\n  2. Change Domains\n  3. Backups\n  4. Telegram Web Proxy Manager\n  5. Cascade\n\n' '\n  1. Установка\n  2. Смена доменов\n  3. Резервные копии\n  4. Telegram Web Proxy Manager\n  5. Каскад\n\n'
         ui_back "$(ui_text '  0. Exit' '  0. Выход')"
         printf '\n'; ui_prompt

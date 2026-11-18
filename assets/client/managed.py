@@ -1,3 +1,8 @@
+# 3X-UI AUTO NGINX - https://github.com/xPROMSx/3x-ui-auto-nginx
+# Copyright (C) 2026 xPROMSx contributors
+# SPDX-License-Identifier: GPL-3.0-only
+# Additional attribution terms (GPL-3.0 section 7) apply to material added by xPROMSx contributors: see docs/NOTICE.md
+
 """Initial client via official 3x-ui v3.9.0 session/CSRF and subscription backend.
 
 Import Panel from the existing AWG helper. No SQL, custom exports or stored tokens.

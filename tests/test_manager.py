@@ -46,6 +46,8 @@ YES_EN = ('Restore replaces project data on this server: the nginx configuration
 YES_RU_PROMPT = 'Для восстановления введите YES:'
 YES_EN_PROMPT = 'Type YES to restore:'
 FRAME = '=' * 60
+PROJECT_FRAME_START = f'{FRAME}\n                     3X-UI AUTO NGINX\n'
+AUTHOR_CREDIT = '© xPROMSx · github.com/xPROMSx/3x-ui-auto-nginx'
 
 
 class Manager(unittest.TestCase):
@@ -59,6 +61,7 @@ class Manager(unittest.TestCase):
             'fixture',str(ROOT/'x-ui-latest.sh')],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr+result.stdout)
         self.assertEqual(result.stdout,'')
+        self.assertNotIn(AUTHOR_CREDIT,result.stderr)
 
     def test_real_entrypoint_tty_exit_back_invalid_and_no_tty(self):
         for answers in (b'1\n0\n',b'1\n9\n3\n0\n0\n'):
@@ -100,6 +103,9 @@ entrypoint
             code,text=tty_run(ROOT/'x-ui-latest.sh',(language+'\n9\n3\n0\n0\n').encode())
             self.assertEqual(code,0,text);self.assertIn(menu,text);self.assertIn(backups,text)
             self.assertEqual(text.count('SELECT LANGUAGE / ВЫБЕРИТЕ ЯЗЫК'),1)
+            screen_text=text.replace('\r\n','\n')
+            for heading in ('SELECT LANGUAGE / ВЫБЕРИТЕ ЯЗЫК','MAIN MENU' if language=='1' else 'ГЛАВНОЕ МЕНЮ'):
+                self.assertIn(f'{PROJECT_FRAME_START}      {AUTHOR_CREDIT}\n{FRAME}\n\n  {heading}\n',screen_text)
             for item in (('2. Change Domains','1. Create backup','2. List backups','3. Restore backup','0. Back','0. Exit') if language=='1' else
                          ('2. Смена доменов','1. Создать резервную копию','2. Список резервных копий','3. Восстановить резервную копию','0. Назад','0. Выход')):
                 self.assertIn(item,text)
@@ -450,6 +456,8 @@ entrypoint
                 answers=('2' if language=='ru' else '1')+'\n2\n'+choice+'\n'+(panel+'\n' if choice in ('1','3') else '')+(reality+'\n' if choice in ('2','3') else '')+answer+'\n0\n'
                 code,text=tty_run(script,answers.encode(),env={'STAGE':str(stage)})
                 self.assertEqual(code,0,text)
+                heading='CHANGE DOMAINS' if language=='en' else 'СМЕНА ДОМЕНОВ'
+                self.assertIn(f'{PROJECT_FRAME_START}{FRAME}\n\n  {heading}\n',text.replace('\r\n','\n'))
                 self.assertIn('Current Panel:   deploy.example' if language=='en' else 'Текущий домен панели:  deploy.example',text)
                 self.assertIn('Current REALITY: cover.example' if language=='en' else 'Текущий домен REALITY: cover.example',text)
                 self.assertIn('client configurations' if language=='en' else 'Клиентские конфигурации',text)

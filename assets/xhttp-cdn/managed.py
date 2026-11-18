@@ -1,3 +1,8 @@
+# 3X-UI AUTO NGINX - https://github.com/xPROMSx/3x-ui-auto-nginx
+# Copyright (C) 2026 xPROMSx contributors
+# Material added by xPROMSx contributors is licensed GPL-3.0-only; inherited material keeps its authors' rights (see THIRD_PARTY_NOTICES.md).
+# Additional attribution terms (GPL-3.0 section 7) apply to material added by xPROMSx contributors: see docs/NOTICE.md
+
 """Fresh-install-only, disabled packet-up profile; CDN services remain user-owned."""
 import importlib.util
 import json

@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# 3X-UI AUTO NGINX - https://github.com/xPROMSx/3x-ui-auto-nginx
+# Copyright (C) 2026 xPROMSx contributors
+# Material added by xPROMSx contributors is licensed GPL-3.0-only; inherited material keeps its authors' rights (see THIRD_PARTY_NOTICES.md).
+# Additional attribution terms (GPL-3.0 section 7) apply to material added by xPROMSx contributors: see docs/NOTICE.md
+
 # Managed 3x-ui Auto Nginx backup: same-host rollback or clean-host recovery, same OS/arch.
 # Usage: x-ui-backup {backup [--json]|inspect <archive>|restore <archive>|extract <archive> <new-directory>|list|update-hooks}
 set -Eeuo pipefail

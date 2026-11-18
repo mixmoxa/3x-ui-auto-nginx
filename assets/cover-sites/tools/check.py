@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# 3X-UI AUTO NGINX - https://github.com/xPROMSx/3x-ui-auto-nginx
+# Copyright (C) 2026 xPROMSx contributors
+# SPDX-License-Identifier: GPL-3.0-only
+# Additional attribution terms (GPL-3.0 section 7) apply to material added by xPROMSx contributors: see docs/NOTICE.md
+
 """Verify generated static websites without external dependencies or network access."""
 import argparse
 from html.parser import HTMLParser

@@ -4,9 +4,11 @@
 
 Copyright (C) 2026 xPROMSx contributors.
 
+Additional attribution terms under section 7 of GNU GPL version 3 apply to material added by xPROMSx contributors; see [docs/NOTICE.md](docs/NOTICE.md).
+
 Original code, documentation, and modifications authored by xPROMSx contributors are offered under [GNU GPL-3.0-only](LICENSE). This grant applies only to material and rights those contributors can license. It does not automatically relicense inherited or third-party material or establish GPL licensing for the repository as a whole.
 
-The project builds upon earlier work. Previous authors retain their copyrights and applicable licensing terms. The repository [README](README.md) and Git history record its development lineage; inclusion in this repository does not imply a transfer of third-party rights. Where permissions for inherited material have not been established, this notice does not imply that such permissions exist.
+The project builds upon earlier work. Previous authors retain their copyrights and applicable licensing terms. The repository [README](README.md) and Git history record its development lineage; inclusion in this repository does not imply a transfer of third-party rights. Where permissions for inherited material have not been established, this notice does not imply that such permissions exist. Lineage: [GFW4Fun/x-ui-pro](https://github.com/GFW4Fun/x-ui-pro), then the fork [mozaroc/x-ui-pro](https://github.com/mozaroc/x-ui-pro), then [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro), then this project.
 
 ## Third-Party Components
 
