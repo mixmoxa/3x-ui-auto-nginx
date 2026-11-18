@@ -1,6 +1,7 @@
 """Targeted supported-VPS regressions; all paths/services stay private fixtures."""
 import errno
 import http.client
+from http.server import ThreadingHTTPServer
 import os
 from pathlib import Path
 import re
@@ -14,6 +15,7 @@ import threading
 import time
 import unittest
 from unittest.mock import patch
+from urllib.parse import urlencode
 
 from test_personal_xhttp import SOURCE, function, render
 from test_integrated_features import helper
@@ -153,6 +155,55 @@ install() { local -a args=(); while (($#)); do case \"$1\" in -o|-g) shift 2;; *
 
 
 class InstallerCompatibility(unittest.TestCase):
+    def test_clash_profile_preserves_reality_and_grpc_overrides(self):
+        template = (Path(__file__).resolve().parents[1] / 'assets/clash/clash.yaml').read_text()
+        expressions = re.findall(r"^        - '(.+)'$", template, re.M)
+        self.assertEqual(expressions, [
+            '(select(.type == "vless" and .["reality-opts"] != null) | .["reality-opts"]["support-x25519mlkem768"]) = true',
+            '(select(.type == "vless" and .["reality-opts"] != null) | .["client-fingerprint"]) = "chrome"',
+            '(select(.network == "grpc") | .["grpc-opts"]["grpc-service-name"]) |= (split("|") | .[0])',
+        ])
+        self.assertNotIn('global-client-fingerprint', template)
+
+    def test_clash_api_validates_subscription_id(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as directory:
+            template = Path(directory) / 'clash.yaml.tpl'
+            template.write_text((root / 'assets/clash/clash.yaml').read_text()
+                                .replace('${DOMAIN}', 'deploy.example').replace('${SUB_PATH}', 'subscription'))
+            source = (root / 'assets/diagnostics/mtr-backend.py').read_text()
+            source = source.replace('"/var/www/subpage/clash.yaml.tpl"', repr(str(template)))
+            namespace = {'__name__': 'test_clash_api'}
+            exec(compile(source, 'mtr-backend.py', 'exec'), namespace)
+            with ThreadingHTTPServer(('127.0.0.1', 0), namespace['Handler']) as server:
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    for sub_id, expected in (
+                        ('Fixture_01-a.b', 200), ('a', 200), ('a' * 128, 200),
+                        (None, 404), ('', 404), ('fixture\n', 404), ('fix"ture', 404),
+                        ("fix'ture", 404), (' fixture', 404), ('fix/ture', 404),
+                        ('a' * 129, 404), ('тест', 404),
+                    ):
+                        with self.subTest(sub_id=sub_id):
+                            query = '' if sub_id is None else '?' + urlencode({'sub_id': sub_id})
+                            connection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=3)
+                            try:
+                                connection.request('GET', '/api/clash' + query)
+                                response = connection.getresponse()
+                                payload = response.read().decode()
+                                self.assertEqual(response.status, expected)
+                                if expected == 200:
+                                    self.assertIn(f'https://deploy.example/subscription/{sub_id}?provider=1', payload)
+                                    self.assertNotIn('${SUB_ID}', payload)
+                                else:
+                                    self.assertNotIn('proxy-providers:', payload)
+                            finally:
+                                connection.close()
+                finally:
+                    server.shutdown()
+                    thread.join()
+
     def test_fresh_installation_secret_lengths_and_unchanged_fields(self):
         result=shell(('gen_random_string','initialize_installation'),r'''
 initialize_installation

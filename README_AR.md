@@ -19,7 +19,7 @@
 
 </div>
 
-**3X-UI AUTO NGINX** أداة تثبيت مجانية لنشر [3x-ui](https://github.com/MHSanaei/3x-ui) وXray على خادم VPS خاص بك. تضبط Nginx وشهادات HTTPS واتصالات REALITY وXHTTP وHysteria2 والاشتراكات وأدوات التشخيص. ومن خلال المدير التفاعلي يمكنك تثبيت الخادم وتغيير النطاقات وإدارة Backup/Restore v3 وإعداد الربط المتسلسل بين خادمي VPS. وتشمل الميزات الاختيارية XTLS Vision وAmneziaWG 3.1 وCloudflare WARP للمواقع الروسية وAdGuard Home مع DNS-over-HTTPS (DoH).
+**3X-UI AUTO NGINX** أداة تثبيت مجانية لنشر [3x-ui](https://github.com/MHSanaei/3x-ui) وXray على خادم VPS خاص بك. تضبط Nginx وشهادات HTTPS واتصالات REALITY وXHTTP وHysteria2 والاشتراكات (بما فيها الاشتراكات بصيغة Clash/Mihomo) وأدوات التشخيص. ومن خلال المدير التفاعلي يمكنك تثبيت الخادم وتغيير النطاقات وإدارة Backup/Restore v3 وإعداد الربط المتسلسل بين خادمي VPS. وتشمل الميزات الاختيارية XTLS Vision وAmneziaWG 3.1 وCloudflare WARP للمواقع الروسية وAdGuard Home مع DNS-over-HTTPS (DoH).
 
 **أكثر من مجرد تثبيت اعتيادي لـ 3x-ui:** تحصل الخوادم الجديدة على مواقع مستقلة ومتعددة الصفحات للوحة وREALITY. يتوفر ما لا يقل عن 2592 تركيبة جاهزة من التصميم والنصوص، مع تغييرات إضافية في الألوان والأيقونات والتواريخ عند كل تثبيت. تحتوي المواقع على تنقّل فعلي وصفحات إضافية. وعلى نطاق REALITY يعرض HTTPS العادي عبر TCP وطلبات HTTP/3 غير المصادَق عليها عبر UDP الموقع نفسه. تعمل هذه الميزات باستخدام Nginx وXray الموجودين، دون Docker أو خوادم ويب إضافية.
 

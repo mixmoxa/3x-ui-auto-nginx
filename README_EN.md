@@ -19,7 +19,7 @@ Two domains, a clean VPS, and a few minutes to install.
 
 </div>
 
-**3X-UI AUTO NGINX** is a free installer for deploying [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray on your own VPS. It configures Nginx, HTTPS certificates, REALITY, XHTTP, Hysteria2, subscriptions, and diagnostics. Its interactive manager handles server installation, domain changes, Backup/Restore v3, and a two-VPS Cascade. Optional features include XTLS Vision, AmneziaWG 3.1, Cloudflare WARP for Russian websites, and AdGuard Home with DNS-over-HTTPS (DoH).
+**3X-UI AUTO NGINX** is a free installer for deploying [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray on your own VPS. It configures Nginx, HTTPS certificates, REALITY, XHTTP, Hysteria2, subscriptions (including in Clash/Mihomo format), and diagnostics. Its interactive manager handles server installation, domain changes, Backup/Restore v3, and a two-VPS Cascade. Optional features include XTLS Vision, AmneziaWG 3.1, Cloudflare WARP for Russian websites, and AdGuard Home with DNS-over-HTTPS (DoH).
 
 **More than a standard 3x-ui installation:** new servers get their own multi-page websites for the panel and REALITY. There are at least 2,592 ready-made combinations of design and text, with further variations in colors, icons, and dates on each installation. The sites have working navigation and additional pages. On the REALITY domain, ordinary HTTPS requests over TCP and unauthenticated HTTP/3 requests over UDP serve the same website. The existing Nginx and Xray components handle everything, with no Docker or additional web servers.
 

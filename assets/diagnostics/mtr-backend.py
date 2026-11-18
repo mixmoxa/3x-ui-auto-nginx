@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 MTR diagnostics backend — serves on 127.0.0.1:PORT only.
-Accepts POST /mtr with packet_count parameter.
+Accepts POST /api/mtr with the count parameter.
 Client IP is taken from X-Real-IP header (set by nginx).
 Never runs mtr to arbitrary hosts.
 """
@@ -204,10 +204,6 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
 
-        if parsed.path == "/health":
-            self._send_json(200, {"ok": True})
-            return
-
         # ── LibreSpeed: client IP ──────────────────────────────────────────────
         if parsed.path == "/api/st/getip" or parsed.path.endswith("/api/st/getip"):
             self._send_text(200, self._client_ip())
@@ -219,8 +215,11 @@ class Handler(BaseHTTPRequestHandler):
             if not os.path.isfile(tpl_path):
                 self._send_json(404, {"error": "clash template not found"})
                 return
-            params = parse_qs(parsed.query)
-            sub_id = params.get("sub_id", [""])[0].strip()
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            sub_id = params.get("sub_id", [""])[0]
+            if not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", sub_id):
+                self._send_json(404, {"error": "not found"})
+                return
             try:
                 with open(tpl_path, "r", encoding="utf-8") as f:
                     content = f.read()
@@ -250,13 +249,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_text(200, "")
             return
 
-        # ── Legacy upload speed test receiver ──────────────────────────────
-        if parsed.path == "/api/upload" or parsed.path.endswith("/api/upload"):
-            received = self._discard_body(600 * 1024 * 1024)
-            self._send_json(200, {"received": received, "ok": True})
-            return
-
-        if not (parsed.path in ("/mtr", "/api/mtr") or parsed.path.endswith("/api/mtr")):
+        if not parsed.path.endswith("/api/mtr"):
             self._send_json(404, {"error": "not found"})
             return
 

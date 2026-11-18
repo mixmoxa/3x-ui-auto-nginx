@@ -19,7 +19,7 @@ Dos dominios, un VPS limpio y unos minutos para completar la instalación.
 
 </div>
 
-**3X-UI AUTO NGINX** es un instalador gratuito de [3x-ui](https://github.com/MHSanaei/3x-ui) y Xray para tu propio VPS. Configura Nginx, certificados HTTPS, REALITY, XHTTP, Hysteria2, suscripciones y herramientas de diagnóstico. Su gestor interactivo permite instalar el servidor, cambiar dominios, administrar Backup/Restore v3 y configurar una cascada entre dos VPS. Entre las funciones opcionales están XTLS Vision, AmneziaWG 3.1, Cloudflare WARP para sitios rusos y AdGuard Home con DNS-over-HTTPS (DoH).
+**3X-UI AUTO NGINX** es un instalador gratuito de [3x-ui](https://github.com/MHSanaei/3x-ui) y Xray para tu propio VPS. Configura Nginx, certificados HTTPS, REALITY, XHTTP, Hysteria2, suscripciones (también en formato Clash/Mihomo) y herramientas de diagnóstico. Su gestor interactivo permite instalar el servidor, cambiar dominios, administrar Backup/Restore v3 y configurar una cascada entre dos VPS. Entre las funciones opcionales están XTLS Vision, AmneziaWG 3.1, Cloudflare WARP para sitios rusos y AdGuard Home con DNS-over-HTTPS (DoH).
 
 **Más que una instalación estándar de 3x-ui:** cada servidor nuevo recibe sitios web multipágina propios para el panel y REALITY. Hay al menos 2592 combinaciones preparadas de diseño y textos, y en cada instalación también cambian los colores, los iconos y las fechas. Los sitios tienen navegación funcional y páginas adicionales. En el dominio de REALITY, las solicitudes HTTPS habituales por TCP y las solicitudes HTTP/3 no autenticadas por UDP muestran el mismo sitio. Todo funciona con Nginx y Xray, sin Docker ni servidores web adicionales.
 

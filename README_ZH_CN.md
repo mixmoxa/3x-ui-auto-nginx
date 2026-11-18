@@ -19,7 +19,7 @@
 
 </div>
 
-**3X-UI AUTO NGINX** 是一款免费安装工具，可在自己的 VPS 上自动部署 [3x-ui](https://github.com/MHSanaei/3x-ui) 和 Xray。它负责配置 Nginx、HTTPS 证书、REALITY、XHTTP、Hysteria2、订阅和诊断功能。通过交互式管理菜单，你可以安装服务器、更换域名、管理 Backup/Restore v3，以及配置两台 VPS 之间的级联。XTLS Vision、AmneziaWG 3.1、用于俄罗斯网站的 Cloudflare WARP，以及支持 DNS-over-HTTPS（DoH）的 AdGuard Home 均为可选功能。
+**3X-UI AUTO NGINX** 是一款免费安装工具，可在自己的 VPS 上自动部署 [3x-ui](https://github.com/MHSanaei/3x-ui) 和 Xray。它负责配置 Nginx、HTTPS 证书、REALITY、XHTTP、Hysteria2、订阅（包括 Clash/Mihomo 格式）和诊断功能。通过交互式管理菜单，你可以安装服务器、更换域名、管理 Backup/Restore v3，以及配置两台 VPS 之间的级联。XTLS Vision、AmneziaWG 3.1、用于俄罗斯网站的 Cloudflare WARP，以及支持 DNS-over-HTTPS（DoH）的 AdGuard Home 均为可选功能。
 
 **不只是常规的 3x-ui 安装：**全新部署会为面板和 REALITY 分别生成专属的多页面网站。项目提供至少 2592 种现成的设计与文案组合，每次安装还会调整颜色、图标和日期。网站包含可用的导航和附加页面。在 REALITY 域名上，普通的 TCP HTTPS 请求和未经认证的 UDP HTTP/3 请求会显示同一个网站。所有功能均利用现有的 Nginx 和 Xray，无须 Docker 或额外的 Web 服务器。
 

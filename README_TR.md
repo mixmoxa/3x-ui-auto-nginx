@@ -19,7 +19,7 @@
 
 </div>
 
-**3X-UI AUTO NGINX**, kendi VPS sunucunuzda [3x-ui](https://github.com/MHSanaei/3x-ui) ve Xray kurmak için ücretsiz bir yükleyicidir. Nginx, HTTPS sertifikaları, REALITY, XHTTP, Hysteria2, abonelikler ve tanılama araçlarını yapılandırır. Etkileşimli yöneticiyle sunucu kurulumunu, alan adı değişikliklerini, Backup/Restore v3 işlemlerini ve iki VPS arasında Kaskad bağlantısını yönetebilirsiniz. XTLS Vision, AmneziaWG 3.1, Rus siteleri için Cloudflare WARP ve DNS-over-HTTPS (DoH) destekli AdGuard Home isteğe bağlıdır.
+**3X-UI AUTO NGINX**, kendi VPS sunucunuzda [3x-ui](https://github.com/MHSanaei/3x-ui) ve Xray kurmak için ücretsiz bir yükleyicidir. Nginx, HTTPS sertifikaları, REALITY, XHTTP, Hysteria2, abonelikler (Clash/Mihomo biçimi de dahil) ve tanılama araçlarını yapılandırır. Etkileşimli yöneticiyle sunucu kurulumunu, alan adı değişikliklerini, Backup/Restore v3 işlemlerini ve iki VPS arasında Kaskad bağlantısını yönetebilirsiniz. XTLS Vision, AmneziaWG 3.1, Rus siteleri için Cloudflare WARP ve DNS-over-HTTPS (DoH) destekli AdGuard Home isteğe bağlıdır.
 
 **Standart bir 3x-ui kurulumundan fazlası:** yeni sunucular, panel ve REALITY için kendilerine özel çok sayfalı siteler alır. En az 2592 hazır tasarım ve metin kombinasyonu bulunur; her kurulumda renkler, simgeler ve tarihler de değişir. Sitelerde çalışan gezinme bağlantıları ve ek sayfalar vardır. REALITY alan adında TCP üzerinden normal HTTPS istekleri ve UDP üzerinden kimlik doğrulaması yapılmamış HTTP/3 istekleri aynı web sitesini gösterir. Tüm bunlar mevcut Nginx ve Xray ile çalışır; Docker veya ek web sunucusu gerekmez.
 

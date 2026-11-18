@@ -6,7 +6,6 @@ allow-lan: true
 tcp-concurrent: true
 enable-process: true
 find-process-mode: always
-global-client-fingerprint: chrome
 
 profile:
   store-selected: true
@@ -59,6 +58,7 @@ proxy-providers:
     override:
       override-expr:
         - '(select(.type == "vless" and .["reality-opts"] != null) | .["reality-opts"]["support-x25519mlkem768"]) = true'
+        - '(select(.type == "vless" and .["reality-opts"] != null) | .["client-fingerprint"]) = "chrome"'
         - '(select(.network == "grpc") | .["grpc-opts"]["grpc-service-name"]) |= (split("|") | .[0])'
     health-check:
       enable: true
