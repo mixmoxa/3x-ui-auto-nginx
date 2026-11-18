@@ -34,7 +34,7 @@ def rendered_hook(panel, reality, source=None):
 
 
 class DomainFixture:
-    def __init__(self, root, legacy=False, optional=False, historical=False):
+    def __init__(self, root, legacy=False, optional=False, historical=False, ws_grpc='y'):
         self.root = Path(root); self.module = helper('domains')
         self.version='3.10.2' if legacy else '3.11.0'
         ref = 'v2.1.7' if legacy else 'f7f5cbbb2d00c1c0cdb2749745e2b4ff2aaf00c1'
@@ -60,7 +60,7 @@ class DomainFixture:
         self.write(self.module.HOOK, rendered_hook(self.panel, self.reality,self.source), 0o755)
         for name, text in ((self.module.STREAM, render('cat > /etc/nginx/stream-enabled/stream.conf',self.source)),
                            (self.module.HTTP, render('cat > /etc/nginx/sites-available/80.conf',self.source)),
-                           ('/etc/nginx/snippets/includes.conf', render(SHARED,self.source)),
+                           ('/etc/nginx/snippets/includes.conf', render(SHARED,self.source,INSTALL_WS_GRPC=ws_grpc)),
                            ('/etc/nginx/sites-available/'+self.panel, render(MAIN,self.source)),
                            ('/etc/nginx/sites-available/'+self.reality, render('cat > "/etc/nginx/sites-available/${reality_domain}"',self.source))):
             self.write(name, text)
@@ -78,7 +78,7 @@ class DomainFixture:
         self.p('/etc/nginx/snippets/x-ui-auto-optional').mkdir()
         self.write(self.module.CLASH, (ROOT/'assets/clash/clash.yaml').read_text().replace('${DOMAIN}', self.panel).replace('${SUB_PATH}', 'subscription'))
         self.write(self.module.DIAGNOSTICS, (ROOT/'assets/diagnostics/index.html').read_text().replace('__SERVER_DOMAIN__', self.panel))
-        rows, hosts = seed(group_id=True,source=self.source)
+        rows, hosts = seed(group_id=True,source=self.source,INSTALL_WS_GRPC=ws_grpc)
         with sqlite3.connect(self.p(self.module.DB)) as db:
             for table, records in (('inbounds', list(rows.values())), ('hosts', hosts)):
                 names = list(records[0])
@@ -980,6 +980,21 @@ curl() {
                 self.assertTrue(f.p('/etc/letsencrypt/archive/deploy.example/privkey1.pem').read_bytes()==oldcert,'Old certificate key changed')
                 self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
                 self.assertTrue(all(v=='active' for v in f.services.values()))
+
+    def test_change_domains_on_both_installer_layouts(self):
+        for choice in ('y', 'n'):
+            with self.subTest(ws_grpc=choice):
+                f = self.fixture(ws_grpc=choice)
+                roles = {'reality', 'xhttp', 'hysteria2'} | ({'ws', 'grpc'} if choice == 'y' else set())
+                before = f.operation.discover()
+                self.assertEqual(set(before['inbound_roles']), roles)
+                shared = f.p('/etc/nginx/snippets/includes.conf').read_bytes()
+                f.change('new-panel.example', 'new-cover.example')
+                after = f.operation.discover()
+                self.assertEqual(after['domains'], dict(panel='new-panel.example', reality='new-cover.example', vision=None))
+                self.assertEqual(after['inbound_roles'], before['inbound_roles'])
+                self.assertEqual(set(after['hosts']), roles)
+                self.assertEqual(f.p('/etc/nginx/snippets/includes.conf').read_bytes(), shared)
 
     def test_change_domains_without_ws_and_grpc(self):
         for mode in ('panel', 'reality', 'both'):

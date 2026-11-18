@@ -318,7 +318,7 @@ def fresh_acceptance(ref, group='all'):
         boot()
         install('dot-outage', ref)
         phase = 'DoT-outage-core-consumers'
-        invoke('checks.transports(vision=False)', 'partial-transports', 240)
+        invoke('checks.transports(vision=False, ws_grpc=False)', 'partial-transports', 240)
         poweroff()
 
 

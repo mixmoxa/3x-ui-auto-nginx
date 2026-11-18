@@ -19,6 +19,8 @@ import threading
 import time
 import unittest
 
+from certificate_fixtures import INSTALLER_OPTION_STUBS
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "x-ui-latest.sh").read_text()
@@ -36,12 +38,16 @@ FIXTURE = {
     "sub_uri": "https://deploy.example/subscription/",
     "json_uri": "https://deploy.example/jsonsub/",
     "gid_col": "", "gid_reality": "", "gid_ws": "", "gid_xhttp": "", "gid_trojan": "", "gid_hysteria": "",
+    "INSTALL_WS_GRPC": "y",
     "http2_listen": " http2", "http2_on": "",
 }
 
 
 def legacy_hysteria_source(source=SOURCE):
     """Deterministic prior Panel profile for legacy v3 fixtures, without Git history."""
+    for profile in ('ws', 'trojan-grpc'):
+        enabled = "'${emoji_flag} " + profile + "','1','0','127.0.0.1'"
+        source = source.replace(enabled, enabled.replace("','1','0',", "','0','0',"), 1)
     start=source.index("    '1','0','0','0','${emoji_flag} hysteria2'")
     end=source.index('\nEOF',start)
     block=source[start:end]
@@ -71,21 +77,27 @@ def render(target, source=SOURCE, **variables):
     )
 
 
-def seed(group_id=False, source=SOURCE, **variables):
+def seed(group_id=False, source=SOURCE, *, expected_group_ids=None, **variables):
     """Execute generated inbound/Host INSERTs against both supported Host schemas."""
     setup = re.search(r"    local gid_col=.*?^    fi", function("configure_xui_db", source), re.M | re.S).group()
+    generator = function('gen_group_id')
+    if expected_group_ids is not None:
+        generator = generator.replace('gen_group_id() {', 'gen_group_id() {\n    echo group-id-generated >&2')
     script = (
-        'sqlite3() { echo "$HOST_TEST_SCHEMA"; }\n' + function("gen_group_id") +
+        'sqlite3() { echo "$HOST_TEST_SCHEMA"; }\n' + generator +
         '\nemit() {\n' + setup + '\nshor=(a b c d e f g h)\ncat <<EOF\n' +
         template("sqlite3 $XUIDB", source) + 'EOF\n}\nemit\n'
     )
-    sql = subprocess.check_output(["bash", "-u", "-c", script], text=True, env={
+    result = subprocess.run(["bash", "-u", "-c", script], check=True, capture_output=True, text=True, env={
         **os.environ, **FIXTURE, **variables, "XUIDB": "/fixture/x-ui.db",
         "HOST_TEST_SCHEMA": "group_id" if group_id else "id",
     })
+    if expected_group_ids is not None:
+        actual = result.stderr.splitlines().count('group-id-generated')
+        if actual != expected_group_ids:
+            raise AssertionError(f'Expected {expected_group_ids} group IDs, generated {actual}')
+    sql = result.stdout
     blocks = re.findall(r'^INSERT INTO "inbounds"\s.*?^\);', sql, re.M | re.S)
-    if len(blocks) != 5:
-        raise AssertionError(f"Expected five inbound INSERTs, found {len(blocks)}")
     columns = re.search(r'\(("user_id".*?)\)\s*VALUES', blocks[0], re.S).group(1)
     with sqlite3.connect(":memory:") as db:
         db.row_factory = sqlite3.Row
@@ -118,13 +130,99 @@ def function(name, source=SOURCE):
         raise AssertionError(f"Expected one {name} function")
     body = matches[0]
     if name == 'main':
-        # Existing isolated main fixtures decline the new option. WARP cases
-        # supply their selector explicitly; other component assertions stay intact.
-        body = 'declare -F select_warp_ru >/dev/null || select_warp_ru() { INSTALL_WARP_RU=n; };\n' + body
+        body = INSTALLER_OPTION_STUBS + body
     return (function('ui_text', source) + '\n' if name != 'ui_text' and 'ui_text ' in body else '') + body
 
 
 class PersonalXHTTP(unittest.TestCase):
+    def test_additional_connection_questions_and_ports(self):
+        script = r'''
+source "$1"
+confirm_destructive_reinstall() { :; }
+validate_domains() { :; }
+preflight_base_os() { :; }
+preflight_panel_release() { :; }
+make_port() {
+    printf '\nFLAGS:%s:%s:%s:%s:%s\n' "${INSTALL_WS_GRPC:-n}" "$INSTALL_VISION" "$INSTALL_AWG" "$INSTALL_XHTTP_CDN" "$CREATE_CLIENT"
+    printf 'PORTS:%s\n' "$*"
+    exit 0
+}
+main
+'''
+        questions = (
+            'Set up the outdated VLESS WebSocket and Trojan gRPC connections? [y/N]:',
+            'Set up an additional VLESS TCP/TLS',
+            'Set up an additional AmneziaWG connection? [y/N]:',
+            'Add an additional CDN-compatible XHTTP connection? [y/N]:',
+        )
+        cases = (
+            ('n\nN\nn\nn\ny\n', False, 'n:n:n:n:y', 0),
+            ('n\n\nn\nn\ny\n', False, 'n:n:n:n:y', 0),
+            ('n\n', False, 'n:n:n:n:n', 0),
+            ('n\ny\nN\nn\ny\ny\nn\nn\ny\n', True, 'n:n:y:y:y', 0),
+            ('n\ny\n\nn\nn\nn\nn\nn\ny\n', True, 'n:n:n:n:y', 0),
+            ('n\ny\n', True, 'n:n:n:n:n', 0),
+            ('n\nbad\nY\nbad\nY\ny\nvision.example\ny\ny\nn\nn\ny\n', True, 'y:y:y:y:y', 2),
+        )
+        for answers, additional, flags, invalid in cases:
+            with self.subTest(answers=answers):
+                result = subprocess.run(['bash', '-eu', '-c', script, 'fixture', str(ROOT/'x-ui-latest.sh')],
+                                        input=answers, text=True, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('Set up additional connections? [y/N]:', result.stdout)
+                self.assertIn('FLAGS:'+flags, result.stdout)
+                self.assertEqual(result.stdout.count('Please enter y or n.'), invalid)
+                ports = 'sub_port panel_port ' + ('ws_port trojan_port ' if flags.startswith('y') else '') + 'mtr_backend_port'
+                self.assertIn('PORTS:'+ports+'\n', result.stdout)
+                if additional:
+                    order = [result.stdout.index(question) for question in questions]
+                    self.assertEqual(order, sorted(order))
+                else:
+                    for question in questions:
+                        self.assertNotIn(question, result.stdout)
+
+    def test_declined_ws_grpc_produce_only_core_artifacts(self):
+        for group_id in (False, True):
+            with self.subTest(group_id=group_id):
+                rows, hosts = seed(group_id=group_id, expected_group_ids=3 if group_id else 0, INSTALL_WS_GRPC='n')
+                self.assertEqual(set(rows), {'reality', 'xhttp', 'hysteria2'})
+                self.assertEqual({host['remark'] for host in hosts}, set(rows))
+        shared = render(SHARED, INSTALL_WS_GRPC='n')
+        for route in ('/10003/websocket', '/10004/trojan', '127.0.0.1:10003', '127.0.0.1:10004'):
+            self.assertNotIn(route, shared)
+
+    def test_selected_ws_grpc_preserve_exact_artifacts_except_enable(self):
+        base = subprocess.check_output(['git', 'show', '661b9f6fd3629efe5cc1187e0bc2bc1a15dbb04e:x-ui-latest.sh'],
+                                       cwd=ROOT, text=True)
+        selected = {'INSTALL_WS_GRPC': 'y'}
+        self.assertEqual(render(SHARED, **selected), render(SHARED, base))
+        seed(group_id=True, expected_group_ids=5, **selected)
+        for group_id in (False, True):
+            groups = {'gid_col': '"group_id",'} if group_id else {}
+            if group_id:
+                groups.update({f'gid_{key}': f"'{key}-fixture'," for key in ('reality','ws','xhttp','trojan','hysteria')})
+            sql = render('sqlite3 $XUIDB', **groups, **selected)
+            for name in ('ws', 'trojan-grpc'):
+                before, after = (f"'test {name}','{enable}','0','127.0.0.1'" for enable in ('0', '1'))
+                self.assertEqual(sql.count(after), 1)
+                sql = sql.replace(after, before, 1)
+            self.assertEqual(sql, render('sqlite3 $XUIDB', base, **groups))
+
+    def test_installation_summary_reports_ws_grpc_only_when_selected(self):
+        script = '''
+source "$1"
+ufw() { echo 'Status: active'; }
+timedatectl() { echo UTC; }
+show_results
+'''
+        for choice in ('n', 'y'):
+            with self.subTest(ws_grpc=choice):
+                result = subprocess.check_output(['bash', '-eu', '-c', script, 'fixture', str(ROOT/'x-ui-latest.sh')],
+                                                 text=True, env={**os.environ, **FIXTURE, 'INSTALL_WS_GRPC': choice,
+                                                                 'config_username': 'fixture', 'config_password': 'fixture'})
+                self.assertIn('Enabled by default: REALITY · XHTTP · Hysteria2', result)
+                self.assertEqual('Optional profiles: WS · Trojan gRPC' in result, choice == 'y')
+
     def test_vless_seed_supplies_json_subscription_encryption(self):
         # v3.9.0 genVless reads the outbound encryption from these inbound settings.
         for name in ('reality', 'ws', 'xhttp'):
@@ -583,8 +681,8 @@ sleep() { :; }
         rows = inbounds()
         self.assertEqual(set(rows), {"reality", "ws", "xhttp", "trojan-grpc", "hysteria2"})
         self.assertEqual(rows["reality"]["enable"], "1")
-        self.assertEqual(rows["ws"]["enable"], "0")
-        self.assertEqual(rows["trojan-grpc"]["enable"], "0")
+        self.assertEqual(rows["ws"]["enable"], "1")
+        self.assertEqual(rows["trojan-grpc"]["enable"], "1")
         self.assertEqual({name: row["protocol"] for name, row in rows.items()}, {
             "reality": "vless", "ws": "vless", "xhttp": "vless",
             "trojan-grpc": "trojan", "hysteria2": "hysteria",

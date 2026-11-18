@@ -10,6 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = (ROOT / 'x-ui-latest.sh').read_text()
 LEGACY = ('@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" '
           '--post-hook "systemctl start nginx" > /dev/null 2>&1')
+INSTALLER_OPTION_STUBS = '''declare -F select_warp_ru >/dev/null || select_warp_ru() { INSTALL_WARP_RU=n; }
+declare -F select_additional_connections >/dev/null || select_additional_connections() {
+    select_vision && select_amneziawg && select_xhttp_cdn
+}
+'''
 
 
 def function(name, source=INSTALLER):
@@ -17,8 +22,8 @@ def function(name, source=INSTALLER):
     assert len(found) == 1, name
     body = found[0]
     if name == 'main':
-        # Legacy isolated component scenarios leave the new WARP option off.
-        body = 'declare -F select_warp_ru >/dev/null || select_warp_ru() { INSTALL_WARP_RU=n; };\n' + body
+        # Isolated main fixtures provide their own optional selector stubs.
+        body = INSTALLER_OPTION_STUBS + body
     return (function('ui_text', source) + '\n' if name != 'ui_text' and 'ui_text ' in body else '') + body
 
 

@@ -148,18 +148,20 @@ entrypoint "$@"
         with tempfile.TemporaryDirectory() as temporary:
             script=Path(temporary)/'questions.sh'
             script.write_text(library+'''
-validate_domains && select_security && select_vision && select_amneziawg && select_xhttp_cdn && select_adguard && select_client || exit $?
-printf 'FLAGS:%s:%s:%s:%s:%s:%s:%s:%s:%s\n' "$INSTALL_SECURITY" "$INSTALL_VISION" "$INSTALL_AWG" "$INSTALL_XHTTP_CDN" "$INSTALL_AGH" "$CREATE_CLIENT" "$domain" "$reality_domain" "$vision_domain"
+validate_domains && select_security && select_additional_connections && select_adguard && select_client || exit $?
+printf 'FLAGS:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s\n' "$INSTALL_SECURITY" "$INSTALL_WS_GRPC" "$INSTALL_VISION" "$INSTALL_AWG" "$INSTALL_XHTTP_CDN" "$INSTALL_AGH" "$CREATE_CLIENT" "$domain" "$reality_domain" "$vision_domain"
 ''')
-            code,text=tty_run(script,b'Panel.Example\nReality.Example\n\ny\nVision.Example\ny\ny\ny\n\n')
+            code,text=tty_run(script,b'Panel.Example\nReality.Example\n\ny\ny\ny\nVision.Example\ny\ny\ny\n\n')
             self.assertEqual(code,0,text)
             for prompt in ('домен панели 3X-UI','домен VLESS REALITY','Усилить безопасность VPS? [Y/n]',
+                           'Настроить дополнительные подключения? [y/N]:',
+                           'Настроить устаревшие подключения VLESS WebSocket и Trojan gRPC? [y/N]:',
                            'дополнительное подключение VLESS TCP/TLS','домен VLESS TLS Vision',
                            'дополнительное подключение AmneziaWG? [y/N]','Установить и настроить AdGuard Home? [y/N]',
                            'Создать клиента в 3X-UI'):
                 self.assertIn(prompt,text)
             self.assertIn('Добавить дополнительное подключение XHTTP, совместимое с CDN? [y/N]:',text)
-            self.assertIn('FLAGS:y:y:y:y:y:y:panel.example:reality.example:vision.example',text)
+            self.assertIn('FLAGS:y:y:y:y:y:y:y:panel.example:reality.example:vision.example',text)
             for name,variable,default in (('select_security','INSTALL_SECURITY','y'),('select_vision','INSTALL_VISION','n'),
                     ('select_amneziawg','INSTALL_AWG','n'),('select_xhttp_cdn','INSTALL_XHTTP_CDN','n'),('select_adguard','INSTALL_AGH','n'),('select_client','CREATE_CLIENT','y')):
                 for answers,expected in ((b'\n',default),(b'bad\nn\n','n'),(b'\x04','n')):
@@ -588,6 +590,29 @@ include /etc/nginx/snippets/x-ui-auto-optional/*.conf;
             self.assertNotIn('\x1b', redirected)
             self.assertIn('-'*60, redirected)
             self.assertEqual(files(), before)
+
+    def test_server_details_on_installer_layout_without_ws_grpc(self):
+        from test_domains import DomainFixture
+
+        fixture = DomainFixture(self.f.root/'details-core', ws_grpc='n')
+        db = fixture.p(fixture.module.DB)
+        marker = json.loads(fixture.p(fixture.module.MANIFEST).read_text())
+        self.assertEqual(set(marker['inbound_roles']), {'reality', 'xhttp', 'hysteria2'})
+        with sqlite3.connect(db) as connection:
+            connection.execute("INSERT INTO settings(key,value) VALUES ('subEnable','true'),('subJsonEnable','true')")
+        script = self.f.root/'details-core.sh'
+        source = (ROOT/'x-ui-latest.sh').read_text().replace('XUIDB="/etc/x-ui/x-ui.db"', f'XUIDB="{db}"')
+        source = source.replace('"${2:-/}" <<\'SERVER_DETAILS\'', f'"${{2:-{fixture.root}}}" <<\'SERVER_DETAILS\'')
+        script.write_text(source)
+        before = fixture.state()
+        code, output = tty_run(script, b'1\n6\n0\n', env={'NO_COLOR':'1'})
+        self.assertEqual(code, 0, output)
+        for public in ('https://deploy.example/panel/', 'https://deploy.example/subscription/',
+                       'https://deploy.example/jsonsub/'):
+            self.assertIn(public, output)
+        self.assertRegex(output, r'Active:\s+1\r?\n')
+        self.assertFalse(any(secret in output for secret in ('fixture-sub', 'fixture-hash', 'fixture-uuid')))
+        self.assertEqual(fixture.state(), before)
 
     def test_server_details_missing_foreign_and_busy_database(self):
         _, path, script = self.server_details_fixture()

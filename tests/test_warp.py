@@ -493,7 +493,7 @@ msg_warn() { :; }
             self.assertLess(result.stdout.index('WARP'),result.stdout.rindex('HEALTH'))
             self.assertIn('RESULT:'+('0' if state=='configured' else '1')+':'+state,result.stdout)
         main=function('main')
-        self.assertLess(main.index('select_xhttp_cdn ||'),main.index('select_warp_ru ||'))
+        self.assertLess(main.index('select_additional_connections ||'),main.index('select_warp_ru ||'))
         self.assertLess(main.index('select_warp_ru ||'),main.index('select_adguard ||'))
         self.assertLess(main.index('install_xhttp_cdn ||'),main.index('install_warp_ru ||'))
         self.assertLess(main.index('install_warp_ru ||'),main.index('install_initial_client ||'))

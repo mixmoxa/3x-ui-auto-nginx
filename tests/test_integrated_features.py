@@ -837,12 +837,22 @@ sysctl() {
         self.assertTrue(answer.endswith(socket.inet_aton('198.51.100.10')))
 
     def test_concise_installer_question_sequence(self):
-        names=('validate_domains','select_security','select_vision','select_amneziawg','select_adguard','select_client')
+        names=('validate_domains','select_security','select_additional_connections','select_adguard','select_client')
+        helpers=('ui_note','select_ws_grpc','select_vision','select_amneziawg','select_xhttp_cdn')
         script='domain=; reality_domain=; msg_err() { echo "$*" >&2; }; msg_inf() { echo "$*"; };\n'+function('valid_hostname')+'\n'
-        script+='\n'.join(function(name) for name in names)+'\n'+'; '.join(names)
-        result=subprocess.run(['bash','-eu','-c',script],input='panel.example.com\nreality.example.com\ny\ny\nvision.example.com\nn\nn\ny\n',text=True,capture_output=True)
+        script+='\n'.join(function(name) for name in helpers+names)+'\n'+'; '.join(names)
+        result=subprocess.run(['bash','-eu','-c',script],input='panel.example.com\nreality.example.com\ny\ny\nn\ny\nvision.example.com\nn\nn\nn\ny\n',text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual(result.stdout,'Enter the domain for your 3X-UI panel: Enter the domain for VLESS REALITY: Enhance VPS security? [Y/n]: Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]: Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains): Set up an additional AmneziaWG connection? [y/N]: Install and configure AdGuard Home? [y/N]: Create a client in 3X-UI and display a subscription link after installation? [Y/n]: ')
+        self.assertEqual(result.stdout,
+            'Enter the domain for your 3X-UI panel: Enter the domain for VLESS REALITY: Enhance VPS security? [Y/n]: '
+            'By default, VLESS Reality, VLESS XHTTP and Hysteria2 will be installed and configured.\n'
+            'Additional connections: VLESS WebSocket, Trojan gRPC, VLESS TCP/TLS (XTLS Vision), AmneziaWG, XHTTP for CDN.\n'
+            'Warning: these connections may not work everywhere, it depends on your country and provider. Use at your own risk. If unsure, answer N.\n'
+            'Set up additional connections? [y/N]: Set up the outdated VLESS WebSocket and Trojan gRPC connections? [y/N]: '
+            'Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]: '
+            'Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains): '
+            'Set up an additional AmneziaWG connection? [y/N]: Add an additional CDN-compatible XHTTP connection? [y/N]: '
+            'Install and configure AdGuard Home? [y/N]: Create a client in 3X-UI and display a subscription link after installation? [Y/n]: ')
 
     def test_prompt_defaults_decline_and_eof(self):
         for name, variable, default in (('select_security', 'INSTALL_SECURITY', 'y'),
@@ -860,7 +870,7 @@ sysctl() {
 
     def test_all_choices_and_preflights_before_destruction(self):
         text = function('main')
-        for name in ('select_security', 'select_vision', 'select_client', 'select_amneziawg', 'select_adguard', 'preflight_integrated_features'):
+        for name in ('select_security', 'select_additional_connections', 'select_client', 'select_adguard', 'preflight_integrated_features'):
             self.assertLess(text.index(name), text.index('cleanup_adguard'))
         self.assertLess(text.index('install_vision'), text.index('install_security'))
         self.assertLess(text.index('install_adguard'), text.index('install_security'))

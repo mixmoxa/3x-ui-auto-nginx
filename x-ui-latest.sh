@@ -934,6 +934,7 @@ EOF
         grpc_pass unix:/dev/shm/uds2023.sock;
     }
 
+$(if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then cat <<WS_GRPC_NGINX
     # Installer-managed WS: exact path, fixed backend port
     location = /${ws_port}/${ws_path} {
         if (\$hack = 1) { return 404; }
@@ -962,6 +963,8 @@ EOF
         grpc_set_header Host \$host;
         grpc_pass grpc://127.0.0.1:${trojan_port};
     }
+WS_GRPC_NGINX
+fi)
 
     location / { error_page 404 /404.html; try_files \$uri \$uri/ =404; }
 EOF
@@ -1521,7 +1524,7 @@ configure_xui_db() {
 
     x-ui stop 2>/dev/null || true
 
-    local output private_key public_key trojan_pass xray_bin
+    local output private_key public_key xray_bin
     # install_panel renames armv5/6/7 binaries to xray-linux-arm32
     xray_bin="/usr/local/x-ui/bin/xray-linux-$(_arch)"
     [[ -f "$xray_bin" ]] || xray_bin="/usr/local/x-ui/bin/xray-linux-arm32"
@@ -1529,7 +1532,6 @@ configure_xui_db() {
     output=$("$xray_bin" x25519) || return 1
     private_key=$(echo "$output" | grep "^PrivateKey:" | awk '{print $2}')
     public_key=$(echo "$output"  | grep "^Password"   | awk '{print $3}')
-    trojan_pass=$(gen_random_string 10)
     # Per-host group_id: without it the panel cannot edit or delete the host.
     # The column only exists since 3x-ui v3.5.0 (pinnable via -version), so
     # probe the migrated schema and skip it on older releases.
@@ -1537,9 +1539,13 @@ configure_xui_db() {
     if sqlite3 "$XUIDB" "PRAGMA table_info(hosts);" | grep -qw "group_id"; then
         gid_col='"group_id",'
         gid_reality="'$(gen_group_id)',"
-        gid_ws="'$(gen_group_id)',"
+        if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then
+            gid_ws="'$(gen_group_id)',"
+        fi
         gid_xhttp="'$(gen_group_id)',"
-        gid_trojan="'$(gen_group_id)',"
+        if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then
+            gid_trojan="'$(gen_group_id)',"
+        fi
         gid_hysteria="'$(gen_group_id)',"
     fi
     emoji_flag=$(country_flag)
@@ -1640,10 +1646,11 @@ VALUES (
     '{"enabled":true,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
 );
 
+$(if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then cat <<WS_SQL
 INSERT INTO "inbounds"
     ("user_id","up","down","total","remark","enable","expiry_time","listen","port","protocol","settings","stream_settings","tag","sniffing")
 VALUES (
-    '1','0','0','0','${emoji_flag} ws','0','0','127.0.0.1','${ws_port}','vless',
+    '1','0','0','0','${emoji_flag} ws','1','0','127.0.0.1','${ws_port}','vless',
     '{
   "clients": [],
   "decryption": "none",
@@ -1663,6 +1670,8 @@ VALUES (
     'inbound-${ws_port}',
     '{"enabled":true,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
 );
+WS_SQL
+fi)
 
 INSERT INTO "inbounds"
     ("user_id","up","down","total","remark","enable","expiry_time","listen","port","protocol","settings","stream_settings","tag","sniffing")
@@ -1689,10 +1698,11 @@ VALUES (
     '{"enabled":true,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
 );
 
+$(if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then cat <<TROJAN_SQL
 INSERT INTO "inbounds"
     ("user_id","up","down","total","remark","enable","expiry_time","listen","port","protocol","settings","stream_settings","tag","sniffing")
 VALUES (
-    '1','0','0','0','${emoji_flag} trojan-grpc','0','0','127.0.0.1','${trojan_port}','trojan',
+    '1','0','0','0','${emoji_flag} trojan-grpc','1','0','127.0.0.1','${trojan_port}','trojan',
     '{
   "clients": [],
   "fallbacks": []
@@ -1709,6 +1719,8 @@ VALUES (
     'inbound-${trojan_port}',
     '{"enabled":true,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
 );
+TROJAN_SQL
+fi)
 
 INSERT INTO "inbounds"
     ("user_id","up","down","total","remark","enable","expiry_time","listen","port","protocol","settings","stream_settings","tag","sniffing")
@@ -1748,9 +1760,15 @@ VALUES (
 INSERT INTO "hosts" ("inbound_id",${gid_col}"sort_order","remark","address","port","security","fingerprint","alpn")
 VALUES
     ((SELECT id FROM inbounds WHERE tag='inbound-8443'),           ${gid_reality} 0, 'reality', '${domain}', 443, 'same', '',        '[]'),
+$(if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then cat <<WS_HOST_SQL
     ((SELECT id FROM inbounds WHERE tag='inbound-${ws_port}'),     ${gid_ws}      0, 'ws',      '${domain}', 443, 'tls',  'firefox', '["http/1.1"]'),
+WS_HOST_SQL
+fi)
     ((SELECT id FROM inbounds WHERE tag='inbound-/dev/shm/uds2023.sock,0666:0|'), ${gid_xhttp} 0, 'xhttp', '${domain}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
+$(if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then cat <<TROJAN_HOST_SQL
     ((SELECT id FROM inbounds WHERE tag='inbound-${trojan_port}'), ${gid_trojan}  0, 'trojan',  '${domain}', 443, 'tls',  'firefox', '["h2","http/1.1"]'),
+TROJAN_HOST_SQL
+fi)
     ((SELECT id FROM inbounds WHERE tag='inbound-443-udp'),        ${gid_hysteria} 0, 'hysteria2', '${reality_domain}', 443, 'same', '', '[]');
 EOF
     [[ $? -eq 0 ]] || return 1
@@ -3031,7 +3049,10 @@ show_results() {
     if [[ "${APT_RESULT:-not_requested}" == configured ]]; then
         msg_inf "$(ui_text ' [i] APT schedule           update 02:30 / upgrade 02:50; reboot 04:38, including logged-in users' ' [i] Расписание APT         update 02:30 / upgrade 02:50; перезагрузка 04:38, даже при активных пользователях')"
     fi
-    ui_text '\n Enabled by default: REALITY · XHTTP · Hysteria2\n Optional profiles: WS · Trojan gRPC\n' '\n Включены по умолчанию: REALITY · XHTTP · Hysteria2\n Дополнительные профили: WS · Trojan gRPC\n'
+    ui_text '\n Enabled by default: REALITY · XHTTP · Hysteria2\n' '\n Включены по умолчанию: REALITY · XHTTP · Hysteria2\n'
+    if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then
+        ui_text ' Optional profiles: WS · Trojan gRPC\n' ' Дополнительные профили: WS · Trojan gRPC\n'
+    fi
     msg_inf "$(ui_text '\n Backup:' '\n Резервная копия:')"
     printf ' x-ui-backup backup\n\n'
     msg_inf '============================================================'
@@ -3054,6 +3075,38 @@ select_security() {
         esac
     done
     return 0
+}
+
+select_additional_connections() {
+    INSTALL_WS_GRPC=n INSTALL_VISION=n INSTALL_AWG=n INSTALL_XHTTP_CDN=n
+    local answer
+    ui_text 'By default, VLESS Reality, VLESS XHTTP and Hysteria2 will be installed and configured.\n' 'По умолчанию будут установлены и настроены: VLESS Reality, VLESS XHTTP и Hysteria2.\n'
+    ui_text 'Additional connections: VLESS WebSocket, Trojan gRPC, VLESS TCP/TLS (XTLS Vision), AmneziaWG, XHTTP for CDN.\n' 'Дополнительные подключения: VLESS WebSocket, Trojan gRPC, VLESS TCP/TLS (XTLS Vision), AmneziaWG, XHTTP для CDN.\n'
+    ui_note 'Warning: these connections may not work everywhere, it depends on your country and provider. Use at your own risk. If unsure, answer N.\n' 'Внимание: эти подключения могут работать не везде, это зависит от страны и провайдера. Используйте на свой риск. Если не уверены, ответьте N.\n'
+    while true; do
+        ui_text 'Set up additional connections? [y/N]: ' 'Настроить дополнительные подключения? [y/N]: '
+        IFS= read -r answer || return 0
+        case "$answer" in
+            ''|n|N) return 0 ;;
+            y|Y) break ;;
+            *) ui_text 'Please enter y or n.\n' 'Введите y или n.\n' ;;
+        esac
+    done
+    select_ws_grpc && select_vision && select_amneziawg && select_xhttp_cdn
+}
+
+select_ws_grpc() {
+    INSTALL_WS_GRPC=n
+    local answer
+    while true; do
+        ui_text 'Set up the outdated VLESS WebSocket and Trojan gRPC connections? [y/N]: ' 'Настроить устаревшие подключения VLESS WebSocket и Trojan gRPC? [y/N]: '
+        IFS= read -r answer || return 0
+        case "$answer" in
+            ''|n|N) return 0 ;;
+            y|Y) INSTALL_WS_GRPC=y; return 0 ;;
+            *) ui_text 'Please enter y or n.\n' 'Введите y или n.\n' ;;
+        esac
+    done
 }
 
 select_vision() {
@@ -3342,9 +3395,7 @@ main() {
     confirm_destructive_reinstall || exit 1
     validate_domains || exit 1
     select_security || exit 1
-    select_vision || exit 1
-    select_amneziawg || exit 1
-    select_xhttp_cdn || exit 1
+    select_additional_connections || exit 1
     select_warp_ru || exit 1
     select_adguard || exit 1
     select_client || exit 1
@@ -3353,7 +3404,9 @@ main() {
     msg_warn "$(ui_text 'Initial full OS upgrade is mandatory; services may restart. A required initial reboot is manual (sudo reboot).' 'Первоначальное полное обновление ОС обязательно; службы могут перезапуститься. При необходимости перезагрузите сервер вручную (sudo reboot).')"
     preflight_base_os || { msg_err "$(ui_text 'Base OS preflight failed; existing deployment was not removed.' 'Предварительная проверка ОС не пройдена; существующая установка не удалена.')"; exit 1; }
     preflight_panel_release || { msg_err "$(ui_text 'Release preflight failed; existing deployment was not removed.' 'Предварительная проверка релиза не пройдена; существующая установка не удалена.')"; exit 1; }
-    make_port sub_port panel_port ws_port trojan_port mtr_backend_port || exit 1
+    local -a ports=(sub_port panel_port)
+    if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then ports+=(ws_port trojan_port); fi
+    make_port "${ports[@]}" mtr_backend_port || exit 1
     preflight_cover_sites || { msg_err 'Cover site preparation failed before cleanup.'; exit 1; }
     preflight_amneziawg || { msg_err "$(ui_text 'AmneziaWG preflight failed; existing deployment was not removed.' 'Предварительная проверка AmneziaWG не пройдена; существующая установка не удалена.')"; exit 1; }
     preflight_integrated_features || { msg_err "$(ui_text 'Feature preparation stopped before cleanup; see the component error above.' 'Подготовка компонентов остановлена до удаления данных; проверьте ошибку компонента выше.')"; exit 1; }

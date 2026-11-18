@@ -363,8 +363,9 @@ class RealIntegration(unittest.TestCase):
         if 'Config validation' not in self.passed:
             self.passed.append('Config validation')
 
-    def nginx_config(self):
-        shared = render(SHARED, sub_port=str(self.backends['sub']), ws_port=str(self.backends['ws']),trojan_port=str(self.backends['trojan-grpc']))
+    def nginx_config(self, ws_grpc='y'):
+        shared = render(SHARED, sub_port=str(self.backends['sub']), ws_port=str(self.backends['ws']),
+                        trojan_port=str(self.backends['trojan-grpc']), INSTALL_WS_GRPC=ws_grpc)
         # Match backend relationship while keeping the seeded public paths unchanged.
         shared = shared.replace(f"/{self.backends['ws']}/websocket",'/10003/websocket').replace(
             f"/{self.backends['trojan-grpc']}/trojan",'/10004/trojan').replace('/dev/shm/uds2023.sock',str(self.uds))
@@ -1141,6 +1142,64 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
             self.assertIn('/panel/',access,'Control requests must still reach the normal nginx access log')
             self.assertNotIn(path,access,'Managed CDN base/packet-up requests leaked to the normal access log')
         self.passed.append('CDN packet-up / native RAW extra / JSON / nginx GET-cookie')
+
+    def test_native_xray_and_initial_client_on_both_installer_layouts(self):
+        from test_integrated_features import helper
+
+        client, session = helper('client'), helper('amneziawg')
+        dbdir, bindir = self.root/'db', self.root/'bin'
+        env = {**os.environ, 'XUI_DB_FOLDER':str(dbdir), 'XUI_BIN_FOLDER':str(bindir),
+               'XUI_LOG_FOLDER':str(self.root/'logs')}
+        core = {'reality', 'xhttp', 'hysteria2'}
+        pair = {'ws', 'trojan-grpc'}
+        for choice in ('y', 'n'):
+            with self.subTest(ws_grpc=choice):
+                rows, _ = seed(INSTALL_WS_GRPC=choice)
+                self.assertEqual(set(rows), core | pair if choice == 'y' else core)
+                with sqlite3.connect(dbdir/'x-ui.db') as db:
+                    db.execute('DELETE FROM client_inbounds')
+                    db.execute('DELETE FROM clients')
+                    for name, row in self.rows.items():
+                        if name in rows:
+                            db.execute('UPDATE inbounds SET enable=? WHERE id=?', (rows[name]['enable'], row['id']))
+                        else:
+                            db.execute('DELETE FROM hosts WHERE inbound_id=?', (row['id'],))
+                            db.execute('DELETE FROM inbounds WHERE id=?', (row['id'],))
+                    for key, path in (('subURI', 'subscription'), ('subJsonURI', 'jsonsub')):
+                        db.execute('UPDATE settings SET value=? WHERE key=?',
+                                   (f'https://deploy.example:{self.public}/{path}/', key))
+                nginx = self.nginx_config(choice)
+                panel = self.launch([self.xui], f'initial-client-{choice}', env)
+                try:
+                    self.ready(panel, ('127.0.0.1', self.backends['panel']))
+                    if choice == 'y':
+                        for name in pair:
+                            self.ready(panel, ('127.0.0.1', self.backends[name]))
+                        config = json.loads((bindir/'config.json').read_text())
+                        paired = {item['port']: item for item in config['inbounds']
+                                  if item.get('streamSettings', {}).get('network') in ('ws', 'grpc')}
+                        self.assertEqual(set(paired), {self.backends[name] for name in pair})
+                        self.assertTrue(all(item['listen'] == '127.0.0.1' and not item['settings'].get('clients')
+                                            for item in paired.values()))
+                        self.validate(config, 'enabled-pair-before-client')
+                        listener_table = subprocess.check_output(['ss', '-H', '-ltnp'], text=True, timeout=5)
+                        for number in paired:
+                            listeners = [line for line in listener_table.splitlines()
+                                         if line.split()[3].rsplit(':', 1)[-1] == str(number)]
+                            self.assertEqual([line.split()[3] for line in listeners], [f'127.0.0.1:{number}'])
+                            xray_pid = re.search(r'pid=(\d+)', listeners[0])[1]
+                            self.assertEqual(Path(f'/proc/{xray_pid}/exe').readlink(), bindir/self.xray.name)
+                    with tempfile.TemporaryDirectory(dir=self.root) as directory:
+                        api = session.Panel(f'https://deploy.example:{self.public}/panel/', 'integration', self.auth,
+                                            directory, ['--cacert', str(self.cert),
+                                                        '--resolve', f'deploy.example:{self.public}:127.0.0.1'])
+                        result = client.create(api)
+                        record = api.request('panel/api/clients/get/'+result['email'])['obj']
+                        self.assertEqual(set(record['inboundIds']), {self.rows[name]['id'] for name in rows})
+                finally:
+                    stop(panel)
+                    stop(nginx)
+                    self.release_subscription_socket()
 
     def test_vision_and_initial_client_official_api(self):
         from test_integrated_features import helper

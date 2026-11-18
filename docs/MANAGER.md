@@ -30,6 +30,11 @@ Without arguments and without an interactive
 stdin/stdout TTY, the script refuses to install. Do not pipe the script into Bash;
 download it to a file so prompts keep their terminal input.
 
+After the VPS security question, Installation asks whether to set up additional
+connections. The default `N` installs only VLESS Reality, VLESS XHTTP and Hysteria2.
+`y` first offers VLESS WebSocket and Trojan gRPC as one choice, with both enabled
+if accepted. Vision, AmneziaWG and CDN-compatible XHTTP are then offered individually.
+
 Russian covers the main menus, installation questions, confirmations, warnings
 and result summaries. Product/protocol names, commands, paths, `YES`, `y/N`,
 `Y/n`, technical status markers and machine formats stay unchanged. System logs

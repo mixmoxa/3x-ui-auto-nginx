@@ -561,8 +561,8 @@ install() { local -a args=(); while (($#)); do case "$1" in -o|-g) shift 2;; *) 
 
     def test_tcp_port_allocation_repeats_occupied_ports_no_nc_and_late_vision(self):
         main=function('main')
-        self.assertLess(main.index('preflight_panel_release'),main.index('make_port sub_port'))
-        self.assertLess(main.index('make_port sub_port'),main.index('clean_previous_install'))
+        self.assertLess(main.index('preflight_panel_release'),main.index('make_port "${ports[@]}"'))
+        self.assertLess(main.index('make_port "${ports[@]}"'),main.index('clean_previous_install'))
         with tempfile.TemporaryDirectory() as directory, socket.socket() as occupied:
             root=Path(directory);occupied.bind(('127.0.0.1',0));busy=occupied.getsockname()[1]
             # Deliberately bind without listen: a TCP connect probe would miss it.

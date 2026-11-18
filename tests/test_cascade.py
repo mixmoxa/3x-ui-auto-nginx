@@ -130,6 +130,21 @@ class Cascade(unittest.TestCase):
                                     dict(method='POST')))
             self.assertEqual(self.run_command('exit-status', panel), dict(state='ready'))
 
+    def test_cascade_exit_on_installer_layout_without_ws_grpc(self):
+        from test_personal_xhttp import seed
+
+        rows, _ = seed(INSTALL_WS_GRPC='n')
+        self.assertEqual(set(rows), {'reality', 'xhttp', 'hysteria2'})
+        # FakePanel uses ID 7 for the REALITY client readback.
+        panel = FakePanel()
+        panel.rows = [dict(id=row['id']+6, protocol=row['protocol'], port=int(row['port']), listen=row['listen'],
+                           enable=row['enable']=='1', settings=json.loads(row['settings']),
+                           streamSettings=json.loads(row['stream_settings'])) for row in rows.values()]
+        self.manifest.write_text(json.dumps({'inbound_roles': {'reality': panel.rows[0]['id']}}))
+        self.assertEqual(self.run_command('exit-create', panel)['state'], 'created')
+        self.assertEqual(self.run_command('exit-status', panel), {'state': 'ready'})
+        self.assertEqual(panel.record['inboundIds'], [rows['reality']['id']+6])
+
     def test_manifest_selects_one_of_multiple_structural_matches(self):
         self.manifest.write_text(json.dumps(dict(inbound_roles=dict(reality=9))))
         panel = FakePanel()

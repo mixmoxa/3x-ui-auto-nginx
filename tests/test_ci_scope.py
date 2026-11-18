@@ -366,7 +366,7 @@ class CIScope(unittest.TestCase):
                     'checks.installed(cold=True)','checks.transports()','checks.change_domains()',
                     'checks.restore_before_domains()']
                 agh_calls=['positive','checks.installed()','checks.native_agh_update()']
-                negative_calls=['dependency','dot-outage','checks.transports(vision=False)']
+                negative_calls=['dependency','dot-outage','checks.transports(vision=False, ws_grpc=False)']
                 self.assertEqual(calls,(positive_calls if group in ('all','positive') else [])+
                                        (agh_calls if group in ('all','agh') else [])+
                                        (negative_calls if group in ('all','negative') else []))

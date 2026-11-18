@@ -1973,6 +1973,47 @@ class PersonalBackup(unittest.TestCase):
             db.execute('INSERT INTO inbounds ('+','.join(columns)+') VALUES ('+
                        ','.join('?' for _ in columns)+')', [record[column] for column in columns])
 
+    def test_backup_inspect_restore_installer_layout_without_ws_grpc(self):
+        from test_personal_xhttp import MAIN, SHARED, render, seed
+
+        self.seed_hysteria_cover()
+        variables = dict(domain='example.com', reality_domain='reality.example.com', sub_port='10003', INSTALL_WS_GRPC='n')
+        rows, hosts = seed(**variables)
+        self.assertEqual(set(rows), {'reality', 'xhttp', 'hysteria2'})
+        shared = relocated(render(SHARED, **variables), self.root)
+        self.write('/etc/nginx/snippets/includes.conf', shared)
+        self.write('/etc/nginx/sites-available/example.com', relocated(render(MAIN, **variables), self.root))
+        nginx = self.path('/etc/nginx/nginx.conf')
+        nginx.write_text(nginx.read_text().replace('server { listen', 'server { set $hack 0; set $serve_clash_yaml 0; listen', 1))
+        path = self.path('/etc/x-ui/x-ui.db')
+        with sqlite3.connect(path) as db:
+            db.execute('DELETE FROM hosts')
+            db.execute('DELETE FROM inbounds')
+            for table, records in (('inbounds', rows.values()), ('hosts', hosts)):
+                for row in records:
+                    if table == 'inbounds':
+                        row = {**row, 'port': int(row['port']), 'enable': int(row['enable'])}
+                    keys = tuple(row)
+                    db.execute('INSERT INTO '+table+' ('+','.join(keys)+') VALUES ('+','.join('?' for _ in keys)+')',
+                               [relocated(value, self.root) if isinstance(value, str) else value for value in row.values()])
+
+        def state():
+            with sqlite3.connect(path) as db:
+                return {table: db.execute('SELECT * FROM '+table+' ORDER BY id').fetchall()
+                        for table in ('inbounds', 'hosts')}
+
+        original = state()
+        archive = self.backup()
+        inspected = self.run_tool('inspect', archive)
+        self.assertEqual(inspected.returncode, 0, inspected.stderr)
+        self.assertEqual(json.loads(inspected.stdout)['format_version'], 3)
+        with sqlite3.connect(path) as db:
+            db.execute("UPDATE hosts SET remark='replaced'")
+        result = self.run_tool('restore', archive)
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertEqual(state(), original)
+        self.assertEqual(self.path('/etc/nginx/snippets/includes.conf').read_text(), shared)
+
     def test_hysteria_cover_restore_ignores_remote_nodes(self):
         self.seed_hysteria_cover()
         # Remote Hysteria2 can share UDP/443; remote REALITY can share :8443.

@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+from urllib.parse import parse_qs, urlsplit
 import uuid
 import ssl
 
@@ -158,6 +159,10 @@ def installed(cold=False):
         checks['new_boot_id']=True
     units=('ssh','nginx','x-ui','mtr-backend','AdGuardHome','fail2ban','apt-daily.timer','apt-daily-upgrade.timer','certbot.timer','systemd-resolved')
     deadline=time.monotonic()+90
+    roles = json.loads(Path('/etc/x-ui/auto-nginx-managed.json').read_text())['inbound_roles']
+    with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro', uri=True) as db:
+        pair = db.execute('SELECT enable,listen,port FROM inbounds WHERE id IN (?,?)', (roles['ws'], roles['grpc'])).fetchall()
+    assert len(pair) == 2 and all(enabled == 1 and address == '127.0.0.1' for enabled, address, _ in pair)
     while True:
         missing=[u for u in units if subprocess.run(['systemctl','is-active','--quiet',u],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode]
         if not missing:break
@@ -188,6 +193,10 @@ def installed(cold=False):
             xray=[pid for pid in children if Path(f'/proc/{pid}/exe').readlink().name.startswith('xray-linux-')]
             assert len(xray)==1
             listing=run('ss','-H','-lntup')
+            for _, address, port in pair:
+                listeners = [line for line in listing.splitlines() if line.startswith('tcp ') and
+                             line.split()[4].rsplit(':', 1)[-1] == str(port)]
+                assert len(listeners) == 1 and listeners[0].split()[4] == f'{address}:{port}' and f'pid={xray[0]},' in listeners[0]
             for protocol,port,pid in (('tcp',8443,xray[0]),('udp',443,xray[0]),('udp',8443,xui)):
                 assert any(line.startswith(protocol+' ') and line.split()[4].rsplit(':',1)[-1]==str(port) and f'pid={pid},' in line for line in listing.splitlines())
             assert stat.S_ISSOCK(Path('/dev/shm/uds2023.sock').stat().st_mode)
@@ -204,6 +213,11 @@ def installed(cold=False):
             if time.monotonic()>=deadline:raise AssertionError('Installed Xray/AWG listener readiness deadline')
             time.sleep(.1)
     checks['Xray_and_AWG_listeners']=True
+    binary = Path(f'/proc/{xray[0]}/exe').readlink()
+    with (root/'xray-config-test.private.log').open('wb') as log:
+        subprocess.run([binary, 'run', '-test', '-c', binary.with_name('config.json')], cwd=binary.parent,
+                       stdout=log, stderr=subprocess.STDOUT, check=True, timeout=30)
+    checks['Xray_WS_and_Trojan_gRPC_config_and_loopback_listeners']=True
     for domain in ('panel.example.test','reality.example.test','vision.example.test'):
         cert=Path('/etc/letsencrypt/live')/domain/'fullchain.pem';key=cert.with_name('privkey.pem')
         run('openssl','x509','-in',str(cert),'-noout','-checkend','0')
@@ -233,7 +247,11 @@ def installed(cold=False):
         client=load('client');rows=client.active_inbounds(panel)
         identity=json.loads(Path('/etc/x-ui/initial-client.json').read_text())['identity']
         client.validate_credentials(rows,identity['email'])
-        client.subscription(panel,identity['subId'],rows,identity['email'])
+        url = client.subscription(panel,identity['subId'],rows,identity['email'])
+        links = [urlsplit(link) for link in client.decode_subscription(client.fetch(panel, url))]
+        for scheme, network in (('vless', 'ws'), ('trojan', 'grpc')):
+            matching = [link for link in links if link.scheme == scheme and parse_qs(link.query).get('type') == [network]]
+            assert len(matching) == 1 and (matching[0].hostname, matching[0].port) == ('panel.example.test', 443)
     checks['panel_login_and_real_RAW_JSON_subscription']=True
     metadata=json.loads(Path('/opt/AdGuardHome/managed.json').read_text())
     ident=os.urandom(2);name='cold-'+os.urandom(6).hex()+'.example.com'
@@ -361,7 +379,7 @@ def http3_cover():
         assert headers[b':status']==b'404' and b'set-cookie' not in headers
 
 
-def transports(vision=True, panel_domain='panel.example.test', positive_only=False):
+def transports(vision=True, panel_domain='panel.example.test', positive_only=False, *, ws_grpc=True):
     root=ROOT; results={}
     http3_cover()
     binary=next(Path("/usr/local/x-ui/bin").glob("xray-linux-amd64"))
@@ -378,11 +396,18 @@ def transports(vision=True, panel_domain='panel.example.test', positive_only=Fal
             public=panel.request('panel/api/setting/defaultSettings',{})['obj']
             configs=json.loads(client.fetch(panel,public['subJsonURI']+identity['subId']))
             selected={}
+            paired = set()
             for config in configs:
-                out=next(o for o in config['outbounds'] if o['protocol'] in ('vless','hysteria'))
+                out=next(o for o in config['outbounds'] if o['protocol'] in ('vless','hysteria','trojan'))
                 stream=out['streamSettings']
+                if stream['network'] in ('ws', 'grpc'):
+                    kind = (out['protocol'], stream['network'])
+                    assert kind not in paired
+                    paired.add(kind)
+                    continue
                 name='REALITY' if stream['security']=='reality' else 'XHTTP' if stream['network']=='xhttp' else 'Hysteria2' if out['protocol']=='hysteria' else 'Vision'
                 assert name not in selected;selected[name]=config
+            assert paired == ({('vless', 'ws'), ('trojan', 'grpc')} if ws_grpc else set())
             assert set(selected)==({'REALITY','XHTTP','Hysteria2','Vision'} if vision else {'REALITY','XHTTP','Hysteria2'})
             for name,original in selected.items():
                 for variant in (('positive',) if positive_only else ('positive','credentials') if name=='REALITY' else ('positive','credentials','untrusted-ca','wrong-sni')):
