@@ -88,6 +88,149 @@ def nightly_after_cold_boot():
 
 
 class SecuritySystemd(unittest.TestCase):
+    def test_real_nginx_adguard_dot_configuration(self):
+        from certificate_fixtures import function, relocate
+        from test_installer_compatibility import http_name_certificate
+        from test_personal_xhttp import render
+
+        domain = 'panel.example'
+        for ipv6 in (False, True):
+            with self.subTest(ipv6=ipv6), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                nginx = root/'etc/nginx'
+                for name in ('stream-enabled', 'stream-sni.d', 'stream-upstreams.d'):
+                    (nginx/name).mkdir(mode=0o755, parents=True)
+                live = root/'etc/letsencrypt/live'/domain
+                live.mkdir(parents=True)
+                http_name_certificate(live)
+                (live/'cert.pem').rename(live/'fullchain.pem')
+                (live/'key.pem').rename(live/'privkey.pem')
+                router = render('cat > /etc/nginx/stream-enabled/stream.conf', domain=domain,
+                                reality_domain='cover.example', ipv6_listen='listen [::]:443;' if ipv6 else '')
+                (nginx/'stream-enabled/stream.conf').write_text(relocate(router, root))
+                config = nginx/'nginx.conf'
+                config.write_text('load_module /usr/lib/nginx/modules/ngx_stream_module.so;\n'
+                                  f'pid {root}/nginx.pid;\nerror_log stderr;\nevents {{}}\n'
+                                  f'stream {{ include {nginx}/stream-enabled/*.conf; }}\n')
+                stage = root/'stage'
+                stage.mkdir()
+                source = '\n'.join(relocate(function(name), root)
+                                   for name in ('render_adguard_dot', 'configure_adguard_dot'))
+                result = subprocess.run(['bash', '-eu', '-c', source + '''
+msg_err() { printf '%s\n' "$*" >&2; }
+agh_config() { AGH_DNS_PORT=15453; }
+domain=$1
+AGH_TEMP=$2
+configure_adguard_dot
+''', 'fixture', domain, str(stage)], capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                dot_dir = nginx/'stream-dot.d'
+                dot_file = dot_dir/'adguard-dot.conf'
+                for path, mode in ((dot_dir, 0o755), (dot_file, 0o644)):
+                    self.assertFalse(path.is_symlink())
+                    info = path.stat()
+                    self.assertEqual((info.st_uid, info.st_gid, info.st_mode & 0o777), (0, 0, mode))
+                result = subprocess.run(['/usr/sbin/nginx', '-e', 'stderr', '-p', str(root)+'/',
+                                         '-c', str(config), '-t'], capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_adguard_dot_reinstall_cleanup_and_nginx(self):
+        from certificate_fixtures import relocate
+        from test_installer_compatibility import complete_function, http_name_certificate
+        from test_personal_xhttp import FIXTURE, render
+
+        cases = ('installed', 'no-dot', 'foreign-file', 'missing-rule', 'dangling-link', 'other-layout')
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory(prefix='dot-reinstall-') as directory:
+                root = Path(directory)
+                nginx = root/'etc/nginx'
+                for name in ('sites-enabled', 'sites-available', 'stream-enabled', 'stream-sni.d', 'stream-upstreams.d'):
+                    (nginx/name).mkdir(parents=True)
+                (root/'modules').symlink_to('/usr/lib/nginx/modules', target_is_directory=True)
+                live = root/'etc/letsencrypt/live'/FIXTURE['domain']
+                live.mkdir(parents=True)
+                http_name_certificate(live)
+                (live/'cert.pem').rename(live/'fullchain.pem')
+                (live/'key.pem').rename(live/'privkey.pem')
+
+                installed = case != 'no-dot'
+                dot_dir = nginx/'stream-dot.d'
+                dot_file = dot_dir/'adguard-dot.conf'
+                foreign = dot_dir/'foreign.conf'
+                rule = root/'ufw-853'
+                calls = root/'ufw-calls'
+                calls.touch()
+                if case != 'missing-rule':
+                    rule.touch()
+                router_include = f'include {nginx}/stream-enabled/*.conf;'
+                dot_include = f'include {dot_dir}/*.conf;'
+                original = (f'load_module modules/ngx_stream_module.so;\nworker_rlimit_nofile 16384;\n'
+                            f'pid {root}/nginx.pid;\nerror_log stderr;\nevents {{}}\n'
+                            f'stream {{ {router_include} }}\n\n')
+                expanded = original.replace(f'{router_include} }}', f'{router_include} {dot_include} }}')
+                if case == 'other-layout':
+                    expanded = expanded.replace(f'{router_include} {dot_include}', f'{router_include}\n    {dot_include}')
+                config = nginx/'nginx.conf'
+                config.write_text(expanded if installed else original)
+                config.chmod(0o640)
+                info = config.stat()
+                router = render('cat > /etc/nginx/stream-enabled/stream.conf', ipv6_listen='')
+                (nginx/'stream-enabled/stream.conf').write_text(relocate(router, root))
+                stage = root/'stage'
+                stage.mkdir()
+                source = '\n'.join(relocate(complete_function(name), root) for name in (
+                    'render_adguard_dot', 'configure_adguard_dot', 'clean_previous_install', 'configure_nginx'))
+                stubs = '''
+systemctl() { :; }
+msg_err() { printf '%s\n' "$*" >&2; }
+ipv6_available() { return 1; }
+agh_config() { AGH_DNS_PORT=15453; }
+nginx() { /usr/sbin/nginx -e stderr -p "$ROOT/" -c "$ROOT/etc/nginx/nginx.conf" "$@"; }
+ufw() {
+    printf '%s\n' "$*" >> "$ROOT/ufw-calls"
+    [[ "$*" == 'delete allow 853/tcp' && -f "$ROOT/ufw-853" ]] && rm "$ROOT/ufw-853"
+}
+'''
+                env = {**os.environ, **FIXTURE, 'ROOT': str(root), 'AGH_TEMP': str(stage)}
+
+                def run(command):
+                    return subprocess.run(['bash', '-eu', '-c', source + stubs + command], env=env,
+                                          capture_output=True, text=True, timeout=15)
+
+                if installed:
+                    dot_dir.mkdir(mode=0o755)
+                    if case == 'dangling-link':
+                        dot_file.symlink_to('missing.conf')
+                    else:
+                        fragment = run('render_adguard_dot "$domain" 15453 n')
+                        self.assertEqual(fragment.returncode, 0, fragment.stderr)
+                        dot_file.write_text(fragment.stdout)
+                    if case == 'foreign-file':
+                        foreign.write_text('# local configuration\n')
+                cleaned = run('clean_previous_install')
+                self.assertEqual(cleaned.returncode, 0, cleaned.stderr)
+                cleaned_bytes = config.read_bytes()
+                cleaned_info = config.stat()
+
+                if case != 'other-layout':
+                    rebuilt = run('configure_nginx')
+                    self.assertEqual(rebuilt.returncode, 0, rebuilt.stderr)
+                    self.assertEqual(config.read_bytes().count(b'stream {'), 1)
+                self.assertEqual(cleaned_bytes, (expanded if case == 'other-layout' else original).encode())
+                self.assertEqual((cleaned_info.st_ino, cleaned_info.st_mode, cleaned_info.st_uid, cleaned_info.st_gid),
+                                 (info.st_ino, info.st_mode, info.st_uid, info.st_gid))
+                self.assertFalse(dot_file.exists() or dot_file.is_symlink())
+                self.assertEqual(dot_dir.exists(), case == 'foreign-file')
+                if case == 'foreign-file':
+                    self.assertEqual(foreign.read_bytes(), b'# local configuration\n')
+                self.assertEqual(calls.read_text().splitlines(), ['delete allow 853/tcp'] if installed else [])
+                self.assertEqual(rule.exists(), case == 'no-dot')
+                if case == 'installed':
+                    enabled = run('configure_adguard_dot && nginx -t')
+                    self.assertEqual(enabled.returncode, 0, enabled.stderr)
+                    self.assertTrue(dot_file.is_file())
+                    self.assertEqual(config.read_bytes(), expanded.encode())
+
     def test_base_os_post_upgrade_ssh_health(self):
         if (Path('/proc/1/comm').read_text().strip() != 'systemd' or
                 not Path('/opt/xui-ci/apt/xui-ci-upgrade-1.deb').is_file()):

@@ -423,6 +423,10 @@ location / {{ return 404; }} }}\n'''
         with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sock:
             sock.settimeout(10);sock.sendto(query,('127.0.0.1',self.native));answer=sock.recv(65535)
         self.dns_answer(query,answer)
+        with socket.create_connection(('127.0.0.1', self.native), timeout=10) as sock, sock.makefile('rb') as reply:
+            sock.sendall(struct.pack('!H', len(query)) + query)
+            length, = struct.unpack('!H', reply.read(2))
+            self.dns_answer(query, reply.read(length))
         self.assertIn('/AdGuardHome_linux_amd64.tar.gz',requests)
 
     def start_pebble(self):
@@ -538,8 +542,16 @@ location / {{ return 404; }} }}\n'''
         hook.write_text(self.shell(source+'\nrender_certificate_hook "$1" "$2"',self.domain,self.reality));hook.chmod(0o755)
         config=self.root/'nginx.conf'
         current=config.read_text().replace(str(self.cert),str(self.root/'etc/letsencrypt/live'/self.domain/'fullchain.pem')).replace(str(self.key),str(self.root/'etc/letsencrypt/live'/self.domain/'privkey.pem'))
-        config.write_text(current)
+        dot_port = port(self.allocated)
+        dot = self.root/'adguard-dot.conf'
+        fragment = self.shell(relocate(function('render_adguard_dot'), self.root) +
+                              '\nrender_adguard_dot "$1" "$2" n', self.domain, self.native)
+        dot.write_text(fragment.replace('listen 853 ssl;', f'listen 127.0.0.1:{dot_port} ssl;'))
+        config.write_text('load_module /usr/lib/nginx/modules/ngx_stream_module.so;\n' +
+                          f'stream {{ include {dot}; }}\n' + current)
+        subprocess.run([self.nginx,'-p',str(self.root)+'/', '-c',config,'-t'],check=True,capture_output=True,timeout=15)
         subprocess.run([self.nginx,'-p',str(self.root)+'/', '-c',config,'-s','reload'],check=True,capture_output=True,timeout=15)
+        self.ready(nginx, dot_port)
         calls=self.root/'hook-calls'
         wrapper=health/'nginx'
         wrapper.write_text(f'#!/bin/sh\nexec "{self.nginx}" -p "{self.root}/" -c "{config}" "$@"\n');wrapper.chmod(0o755)
@@ -561,17 +573,18 @@ elif args not in (['try-restart','x-ui'],['is-active','--quiet','x-ui']):sys.exi
         # test certificate. Verify both trusted generations, then require the
         # new serial below; never disable TLS verification or retry a test.
         trust=self.root/'pebble-ca.pem';trust.write_bytes(roots+self.cert.read_bytes())
-        def served(serial):
+        def served(serial, listener):
             deadline=time.monotonic()+15
             while time.monotonic()<deadline:
                 ctx=ssl.create_default_context(cafile=str(trust))
-                with socket.create_connection(('127.0.0.1',self.https),timeout=5) as raw:
+                with socket.create_connection(('127.0.0.1',listener),timeout=5) as raw:
                     with ctx.wrap_socket(raw,server_hostname=self.domain) as connection:
                         from cryptography import x509
                         if x509.load_der_x509_certificate(connection.getpeercert(binary_form=True)).serial_number==serial:return
                 time.sleep(.05)
             self.fail('nginx reload did not serve the renewed certificate')
-        served(self.lineage(self.domain))
+        for listener in (self.https, dot_port):
+            served(self.lineage(self.domain), listener)
         for names in ((self.domain,),(self.reality,),(self.domain,self.reality),('unrelated.example.test',)):
             calls.unlink(missing_ok=True)
             for name in names:
@@ -580,7 +593,8 @@ elif args not in (['try-restart','x-ui'],['is-active','--quiet','x-ui']):sys.exi
             self.assertEqual(recorded.count(['reload','nginx']),0 if names==('unrelated.example.test',) else len(names))
             self.assertEqual(recorded.count(['try-restart','x-ui']),int(self.domain in names))
             self.assertFalse(any(call[0]=='stop' for call in recorded));self.assertIsNone(nginx.poll())
-            served(self.lineage(self.domain))
+            for listener in (self.https, dot_port):
+                served(self.lineage(self.domain), listener)
         for fault in ('fail-nginx','fail-service'):
             marker=self.root/fault;marker.touch();calls.unlink(missing_ok=True)
             valid=config.read_text()

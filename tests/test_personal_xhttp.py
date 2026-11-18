@@ -588,7 +588,11 @@ systemctl() {
         self.assertEqual(calls, ["status"])
 
     def test_firewall_never_disables_resets_or_hardcodes_ssh(self):
-        for line in SOURCE.splitlines():
+        cleanup = function("clean_previous_install")
+        # Only the exact managed DoT rule may be deleted during rebuild.
+        dot_delete = "if [[ $had_dot == y ]]; then ufw delete allow 853/tcp || true; fi"
+        source = SOURCE.replace(cleanup, cleanup.replace(dot_delete, "", 1), 1)
+        for line in source.splitlines():
             if re.search(r"\bufw\b", line):
                 executable = " ".join(shlex.split(line, comments=True))
                 self.assertNotRegex(executable, r"\bufw\s+(?:disable|reset|default|delete|allow\s+22/tcp)\b")

@@ -171,6 +171,34 @@ printf 'FLAGS:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s\n' "$INSTALL_SECURITY" "$INSTALL_WS_
                         self.assertEqual(code,0,text);self.assertIn('RESULT:'+expected,text)
                         if answers.startswith(b'bad'):self.assertIn('Введите y или n.',text)
 
+    def test_russian_adguard_dot_prompt_and_eof(self):
+        source = (ROOT/'x-ui-latest.sh').read_text()
+        first = source.index('    select_adguard || exit 1')
+        last = source.index('\n', source.index('    select_client || exit 1', first))
+        prompt = 'Включить DNS-over-TLS (DoT) для ваших устройств? [y/N]:'
+        client = 'Создать клиента в 3X-UI'
+        with tempfile.TemporaryDirectory() as temporary:
+            script = Path(temporary)/'questions.sh'
+            script.write_text('source "'+str(ROOT/'x-ui-latest.sh')+'"\nUI_LANG=ru\nINSTALL_AGH_DOT=n\n'
+                              'uname() { echo x86_64; }\n'+source[first:last]+
+                              '\nprintf "\\nRESULT:%s:%s\\n" "$INSTALL_AGH_DOT" "$CREATE_CLIENT"\n')
+            for answers, expected in ((b'n\ny\n', 'n:y'), (b'y\n\x04\x04', 'n:n'),
+                                      (b'y\n\nn\n', 'n:n'), (b'y\nbad\nY\nn\n', 'y:n')):
+                with self.subTest(answers=answers):
+                    code, text = tty_run(script, answers, env={'TERM':'xterm', 'NO_COLOR':None})
+                    self.assertEqual(code, 0, text)
+                    self.assertIn('RESULT:'+expected, text)
+                    if answers.startswith(b'n'):
+                        self.assertNotIn(prompt, text)
+                        continue
+                    self.assertLess(text.index('Установить и настроить AdGuard Home'), text.index(prompt))
+                    self.assertLess(text.index('Он открывает порт 853'), text.index(prompt))
+                    self.assertLess(text.rindex(prompt), text.index(client))
+                    self.assertIn('\x1b[38;5;208m', text)
+                    if b'bad' in answers:
+                        self.assertEqual(text.count(prompt), 2)
+                        self.assertIn('Введите y или n.', text)
+
     def test_russian_destructive_confirmation_still_requires_exact_yes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);script=root/'confirmation.sh';marker=root/'mutated'
@@ -685,6 +713,27 @@ include /etc/nginx/snippets/x-ui-auto-optional/*.conf;
         self.assertEqual(code, 0)
         self.assertRegex(text, r'DoH:\s+not found')
         self.assertNotIn('https://panel.example/dns-AbCdEf123456', text)
+
+    def test_server_details_dot_uses_file_and_stays_read_only(self):
+        root, db, script = self.server_details_fixture()
+        fragment = root/'etc/nginx/stream-dot.d/adguard-dot.conf'
+        fragment.parent.mkdir()
+        for installed in (False, True):
+            if installed:
+                fragment.touch()
+            before = {p: (p.read_bytes(), p.stat().st_mtime_ns)
+                      for p in (db, self.marker, *([fragment] if installed else []))}
+            for language, enabled, disabled in (
+                (b'1', 'panel.example, port 853', 'not enabled'),
+                (b'2', 'panel.example, порт 853', 'не включён'),
+            ):
+                with self.subTest(installed=installed, language=language):
+                    code, text = tty_run(script, language+b'\n6\n0\n')
+                    self.assertEqual(code, 0, text)
+                    self.assertRegex(text, r'DoT:\s+'+re.escape(enabled if installed else disabled))
+                    self.assertNotIn('private-panel-sentinel', text)
+            self.assertEqual(fragment.exists(), installed)
+            self.assertEqual(before, {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before})
 
     def test_telegram_installed_always_refreshes_bootstrap(self):
         root=self.f.root;launcher=root/'launcher';marker=root/'handoff';network=root/'downloads'

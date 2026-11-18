@@ -239,6 +239,23 @@ clean_previous_install() {
     rm -rf /etc/nginx/sites-enabled/* || return 1
     rm -rf /etc/nginx/sites-available/* || return 1
     rm -rf /etc/nginx/stream-enabled/* || return 1
+
+    local dot_dir=/etc/nginx/stream-dot.d nginx_conf=/etc/nginx/nginx.conf
+    local dot_file="$dot_dir/adguard-dot.conf" had_dot=n restored_config
+    local router_include='include /etc/nginx/stream-enabled/*.conf;'
+    local dot_include='include /etc/nginx/stream-dot.d/*.conf;'
+    local stream_with_dot="stream { $router_include $dot_include }"
+
+    if [[ -f $dot_file || -L $dot_file ]]; then had_dot=y; fi
+    rm -f "$dot_file" || true
+    rmdir "$dot_dir" 2>/dev/null || true
+    # Keep trailing newlines when capturing awk's output for the in-place write.
+    if grep -Fxq -- "$stream_with_dot" "$nginx_conf" 2>/dev/null &&
+        restored_config=$(awk -v old="$stream_with_dot" -v new="stream { $router_include }" \
+            '$0 == old { $0 = new } { print }' "$nginx_conf" && printf '.'); then
+        printf '%s' "${restored_config%.}" > "$nginx_conf" || true
+    fi
+    if [[ $had_dot == y ]]; then ufw delete allow 853/tcp || true; fi
 }
 
 # ─── Port / path generators ──────────────────────────────────────────────────
@@ -2337,6 +2354,11 @@ check_installation() {
 # FIREWALL
 # ─────────────────────────────────────────────────────────────────────────────
 setup_firewall() {
+    # Publish the optional port only after nginx and AGH are ready.
+    if [[ ${1:-} == adguard-dot ]]; then
+        [[ ${INSTALL_AGH_DOT:-n} != y ]] || ufw allow 853/tcp
+        return
+    fi
     local status port socket_state socket_listen='' ssh_config='' detected
     local -a ssh_ports=()
     status=$(LC_ALL=C ufw status) || return 1
@@ -2663,6 +2685,22 @@ select_adguard() {
     done
 }
 
+select_dot() {
+    INSTALL_AGH_DOT=n
+    local answer
+    ui_note 'DNS-over-TLS lets Android Private DNS use your AdGuard Home. It opens port 853 to the whole internet: anyone who knows your server address can send DNS queries to it. The number of simultaneous connections from one IP address is limited. In AdGuard Home all DoT queries are shown as 127.0.0.1, so ClientID and per-device rules do not work for DoT. If unsure, answer N.\n' \
+        'DNS-over-TLS нужен, чтобы «Частный DNS» на Android работал через ваш AdGuard Home. Он открывает порт 853 для всего интернета: любой, кто знает адрес вашего сервера, сможет отправлять на него DNS-запросы. Число одновременных соединений с одного IP-адреса ограничено. В AdGuard Home все запросы по DoT видны как 127.0.0.1, поэтому ClientID и правила для отдельных устройств для DoT не работают. Если не уверены, ответьте N.\n'
+    while true; do
+        ui_text 'Enable DNS-over-TLS (DoT) for your devices? [y/N]: ' 'Включить DNS-over-TLS (DoT) для ваших устройств? [y/N]: '
+        IFS= read -r answer || return 0
+        case "$answer" in
+            ''|n|N) return 0 ;;
+            y|Y) INSTALL_AGH_DOT=y; return 0 ;;
+            *) ui_text 'Please enter y or n.\n' 'Введите y или n.\n' ;;
+        esac
+    done
+}
+
 adguard_admin_probe() {
     # Install-only: Backup/Restore health never needs the plaintext password.
     (
@@ -2694,6 +2732,50 @@ for key, expected in (('http_port', sys.argv[2]), ('dns_port', sys.argv[3])):
         raise ValueError('Authenticated AGH status does not match managed ports')
 PY
     )
+}
+
+render_adguard_dot() {
+    local panel=$1 dns_port=$2 ipv6=$3
+    printf '%s\n' 'limit_conn_zone $binary_remote_addr zone=dot_conn:1m;' 'server {' '    listen 853 ssl;'
+    if [[ $ipv6 == y ]]; then printf '%s\n' '    listen [::]:853 ssl;'; fi
+    printf '%s\n' \
+        "    ssl_certificate /etc/letsencrypt/live/$panel/fullchain.pem;" \
+        "    ssl_certificate_key /etc/letsencrypt/live/$panel/privkey.pem;" \
+        '    ssl_protocols TLSv1.2 TLSv1.3;' \
+        '    limit_conn dot_conn 50;' \
+        "    proxy_pass 127.0.0.1:$dns_port;" '}'
+}
+
+configure_adguard_dot() {
+    local nginx_conf=/etc/nginx/nginx.conf directory=/etc/nginx/stream-dot.d ipv6=n
+    local router_include='include /etc/nginx/stream-enabled/*.conf;'
+    local dot_include='include /etc/nginx/stream-dot.d/*.conf;'
+    local stream="stream { $router_include }"
+    local fragment="$directory/adguard-dot.conf"
+    if [[ $(grep -Fxc -- "$stream" "$nginx_conf") != 1 ]] || grep -Fq -- "$dot_include" "$nginx_conf"; then
+        msg_err 'Cannot insert the DoT include in /etc/nginx/nginx.conf: expected one managed stream block without a DoT include.'
+        return 1
+    fi
+    if [[ -L $directory || -e $fragment || -L $fragment ]]; then
+        msg_err "Cannot install DoT: existing path conflicts with $fragment."
+        return 1
+    fi
+    agh_config || return 1
+    if grep -Eq '^[[:space:]]*listen[[:space:]]+\[::\]:443;' /etc/nginx/stream-enabled/stream.conf; then ipv6=y; fi
+    if [[ ! -d $directory ]]; then
+        install -d -o root -g root -m 0755 "$directory" || return 1
+        AGH_DOT_DIR_CREATED=1
+    elif [[ $(stat -c '%u:%g:%a' "$directory") != 0:0:755 ]]; then
+        msg_err "Cannot install DoT: $directory must be root:root 0755."
+        return 1
+    fi
+    render_adguard_dot "$domain" "$AGH_DNS_PORT" "$ipv6" > "$AGH_TEMP/adguard-dot.conf" || return 1
+    AGH_DOT_FILE_ATTEMPTED=1
+    install -o root -g root -m 0644 "$AGH_TEMP/adguard-dot.conf" "$fragment" || return 1
+    cp -a "$nginx_conf" "$AGH_TEMP/nginx.conf" || return 1
+    AGH_DOT_INCLUDE_ATTEMPTED=1
+    awk -v old="$stream" -v new="stream { $router_include $dot_include }" \
+        '$0 == old { $0 = new } { print }' "$AGH_TEMP/nginx.conf" > "$nginx_conf"
 }
 
 adguard_stage() {
@@ -2821,13 +2903,23 @@ PY
     agh_install_service || return 1
     agh_snippet > "$AGH_TEMP/candidate" || return 1
     install -o root -g root -m 0600 "$AGH_TEMP/candidate" /etc/nginx/snippets/x-ui-auto-optional/adguard.conf || return 1
+    if [[ ${INSTALL_AGH_DOT:-n} == y ]]; then
+        configure_adguard_dot || return 1
+    fi
     nginx -t || return 1
     AGH_NGINX_RELOAD_ATTEMPTED=1
-    systemctl reload nginx && agh_health && adguard_admin_probe && check_installation
+    systemctl reload nginx && agh_health && adguard_admin_probe && check_installation || return 1
+    if [[ ${INSTALL_AGH_DOT:-n} == y ]]; then
+        setup_firewall adguard-dot || {
+            msg_err "$(ui_text 'UFW could not allow 853/tcp for DNS-over-TLS.' 'UFW не удалось открыть 853/tcp для DNS-over-TLS.')"
+            return 1
+        }
+    fi
 }
 
 install_adguard() {
     local AGH_TEMP had_snippet=0 result=0 AGH_NGINX_RELOAD_ATTEMPTED=0
+    local AGH_DOT_DIR_CREATED=0 AGH_DOT_FILE_ATTEMPTED=0 AGH_DOT_INCLUDE_ATTEMPTED=0
     AGH_RESULT=failed_unverified
     AGH_TEMP=$(mktemp -d) || return 1
     chmod 0700 "$AGH_TEMP" || { rm -rf "$AGH_TEMP"; return 1; }
@@ -2837,6 +2929,15 @@ install_adguard() {
     fi
     if ! adguard_stage; then
         msg_err "$(ui_text 'AdGuard Home stage failed.' 'Настройка AdGuard Home завершилась ошибкой.')"
+        if (( AGH_DOT_INCLUDE_ATTEMPTED )); then
+            cp -a "$AGH_TEMP/nginx.conf" /etc/nginx/nginx.conf || result=1
+        fi
+        if (( AGH_DOT_FILE_ATTEMPTED )); then
+            rm -f /etc/nginx/stream-dot.d/adguard-dot.conf || result=1
+        fi
+        if (( AGH_DOT_DIR_CREATED )); then
+            rmdir /etc/nginx/stream-dot.d || result=1
+        fi
         cleanup_adguard || result=1
         if (( had_snippet )); then
             cp -a "$AGH_TEMP/previous" /etc/nginx/snippets/x-ui-auto-optional/adguard.conf || result=1
@@ -3030,6 +3131,9 @@ show_results() {
             printf '\n\n'
         else
             ui_text ' Login: admin\n Password: %s\n DoH: https://%s/%s\n\n' ' Логин: admin\n Пароль: %s\n DoH: https://%s/%s\n\n' "$AGH_PASSWORD" "$domain" "${AGH_DOH_PATH:-dns-query}"
+        fi
+        if [[ ${INSTALL_AGH_DOT:-n} == y && -f /etc/nginx/stream-dot.d/adguard-dot.conf ]]; then
+            ui_text ' DNS-over-TLS (Android Private DNS): %s, port 853\n' ' DNS-over-TLS (Android «Частный DNS»): %s, порт 853\n' "$domain"
         fi
         AGH_PASSWORD=''
     elif [[ "${AGH_RESULT:-not_requested}" == failed_rolled_back ]]; then
@@ -3398,6 +3502,8 @@ main() {
     select_additional_connections || exit 1
     select_warp_ru || exit 1
     select_adguard || exit 1
+    INSTALL_AGH_DOT=n
+    if [[ "$INSTALL_AGH" == y ]]; then select_dot || exit 1; fi
     select_client || exit 1
     [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text '[1] SYSTEM PREPARATION' '[1] ПОДГОТОВКА СИСТЕМЫ')"
     ui_text '\nPreparing system...\n' '\nПодготовка системы...\n'
@@ -4618,10 +4724,11 @@ if isinstance(web_path, str) and re.fullmatch(r'/[A-Za-z0-9_-]+/', web_path) and
     if location(vhost, '= ' + web_path + 'diag'):
         diagnostics = panel_url + 'diag'
 
+dot = panel if (nginx / 'stream-dot.d/adguard-dot.conf').is_file() else ''
 for value in (panel_url, ', '.join(names), diagnostics,
               subscription(settings, panel, '', includes), settings.get('subEnable'),
               subscription(settings, panel, 'Json', includes), settings.get('subJsonEnable'), count,
-              *adguard(panel, vhost, (state.get('features') or {}).get('adguard')), reality, vision):
+              *adguard(panel, vhost, (state.get('features') or {}).get('adguard')), reality, vision, dot):
     print(value if value is not None and str(value).isprintable() else '')
 SERVER_DETAILS
 }
@@ -4691,7 +4798,11 @@ server_details_action() {
         server_details_row "$(ui_text 'Login:        ' 'Логин:        ')" "${fields[10]-}"
         server_details_row 'DoH:          ' "${fields[11]-}"
     fi
-    server_details_row 'DoT:          ' "$(ui_text 'not enabled' 'не включён')" plain
+    if [[ -n ${fields[14]-} ]]; then
+        server_details_row 'DoT:          ' "$(ui_text '%s, port 853' '%s, порт 853' "${fields[14]}")" plain
+    else
+        server_details_row 'DoT:          ' "$(ui_text 'not enabled' 'не включён')" plain
+    fi
     printf '\n'
     msg_inf "$(ui_text '  Domains' '  Домены')"
     server_details_row 'REALITY:      ' "${fields[12]-}"

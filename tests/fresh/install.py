@@ -68,7 +68,7 @@ def install(scenario, ref):
         if scenario == 'dependency':
             Path('/etc/apt/preferences.d/pilot-mandatory-failure').write_text(
                 'Package: nginx-full\nPin: version *\nPin-Priority: -1\n')
-        answers = b'y\ny\ny\ny\nvision.example.test\ny\ny\nn\ny\ny\n'
+        answers = b'y\ny\ny\ny\nvision.example.test\ny\ny\nn\ny\nn\ny\n'
         if scenario == 'dot-outage': answers = b'y\nn\nn\nn\ny\n'
         if scenario == 'restore-source': answers = b'n\nn\nn\nn\nn\n'
         started = time.monotonic()

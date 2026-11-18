@@ -97,6 +97,9 @@ gpgv() {
 ss() {
     echo "tcp LISTEN 0 128 ${LISTEN_WEB:-127.0.0.1}:${AGH_WEB_PORT} 0.0.0.0:* users:((\"AdGuardHome\",pid=${LISTEN_PID:-12345},fd=5))"
     echo "${DNS_PROTOCOL:-udp} UNCONN 0 0 ${LISTEN_DNS:-127.0.0.1}:${AGH_DNS_PORT} 0.0.0.0:* users:((\"AdGuardHome\",pid=${LISTEN_PID:-12345},fd=6))"
+    if [[ "${DNS_TCP:-n}" == y ]]; then
+        echo "tcp LISTEN 0 128 127.0.0.1:$AGH_DNS_PORT 0.0.0.0:* users:((\"AdGuardHome\",pid=12345,fd=52))"
+    fi
     if [[ -n "${EXTRA_AGH_UDP:-}" ]]; then
         echo "udp UNCONN 0 0 ${EXTRA_AGH_UDP} 0.0.0.0:* users:((\"AdGuardHome\",pid=${LISTEN_PID:-12345},fd=51))"
     fi
@@ -201,7 +204,7 @@ class AdGuardInstaller(unittest.TestCase):
 
     def run_shell(self, names, body, input=None, **env):
         if 'adguard_stage' in names:
-            names = (*names, 'adguard_admin_probe')
+            names = (*names, 'adguard_admin_probe', 'configure_adguard_dot', 'render_adguard_dot', 'setup_firewall')
         source = MOCK + '\n' + '\n'.join(relocate(function(n), self.root) for n in names)
         return subprocess.run(['bash', '-eu', '-c', source + '\n' + body], input=input, text=True,
                               capture_output=True, env={**self.env, **env})
@@ -308,7 +311,7 @@ class AdGuardInstaller(unittest.TestCase):
         stubs+='\ninstall_adguard() { echo optional-AGH >> "$CALLS"; }\nx-ui() { :; }\n'
         for answer, expected in (('\n',False),('n\n',False),('N\n',False),('y\n',True),('Y\n',True)):
             self.calls.write_text('')
-            r=self.run_shell(('select_adguard','cleanup_adguard','main'),stubs+'\nmain',input=answer)
+            r=self.run_shell(('select_adguard','select_dot','ui_note','cleanup_adguard','main'),stubs+'\nmain',input=answer)
             self.assertEqual(r.returncode,0,r.stderr)
             log=self.calls.read_text()
             self.assertEqual('optional-AGH' in log,expected)
@@ -531,10 +534,10 @@ entrypoint "$@"
                     self.assertFalse(Path(private).exists())
                     self.assertEqual(self.run_shell(('cleanup_adguard',), 'cleanup_adguard').returncode, 0)
 
-    def final_result(self, requested, failure='', unverified=False):
+    def final_result(self, requested, failure='', unverified=False, dot='n', dns_tcp='y', language='en'):
         # Exercise the actual main, optional install/rollback and summary on private state.
-        operations = ('preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state','select_security','select_vision','select_client','select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features','select_amneziawg','preflight_amneziawg','preflight_panel_release','make_port','confirm_destructive_reinstall', 'validate_domains', 'clean_previous_install',
-                      'install_packages', 'setup_firewall', 'get_server_ip', 'setup_acme_http',
+        operations = ('preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state','select_security','select_vision','select_client','select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features','select_amneziawg','preflight_amneziawg','preflight_panel_release','make_port','setup_swap','confirm_destructive_reinstall', 'validate_domains', 'clean_previous_install',
+                      'install_packages', 'get_server_ip', 'setup_acme_http',
                       'get_ssl_certs', 'install_panel', 'configure_nginx', 'configure_xui_db',
                       'install_clash_sub', 'install_fake_site', 'install_diagnostics', 'tune_system',
                       'install_backup_tool', 'setup_certificate_renewal')
@@ -552,8 +555,24 @@ entrypoint "$@"
         body = stubs + r'''
 msg_err() { echo "$*"; }
 select_adguard() { :; }
+select_dot() { INSTALL_AGH_DOT=$DOT_CHOICE; }
 x-ui() { :; }
-ufw() { echo 'Status: active'; }
+stat() {
+    if [[ "$*" == "-c %u:%g:%a $ROOT/etc/nginx/stream-dot.d" ]]; then
+        printf '0:0:%s\n' "$(command stat -c '%a' "$ROOT/etc/nginx/stream-dot.d")"
+    else
+        command stat "$@"
+    fi
+}
+ufw() {
+    if [[ $* == status ]]; then echo 'Status: active'; return 0; fi
+    if [[ $* == 'allow 853/tcp' ]]; then
+        [[ -f "$ROOT/etc/nginx/stream-dot.d/adguard-dot.conf" ]] || return 2
+        grep -Fq 'stream-dot.d/*.conf;' "$ROOT/etc/nginx/nginx.conf" || return 2
+    fi
+    echo "ufw $*" >> "$CALLS"
+    [[ "$*" != 'allow 853/tcp' || "$FAIL" != dot-ufw ]]
+}
 CORE_CHECKS=0
 check_installation() {
     CORE_CHECKS=$((CORE_CHECKS+1))
@@ -567,8 +586,99 @@ reality_domain=cover.example
 main
 '''
         return self.run_shell(('cleanup_adguard', 'adguard_stage', 'install_adguard', 'show_results', 'main'),
-                              body, INSTALL_AGH='y' if requested else 'n', FAIL=failure,
+                              body, INSTALL_AGH='y' if requested else 'n', FAIL=failure, UI_LANG=language,
+                              DOT_CHOICE=dot, DNS_TCP=dns_tcp,
                               UNVERIFIED='1' if unverified else '0', PYTHONOPTIMIZE='1')
+
+    def dot_nginx_fixture(self, ipv6=False):
+        nginx = self.root/'etc/nginx'
+        router = nginx/'stream-enabled/stream.conf'
+        router.parent.mkdir(exist_ok=True)
+        router.write_text('server {\n    listen     443;\n' +
+                          ('    listen     [::]:443;\n' if ipv6 else '') + '}\n')
+        main = nginx/'nginx.conf'
+        main.write_text(f'events {{}}\nstream {{ include {router.parent}/*.conf; }}\n')
+        return main, router
+
+    def test_dot_install_configuration_and_opt_out(self):
+        for requested, choice, ipv6 in ((False, 'n', False), (True, 'n', False),
+                                         (True, 'y', False), (True, 'y', True)):
+            with self.subTest(requested=requested, dot=choice, ipv6=ipv6):
+                self.calls.write_text('')
+                main, router = self.dot_nginx_fixture(ipv6)
+                previous = main.read_bytes(), router.read_bytes()
+                directory = main.parent/'stream-dot.d'
+                fragment = directory/'adguard-dot.conf'
+                result = self.final_result(requested, dot=choice, language='ru' if ipv6 else 'en')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                enabled = choice == 'y'
+                self.assertEqual(fragment.exists(), enabled)
+                firewall = [line for line in self.calls.read_text().splitlines() if line.startswith('ufw ')]
+                self.assertEqual(firewall, ['ufw allow 80/tcp', 'ufw allow 443/tcp', 'ufw allow 443/udp']
+                                 + (['ufw allow 853/tcp'] if enabled else []))
+                self.assertEqual(router.read_bytes(), previous[1])
+                if not enabled:
+                    self.assertEqual(main.read_bytes(), previous[0])
+                    self.assertFalse(directory.exists())
+                    self.assertNotIn('DNS-over-TLS (Android', result.stdout)
+                    continue
+                self.assertEqual(fragment.stat().st_mode & 0o777, 0o644)
+                self.assertEqual(directory.stat().st_mode & 0o777, 0o755)
+                include = f'include {directory}/*.conf;'
+                self.assertEqual(main.read_text().count(include), 1)
+                self.assertEqual(main.read_text(), previous[0].decode().replace('; }', f'; {include} }}'))
+                self.assertNotRegex(include, r'[$\\]')
+                dns = json.loads((self.root/'opt/AdGuardHome/managed.json').read_text())['dns_port']
+                text = fragment.read_text(encoding='utf-8').replace(str(self.root), '')
+                ipv6_listener = '    listen [::]:853 ssl;\n' if ipv6 else ''
+                self.assertEqual(text, 'limit_conn_zone $binary_remote_addr zone=dot_conn:1m;\n'
+                    'server {\n    listen 853 ssl;\n' + ipv6_listener +
+                    '    ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;\n'
+                    '    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;\n'
+                    '    ssl_protocols TLSv1.2 TLSv1.3;\n    limit_conn dot_conn 50;\n'
+                    f'    proxy_pass 127.0.0.1:{dns};\n}}\n')
+                summary = ('DNS-over-TLS (Android «Частный DNS»): example.com, порт 853' if ipv6 else
+                           'DNS-over-TLS (Android Private DNS): example.com, port 853')
+                self.assertIn(summary, result.stdout)
+                fragment.unlink()
+                directory.rmdir()
+
+    def test_dot_ufw_failure_restores_nginx_and_fails_installation(self):
+        for preexisting in (False, True):
+            with self.subTest(preexisting_directory=preexisting):
+                self.calls.write_text('')
+                main, router = self.dot_nginx_fixture(ipv6=True)
+                previous = main.read_bytes(), router.read_bytes()
+                directory = main.parent/'stream-dot.d'
+                if preexisting:
+                    directory.mkdir()
+                    directory.chmod(0o755)
+                result = self.final_result(True, 'dot-ufw', dot='y')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual((main.read_bytes(), router.read_bytes()), previous)
+                self.assertFalse((directory/'adguard-dot.conf').exists())
+                self.assertEqual(directory.exists(), preexisting)
+                log = self.calls.read_text().splitlines()
+                failure = log.index('ufw allow 853/tcp')
+                self.assertLess(log.index('systemctl reload nginx'), failure)
+                self.assertLess(log.index('nginx-test', failure), log.index('systemctl reload nginx', failure))
+                self.assertIn('UFW could not allow 853/tcp for DNS-over-TLS.', result.stdout + result.stderr)
+                self.assert_core_credentials(result)
+                self.assert_no_agh_credentials_or_success(result)
+                self.assertNotIn('DNS-over-TLS (Android', result.stdout)
+
+    def test_agh_listeners_requires_tcp_dns_only_with_dot_file(self):
+        self.assertEqual(self.run_shell(('cleanup_adguard', 'adguard_stage', 'install_adguard'),
+                                       'install_adguard').returncode, 0)
+        args = 'source "$HELPER_FIXTURE"; agh_config && agh_listeners'
+        self.assertEqual(self.run_shell((), args).returncode, 0)
+        fragment = self.root/'etc/nginx/stream-dot.d/adguard-dot.conf'
+        fragment.parent.mkdir()
+        fragment.touch()
+        result = self.run_shell((), args)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('TCP DNS', result.stderr)
+        self.assertEqual(self.run_shell((), args, DNS_TCP='y').returncode, 0)
 
     def assert_core_credentials(self, result):
         self.assertIn('3X-UI Auto Nginx — Installation Result', result.stdout)

@@ -290,13 +290,14 @@ EOFNG
 }
 
 agh_listeners() {
-    local pid listeners
+    local pid listeners dot=n
     pid=$(systemctl show -p MainPID --value AdGuardHome) || return 1
     [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
     listeners=$(ss -H -lntup) || return 1
-    python3 - "$pid" "$AGH_WEB_PORT" "$AGH_DNS_PORT" "$listeners" <<'PY'
+    if [[ -f /etc/nginx/stream-dot.d/adguard-dot.conf ]]; then dot=y; fi
+    python3 - "$pid" "$AGH_WEB_PORT" "$AGH_DNS_PORT" "$listeners" "$dot" <<'PY'
 import sys
-pid, web, dns, listing = sys.argv[1:]
+pid, web, dns, listing, dot = sys.argv[1:]
 owned = [l.split() for l in listing.splitlines() if 'pid=' + pid + ',' in l]
 if not owned:
     raise ValueError('Invalid AGH owned listeners')
@@ -312,6 +313,8 @@ if not any(l[0] == 'tcp' and l[4].endswith(':' + web) for l in service):
     raise ValueError('Invalid AGH TCP web socket')
 if not any(l[0] == 'udp' and l[4].endswith(':' + dns) for l in service):
     raise ValueError('Invalid AGH UDP DNS socket')
+if dot == 'y' and not any(l[0] == 'tcp' and l[4] == '127.0.0.1:' + dns for l in service):
+    raise ValueError('Missing AGH TCP DNS socket at 127.0.0.1:' + dns)
 PY
 }
 

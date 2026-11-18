@@ -348,10 +348,12 @@ def rollback_dns_checkpoint(state, root=Path('/')):
         if txn is not None: txn.temp.cleanup()
 
 
-def ufw_simple_rules(text, ipv6, ports):
+def ufw_simple_rules(text, ipv6, ports, dot=False):
     """Accept only the distro boilerplate and project/SSH unrestricted allows."""
     chain = 'ufw6' if ipv6 else 'ufw'
     allowed = {('tcp', 80), ('tcp', 443), ('udp', 443), ('udp', 8443)}
+    if dot:
+        allowed.add(('tcp', 853))
     allowed.update(('tcp', port) for port in ports)
     stock = {
         f'-A {chain}-user-limit -m limit --limit 3/minute -j LOG --log-prefix "[UFW LIMIT BLOCK] "',
@@ -390,10 +392,11 @@ def ufw_preflight(root, ports):
     config = (root/'etc/ufw/ufw.conf').read_text()
     if re.findall(r'^ENABLED=(.*)$', config, re.M) != ['no'] or re.findall(r'^LOGLEVEL=(.*)$', config, re.M) != ['low']:
         raise ValueError('Nonstandard UFW activation/logging configuration')
+    dot = (root/'etc/nginx/stream-dot.d/adguard-dot.conf').is_file()
     for name, ipv6 in (('user.rules', False), ('user6.rules', True)):
         path = root/'etc/ufw'/name
         if path.is_symlink(): raise ValueError('Symlink UFW rules unsupported')
-        ufw_simple_rules(path.read_text(), ipv6, ports)
+        ufw_simple_rules(path.read_text(), ipv6, ports, dot=dot)
     for service in ('firewalld.service', 'nftables.service', 'netfilter-persistent.service'):
         if command('systemctl', 'is-active', service, check=False) not in ('inactive', 'failed', 'unknown', ''):
             raise ValueError('Another firewall manager is active; automatic enable refused')
