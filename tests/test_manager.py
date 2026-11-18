@@ -6,6 +6,7 @@ from pathlib import Path
 import pty
 import re
 import select
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -51,6 +52,14 @@ AUTHOR_CREDIT = '© xPROMSx · github.com/xPROMSx/3x-ui-auto-nginx'
 
 
 class Manager(unittest.TestCase):
+    def test_server_details_requires_root_in_both_languages(self):
+        for language, expected in (('1', 'Root required'), ('2', 'Нужен root')):
+            with self.subTest(language=language):
+                code, text = tty_run(ROOT/'x-ui-latest.sh', (language+'\n6\n0\n').encode())
+                self.assertEqual(code, 0)
+                self.assertIn(expected, text)
+                self.assertNotIn('https://', text)
+
     def test_import_has_no_effects_and_preserves_traps(self):
         import re
         pattern=r'^acquire_stack_lock\(\) \{.*?^\}'
@@ -492,6 +501,165 @@ class ManagerBackup(unittest.TestCase):
     def setUp(self):
         from test_personal_backup import PersonalBackup
         self.f=PersonalBackup('runTest');self.f.setUp();self.addCleanup(self.f.doCleanups)
+
+    def server_details_fixture(self):
+        root = self.f.root/'details'
+        db_path = root/'etc/x-ui/x-ui.db'
+        db_path.parent.mkdir(parents=True)
+        self.marker = db_path.parent/'auto-nginx-managed.json'
+        self.marker.write_text(json.dumps(dict(format=1, layout='nginx-stream-v1', installed_by='source@'+'a'*40,
+            domains=dict(panel='panel.example', reality='cover.example', vision='vision.example'),
+            inbound_roles=dict(reality=1, vision=2), features=dict(adguard=False))))
+        with sqlite3.connect(db_path) as db:
+            db.executescript('''
+                CREATE TABLE settings(key TEXT, value TEXT);
+                CREATE TABLE users(id INTEGER, username TEXT, password TEXT);
+                CREATE TABLE inbounds(id INTEGER, protocol TEXT, stream_settings TEXT, enable INTEGER);
+                CREATE TABLE clients(id INTEGER, sub_id TEXT, enable INTEGER);
+                CREATE TABLE client_inbounds(client_id INTEGER, inbound_id INTEGER);
+                INSERT INTO users VALUES (1, 'panel-user', 'private-panel-sentinel');
+                INSERT INTO inbounds VALUES
+                    (1, 'vless', '{"realitySettings":{"serverNames":["cover.example"]}}', 1),
+                    (2, 'vless', '{"tlsSettings":{"serverName":"vision.example"}}', 1),
+                    (3, 'trojan', '{}', 0);
+                INSERT INTO clients VALUES (1, 'private-sub-id', 1), (2, 'private-sub-id', 1),
+                    (3, 'private-disabled-id', 0), (4, 'private-no-route-id', 1), (5, '', 1);
+                INSERT INTO client_inbounds VALUES (1,1), (1,2), (2,1), (3,1), (4,3), (5,1);
+            ''')
+            db.executemany('INSERT INTO settings VALUES (?,?)', dict(
+                webCertFile='/root/cert/panel.example/fullchain.pem', webBasePath='/panel/',
+                subURI='https://panel.example:443/sub/?token=private-query-sentinel', subPath='/sub/', subEnable='true',
+                subJsonURI='https://panel.example/json/', subJsonPath='/json/', subJsonEnable='false').items())
+        nginx = root/'etc/nginx'
+        for name in ('sites-enabled', 'sites-available', 'snippets/x-ui-auto-optional'):
+            (nginx/name).mkdir(parents=True)
+        (nginx/'sites-enabled/panel.example').symlink_to('../sites-available/panel.example')
+        (nginx/'sites-available/panel.example').write_text('''
+location /panel/ {}
+location = /panel/diag {}
+include /etc/nginx/snippets/includes.conf;
+include /etc/nginx/snippets/x-ui-auto-optional/*.conf;
+''')
+        (nginx/'snippets/includes.conf').write_text('location /sub/ {}\nlocation /json/ {}\n')
+        script = self.f.root/'details.sh'
+        source = (ROOT/'x-ui-latest.sh').read_text().replace('XUIDB="/etc/x-ui/x-ui.db"', f'XUIDB="{db_path}"')
+        source = source.replace('"${2:-/}" <<\'SERVER_DETAILS\'', f'"${{2:-{root}}}" <<\'SERVER_DETAILS\'')
+        script.write_text(source)
+        return root, db_path, script
+
+    def test_server_details_active_wal_subscriptions_output_and_colors(self):
+        import hashlib
+        root, path, script = self.server_details_fixture()
+        def files():
+            return {p.relative_to(root):(hashlib.sha256(p.read_bytes()).digest(),p.stat().st_mtime_ns)
+                    for p in root.rglob('*') if p.is_file() and p.name not in ('x-ui.db-wal','x-ui.db-shm')}
+
+        with sqlite3.connect(path) as writer:
+            writer.execute('PRAGMA journal_mode=WAL')
+            writer.execute("UPDATE clients SET enable=1 WHERE id=3")
+            writer.commit()
+            self.assertTrue(Path(str(path)+'-wal').is_file())
+            before = files()
+            for language, env, runs_color in (
+                    ('1', {'TERM':'xterm','NO_COLOR':None}, True),
+                    ('2', {'TERM':'xterm','NO_COLOR':''}, False),
+                    ('1', {'TERM':'dumb','NO_COLOR':None}, False)):
+                with self.subTest(language=language, env=env):
+                    code, text = tty_run(script, (language+'\n6\n0\n').encode(), env=env)
+                    self.assertEqual(code, 0)
+                    self.assertEqual('\x1b' in text, runs_color)
+                    if runs_color:
+                        self.assertIn('Address:      \x1b[38;5;208mhttps://panel.example/panel/\x1b[0m', text)
+                        self.assertIn('\x1b[1;36m  Subscriptions', text)
+                        self.assertIn('\x1b[1;33m    not installed', text)
+                        self.assertIn('\x1b[2m  Passwords are stored', text)
+                    plain = re.sub(r'\x1b\[[0-9;]*m','',text)
+                    for value in ('panel-user','https://panel.example/panel/diag','https://panel.example:443/sub/',
+                                  'https://panel.example/json/','cover.example','vision.example'):
+                        self.assertIn(value, plain)
+                    self.assertRegex(plain, r'(?:Active|Активных):\s+2\r?\n')
+                    self.assertIn('not enabled' if language == '1' else 'не включён', plain)
+                    for secret in ('private-panel-sentinel','private-sub-id','private-disabled-id',
+                                   'private-no-route-id','private-query-sentinel','sub_id'):
+                        self.assertFalse(secret in text, 'Private field leaked from the details screen')
+            env = {k:v for k,v in os.environ.items() if k != 'NO_COLOR'}
+            redirected = subprocess.check_output(['bash','-c','source "$1"; server_details_action',
+                                                   'fixture',str(script)],env={**env,'TERM':'xterm'},text=True)
+            self.assertNotIn('\x1b', redirected)
+            self.assertIn('-'*60, redirected)
+            self.assertEqual(files(), before)
+
+    def test_server_details_missing_foreign_and_busy_database(self):
+        _, path, script = self.server_details_fixture()
+        saved = self.marker.read_bytes()
+        path.rename(path.with_suffix('.saved'))
+        for language, expected in (('1','3X-UI AUTO NGINX server not found.'),
+                                   ('2','Сервер 3X-UI AUTO NGINX не найден.')):
+            code, text = tty_run(script, (language+'\n6\n0\n').encode())
+            self.assertEqual(code, 0)
+            self.assertIn(expected, text)
+        path.with_suffix('.saved').rename(path)
+        for marker in (None, b'invalid JSON', saved):
+            with self.subTest(marker=marker):
+                if marker is None:
+                    self.marker.unlink()
+                else:
+                    self.marker.write_bytes(marker)
+                if marker == saved:
+                    with sqlite3.connect(path) as db:
+                        db.execute('ALTER TABLE users RENAME TO foreign_users')
+                code, text = tty_run(script, b'2\n6\n0\n')
+                self.assertEqual(code, 0)
+                plain = ' '.join(text.split())
+                self.assertIn('Сервер не распознан как установленный этим проектом.', plain)
+                self.assertIn('Установка его сотрёт.', plain)
+                self.assertNotIn('https://', text)
+        with sqlite3.connect(path) as writer:
+            writer.execute('ALTER TABLE foreign_users RENAME TO users')
+            writer.execute('BEGIN EXCLUSIVE')
+            code, text = tty_run(script, b'1\n6\n0\n')
+            self.assertEqual(code, 0)
+            self.assertIn('Could not read a consistent view', text)
+            self.assertEqual(text.count('6. My server details'), 2)
+            self.assertNotIn('https://', text)
+
+    def test_server_details_adguard_legacy_and_random_paths(self):
+        root, path, script = self.server_details_fixture()
+        with sqlite3.connect(path) as db:
+            db.execute("DELETE FROM settings WHERE key='subJsonURI'")
+        state = json.loads(self.marker.read_bytes())
+        state['installed_by'] = 'legacy-v2.1.7-layout'
+        state['features']['adguard'] = True
+        state['domains']['vision'] = None
+        state['inbound_roles'].pop('vision')
+        self.marker.write_text(json.dumps(state))
+        agh = root/'opt/AdGuardHome'
+        agh.mkdir(parents=True)
+        (agh/'AdGuardHome.yaml').write_text('users:\n  - name: "current-agh-user" # inline comment\n    password: private-agh-sentinel\n')
+        helper = root/'usr/local/lib/3x-ui-pro/managed-adguard.sh'
+        helper.parent.mkdir(parents=True)
+        helper.write_bytes((ROOT/'assets/adguard/managed.sh').read_bytes())
+        snippet = root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf'
+        metadata = dict(domain='panel.example', path='adg-AbCdEf123456', web_port=18081)
+        for doh, variant in (('dns-query','legacy'),('dns-query',''),('dns-AbCdEf123456','')):
+            with self.subTest(doh=doh, variant=variant):
+                (agh/'managed.json').write_text(json.dumps(metadata if doh == 'dns-query' else dict(metadata,doh_path=doh)))
+                snippet.write_bytes(subprocess.check_output(['bash','-c',
+                    'source "$1"; AGH_PATH=$2 AGH_WEB_PORT=18081 AGH_DOH_PATH=$3 agh_snippet "$4"',
+                    'fixture',str(helper),metadata['path'],doh,variant]))
+                code, text = tty_run(script, b'2\n6\n0\n')
+                self.assertEqual(code, 0)
+                self.assertIn('https://panel.example/'+doh, text)
+                self.assertIn('current-agh-user', text)
+                self.assertNotIn('inline comment', text)
+                self.assertFalse('private-agh-sentinel' in text, 'AGH password leaked')
+                self.assertRegex(text, r'Адрес JSON:\s+не найдено')
+                self.assertRegex(text, r'Vision:\s+не настроен')
+        snippet.write_text(snippet.read_text().replace('proxy_buffering off;', 'proxy_buffering on;'))
+        code, text = tty_run(script, b'1\n6\n0\n')
+        self.assertEqual(code, 0)
+        self.assertRegex(text, r'DoH:\s+not found')
+        self.assertNotIn('https://panel.example/dns-AbCdEf123456', text)
 
     def test_telegram_installed_always_refreshes_bootstrap(self):
         root=self.f.root;launcher=root/'launcher';marker=root/'handoff';network=root/'downloads'

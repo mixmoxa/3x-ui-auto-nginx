@@ -38,6 +38,7 @@ def run(tools):
         t.work=f.path('/opt/AdGuardHome');t.config=t.work/'AdGuardHome.yaml'
         meta=json.loads((t.work/'managed.json').read_text());meta['domain']=t.domain
         (t.work/'managed.json').write_text(json.dumps(meta))
+        t.use_random_doh()
         for source,target in (('fullchain.pem',t.cert),('privkey.pem',t.key)):
             shutil.copyfile(f.path('/etc/letsencrypt/live/example.com/'+source),target)
         state=t.work/'data/phase2-state';state.parent.mkdir(exist_ok=True);state.write_bytes(b'archived-data')
@@ -51,7 +52,7 @@ def run(tools):
         helper=helper.replace('https://${AGH_DOMAIN}/','https://${AGH_DOMAIN}:'+str(t.https)+'/').replace('${AGH_DOMAIN}:443:','${AGH_DOMAIN}:'+str(t.https)+':')
         f.write('/usr/local/lib/3x-ui-pro/managed-adguard.sh',helper,0o600)
         f.write('/etc/systemd/system/AdGuardHome.service',unit_text)
-        snippet=t.shell('source "$1"; AGH_WEB_PORT="$2"; AGH_PATH="$3"; agh_snippet',HELPER,t.web,t.prefix)
+        snippet=t.adguard_snippet()
         f.write('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf',snippet,0o600)
         config=f.path('/etc/nginx/nginx.conf')
         config.write_text(config.read_text().replace('error_log stderr;', 'error_log /dev/null crit;'))
@@ -98,7 +99,7 @@ os.execv({str(original)!r},['systemctl',*args])
         old_curl.write_text(old_curl.read_text().replace('name = pathlib.Path(sys.argv[0]).name',"name = 'curl'"))
         (f.bin/'curl').write_text('#!'+sys.executable+'\n'+f'''import os,sys
 args=sys.argv[1:]
-if '/dns-query?' in args[-1] or '/login.html' in args[-1]:
+if '/dns-query?' in args[-1] or {t.doh_path+'?'!r} in args[-1] or '/login.html' in args[-1]:
     os.execv({shutil.which('curl')!r},['curl','--cacert',{str(t.cert)!r},*args])
 os.execv({str(old_curl)!r},['curl',*args])
 ''');(f.bin/'curl').chmod(0o755)
@@ -109,7 +110,7 @@ os.execv({str(old_curl)!r},['curl',*args])
         def healthy():
             with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sock:
                 sock.settimeout(5);q=question('restore.service.test');sock.sendto(q,('127.0.0.1',t.native));t.dns_answer(q,sock.recv(4096))
-            q=question('restore.doh.test');status,body,_=t.request('/dns-query',q,['-H','Content-Type: application/dns-message'])
+            q=question('restore.doh.test');status,body,_=t.request(t.doh_path,q,['-H','Content-Type: application/dns-message'])
             t.assertEqual(status,200);t.dns_answer(q,body)
             jar=t.root/'restore-cookies'
             status,_,_=t.request('/'+t.prefix+'/control/login',json.dumps({'name':'admin','password':t.password}).encode(),['-H','Content-Type: application/json','-c',jar])
@@ -126,6 +127,7 @@ os.execv({str(old_curl)!r},['curl',*args])
         for _ in range(2):
             result=f.run_tool('restore',archive);t.assertEqual(result.returncode,0,result.stdout+result.stderr)
             t.assertEqual((t.work/'data/querylog.json').read_bytes()[:len(queries)],queries)
+            t.assertEqual(t.doh_path, '/dns-AbCdEf123456')
             t.assertEqual(state.read_bytes(),b'archived-data');t.assertEqual(f.path('/etc/letsencrypt/live/example.com/fullchain.pem').read_bytes(),saved_cert)
             t.assertEqual(hashlib.sha256(archive.read_bytes()).digest(),digest);healthy()
             with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:

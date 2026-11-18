@@ -184,8 +184,23 @@ class RealServices(unittest.TestCase):
         self.assertTrue(any(row[0]=='tcp' and row[4]==f'127.0.0.1:{self.web}' for row in owned))
         self.assertTrue(any(row[0]=='udp' and row[4]==f'127.0.0.1:{self.native}' for row in owned));return p
 
+    @property
+    def doh_path(self):
+        metadata = json.loads((self.work/'managed.json').read_text())
+        return '/'+metadata.get('doh_path', 'dns-query')
+
+    def use_random_doh(self):
+        path = self.work/'managed.json'
+        metadata = json.loads(path.read_text())
+        metadata['doh_path'] = 'dns-AbCdEf123456'
+        path.write_text(json.dumps(metadata))
+
+    def adguard_snippet(self):
+        return self.shell('source "$1"; AGH_WEB_PORT="$2"; AGH_PATH="$3"; AGH_DOH_PATH="$4"; agh_snippet',
+                          HELPER, self.web, self.prefix, self.doh_path[1:])
+
     def start_nginx(self, foreign_acme=()):
-        snippet=self.shell('source "$1"; AGH_WEB_PORT="$2"; AGH_PATH="$3"; agh_snippet',HELPER,self.web,self.prefix)
+        snippet=self.adguard_snippet()
         from test_personal_xhttp import render
         acme=render('cat > /etc/nginx/sites-available/80.conf',domain=self.domain,reality_domain=self.reality)
         self.assertIn('listen 80;',acme)
@@ -240,7 +255,7 @@ location / {{ return 404; }} }}\n'''
             for method in ('GET','POST'):
                 name=method.lower()+'-'+os.urandom(6).hex()+'.example.test'
                 query=question(name,ident=int.from_bytes(os.urandom(2),'big'))
-                path='/dns-query'+suffix
+                path=self.doh_path+suffix
                 url=path+'?dns='+base64.urlsafe_b64encode(query).decode().rstrip('=') if method=='GET' else path
                 status,body,headers=self.request(url,query if method=='POST' else None,('-H','Content-Type: application/dns-message'))
                 self.assertEqual(status,200,(method,path))
@@ -256,6 +271,7 @@ location / {{ return 404; }} }}\n'''
         print('DoH GET/POST exact + registered random ClientID: DNS/upstream/querylog PASS',flush=True)
 
     def test_real_adguard_dns_doh_and_admin(self):
+        self.use_random_doh()
         self.start_agh();self.start_nginx()
         query=question('native.example.test')
         with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sock:
@@ -263,9 +279,10 @@ location / {{ return 404; }} }}\n'''
         self.dns_answer(query,answer);self.assertIn(('native.example.test',1),self.upstream_requests)
         client_id,jar=self.register_doh_client()
         self.doh_matrix(client_id,jar)
-        for url,data in (('/dns-query?dns=broken',None),('/dns-query',b'bad')):
+        for url,data in ((self.doh_path+'?dns=broken',None),(self.doh_path,b'bad')):
             status,_,_=self.request(url,data,('-H','Content-Type: application/dns-message'))
             self.assertGreaterEqual(status,400)
+        self.assertEqual(self.request('/dns-query', query, ('-H','Content-Type: application/dns-message'))[0], 404)
         status,_,headers=self.request('/'+self.prefix+'/');self.assertEqual(status,302)
         location=next(line.split(':',1)[1].strip() for line in headers.splitlines() if line.lower().startswith('location:'))
         self.assertEqual(urlsplit(location).path,'/'+self.prefix+'/login.html')

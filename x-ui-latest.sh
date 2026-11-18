@@ -2717,7 +2717,9 @@ PY
     chown -R root:root /opt/AdGuardHome && chmod 0700 /opt/AdGuardHome || return 1
     AGH_PASSWORD=$(gen_random_string 32) || return 1
     AGH_PATH="adg-$(gen_random_string 12)" || return 1
-    [[ "$AGH_PASSWORD" =~ ^[A-Za-z0-9]{32}$ && "$AGH_PATH" =~ ^adg-[A-Za-z0-9]{12}$ ]] || return 1
+    AGH_DOH_PATH="dns-$(gen_random_string 12)" || return 1
+    [[ "$AGH_PASSWORD" =~ ^[A-Za-z0-9]{32}$ && "$AGH_PATH" =~ ^adg-[A-Za-z0-9]{12}$ &&
+       "$AGH_DOH_PATH" =~ ^dns-[A-Za-z0-9]{12}$ ]] || return 1
     local hash ports
     hash=$(printf '%s\n' "$AGH_PASSWORD" | htpasswd -niB -C 12 admin) || return 1
     hash=${hash#admin:}
@@ -2788,11 +2790,12 @@ schema_version: 34
 EOFAGH
     [[ $? == 0 ]] || return 1
     chmod 0600 /opt/AdGuardHome/AdGuardHome.yaml || return 1
-    python3 - /opt/AdGuardHome/managed.json "$domain" "$AGH_PATH" "$AGH_WEB_PORT" "$AGH_DNS_PORT" "$AGH_ARCH" <<'PY'
+    python3 - /opt/AdGuardHome/managed.json "$domain" "$AGH_PATH" "$AGH_DOH_PATH" "$AGH_WEB_PORT" "$AGH_DNS_PORT" "$AGH_ARCH" <<'PY'
 import json, sys
-file, domain, path, web, dns, arch = sys.argv[1:]
+file, domain, path, doh_path, web, dns, arch = sys.argv[1:]
 with open(file, 'w') as out:
-    json.dump(dict(version='v0.107.80', updates_enabled=True, domain=domain, path=path, web_port=int(web), dns_port=int(dns), arch=arch), out)
+    json.dump(dict(version='v0.107.80', updates_enabled=True, domain=domain, path=path,
+                   doh_path=doh_path, web_port=int(web), dns_port=int(dns), arch=arch), out)
 PY
     [[ $? == 0 ]] || return 1
     chmod 0600 /opt/AdGuardHome/managed.json || return 1
@@ -3003,9 +3006,12 @@ show_results() {
         msg_inf " AdGuard Home:"
         msg_inf " https://${domain}/${AGH_PATH}/"
         if [[ ${UI_INTERACTIVE:-0} == 1 ]]; then
-            ui_values ' Login: admin\n Password: %s\n DoH: https://%s/dns-query\n\n' ' Логин: admin\n Пароль: %s\n DoH: https://%s/dns-query\n\n' "$AGH_PASSWORD" "$domain"
+            ui_values ' Login: admin\n Password: %s\n' ' Логин: admin\n Пароль: %s\n' "$AGH_PASSWORD"
+            printf ' DoH: '
+            ui_note '%s' '%s' "https://${domain}/${AGH_DOH_PATH:-dns-query}"
+            printf '\n\n'
         else
-            ui_text ' Login: admin\n Password: %s\n DoH: https://%s/dns-query\n\n' ' Логин: admin\n Пароль: %s\n DoH: https://%s/dns-query\n\n' "$AGH_PASSWORD" "$domain"
+            ui_text ' Login: admin\n Password: %s\n DoH: https://%s/%s\n\n' ' Логин: admin\n Пароль: %s\n DoH: https://%s/%s\n\n' "$AGH_PASSWORD" "$domain" "${AGH_DOH_PATH:-dns-query}"
         fi
         AGH_PASSWORD=''
     elif [[ "${AGH_RESULT:-not_requested}" == failed_rolled_back ]]; then
@@ -4390,6 +4396,259 @@ cascade_menu() {
     done
 }
 
+server_details_data() {
+    python3 -I - "$1" "${2:-/}" <<'SERVER_DETAILS'
+from contextlib import closing
+import json
+from pathlib import Path
+import re
+import sqlite3
+import subprocess
+import sys
+from urllib.parse import urlsplit
+
+db_path, root = map(Path, sys.argv[1:])
+nginx = root / 'etc/nginx'
+
+
+def read(path):
+    try:
+        return path.read_text(encoding='utf-8')
+    except (OSError, UnicodeError):
+        return ''
+
+
+def hostname(name):
+    return isinstance(name, str) and len(name) <= 253 and '.' in name and all(
+        re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label) for label in name.split('.'))
+
+
+def login(value):
+    return isinstance(value, str) and bool(value.strip()) and value.isprintable()
+
+
+def location(config, path):
+    return re.search(r'^\s*location\s+' + re.escape(path) + r'\s*\{', config, re.M)
+
+
+def subscription(settings, domain, suffix, includes):
+    path = settings.get('sub' + suffix + 'Path', '')
+    try:
+        url = urlsplit(settings.get('sub' + suffix + 'URI', ''))
+        if (url.scheme == 'https' and url.hostname == domain and url.username is None and
+                isinstance(path, str) and re.fullmatch(r'/[A-Za-z0-9_-]+/', path) and
+                url.path == path and location(includes, path)):
+            port = ':' + str(url.port) if url.port else ''
+            return 'https://' + domain + port + path
+    except ValueError:
+        pass
+    return ''
+
+
+def adguard(panel, vhost, declared):
+    folder = root / 'opt/AdGuardHome'
+    if not declared and not folder.exists():
+        return 'absent', '', '', ''
+    try:
+        meta = json.loads(read(folder / 'managed.json'))
+        path, port = meta['path'], meta['web_port']
+        if (meta['domain'] != panel or not isinstance(path, str) or
+                not re.fullmatch(r'adg-[A-Za-z0-9]{12}', path) or type(port) is not int or
+                not 10000 <= port <= 65535 or 'include /etc/nginx/snippets/x-ui-auto-optional/*.conf;' not in vhost):
+            return '', '', '', ''
+    except (ValueError, KeyError, TypeError):
+        return '', '', '', ''
+
+    snippet = nginx / 'snippets/x-ui-auto-optional/adguard.conf'
+    config = read(snippet)
+    if not location(config, '^~ /' + path + '/'):
+        return '', '', '', ''
+    users = re.search(r'^users:[ \t]*\n((?:[ \t-][^\n]*\n?)*)', read(folder / 'AdGuardHome.yaml'), re.M)
+    names = []
+    if users:
+        for raw in re.findall(r'^[ \t]*-[ \t]+name:[ \t]*([^\r\n]+)', users[1], re.M):
+            if raw.startswith('"'):
+                try:
+                    name, _ = json.JSONDecoder().raw_decode(raw)
+                except ValueError:
+                    continue
+            elif raw.startswith("'"):
+                quoted = re.match(r"'((?:[^']|'')*)'", raw)
+                name = quoted[1].replace("''", "'") if quoted else ''
+            else:
+                name = re.split(r'[ \t]+#', raw, maxsplit=1)[0].rstrip()
+            if login(name):
+                names.append(name)
+
+    doh_path = meta.get('doh_path', 'dns-query')
+    doh = ''
+    if (('doh_path' not in meta or (isinstance(doh_path, str) and re.fullmatch(r'dns-[A-Za-z0-9]{12}', doh_path)))
+            and location(config, '= /' + doh_path)):
+        helper = root / 'usr/local/lib/3x-ui-pro/managed-adguard.sh'
+        try:
+            # Only the project-owned installed renderer, without config/service probes.
+            chain = [helper, *(p for p in helper.parents if p.is_relative_to(root))]
+            if helper.is_file() and all(p.lstat().st_uid == 0 and not p.is_symlink() and
+                                        not p.lstat().st_mode & 0o022 for p in chain):
+                for variant in ('', 'legacy') if 'doh_path' not in meta else ('',):
+                    rendered = subprocess.check_output([
+                        'bash', '-c', 'source "$1" && AGH_PATH=$2 AGH_WEB_PORT=$3 AGH_DOH_PATH=$4 agh_snippet "$5"',
+                        'server-details', str(helper), path, str(port), doh_path, variant,
+                    ], stderr=subprocess.DEVNULL, env={'PATH': '/usr/bin:/bin'}, timeout=3)
+                    if rendered == snippet.read_bytes():
+                        doh = 'https://' + panel + '/' + doh_path
+                        break
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return 'present', 'https://' + panel + '/' + path + '/', ', '.join(names), doh
+
+
+try:
+    state = json.loads(read(db_path.parent / 'auto-nginx-managed.json'))
+    domains, roles = state['domains'], state['inbound_roles']
+    panel, reality = domains['panel'], domains['reality']
+    owner = state['installed_by']
+    if (state['format'] != 1 or state['layout'] != 'nginx-stream-v1' or
+            not (owner == 'legacy-v2.1.7-layout' or re.fullmatch(r'source@[0-9a-f]{40}', owner)) or
+            not hostname(panel) or not hostname(reality) or panel == reality):
+        sys.exit(2)
+
+    with closing(sqlite3.connect(db_path.absolute().as_uri() + '?mode=ro', uri=True, timeout=3)) as db:
+        db.execute('BEGIN')
+        settings = dict(db.execute("SELECT key,value FROM settings WHERE key IN ("
+            "'webCertFile','webBasePath','subURI','subPath','subEnable','subJsonURI','subJsonPath','subJsonEnable')"))
+        if settings.get('webCertFile') != '/root/cert/' + panel + '/fullchain.pem':
+            sys.exit(2)
+        names = [row[0] for row in db.execute('SELECT username FROM users ORDER BY id') if login(row[0])]
+
+        def role_name(role, field):
+            row = db.execute("SELECT json_extract(stream_settings, ?) FROM inbounds "
+                             "WHERE id=? AND protocol='vless' AND json_valid(stream_settings)",
+                             (field, roles.get(role))).fetchone()
+            return row[0] if row else None
+
+        if role_name('reality', '$.realitySettings.serverNames[0]') != reality:
+            sys.exit(2)
+        vision = domains.get('vision')
+        vision = ('absent' if not vision and not roles.get('vision') else
+                  vision if hostname(vision) and role_name('vision', '$.tlsSettings.serverName') == vision else '')
+        try:
+            count = db.execute("SELECT COUNT(DISTINCT c.sub_id) FROM clients c "
+                "JOIN client_inbounds ci ON ci.client_id=c.id JOIN inbounds i ON i.id=ci.inbound_id "
+                "WHERE c.enable=1 AND i.enable=1 AND c.sub_id<>'' "
+                "AND i.protocol IN ('vless','trojan','hysteria','amneziawg')").fetchone()[0]
+        except sqlite3.OperationalError as error:
+            if not str(error).startswith(('no such table:', 'no such column:')):
+                raise
+            count = ''
+except sqlite3.DatabaseError as error:
+    code = getattr(error, 'sqlite_errorcode', 0) & 0xff
+    sys.exit(3 if code in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_READONLY,
+                           sqlite3.SQLITE_IOERR, sqlite3.SQLITE_CANTOPEN) else 2)
+except (ValueError, OSError, KeyError, TypeError, AttributeError):
+    sys.exit(2)
+
+site = nginx / 'sites-available' / panel
+try:
+    target = (nginx / 'sites-enabled' / panel).readlink()
+    vhost = read(site) if target in (Path('/etc/nginx/sites-available') / panel,
+                                    Path('../sites-available') / panel, site) else ''
+except OSError:
+    vhost = ''
+includes = read(nginx / 'snippets/includes.conf') if 'include /etc/nginx/snippets/includes.conf;' in vhost else ''
+web_path = settings.get('webBasePath')
+panel_url, diagnostics = '', ''
+if isinstance(web_path, str) and re.fullmatch(r'/[A-Za-z0-9_-]+/', web_path) and location(vhost, web_path):
+    panel_url = 'https://' + panel + web_path
+    if location(vhost, '= ' + web_path + 'diag'):
+        diagnostics = panel_url + 'diag'
+
+for value in (panel_url, ', '.join(names), diagnostics,
+              subscription(settings, panel, '', includes), settings.get('subEnable'),
+              subscription(settings, panel, 'Json', includes), settings.get('subJsonEnable'), count,
+              *adguard(panel, vhost, (state.get('features') or {}).get('adguard')), reality, vision):
+    print(value if value is not None and str(value).isprintable() else '')
+SERVER_DETAILS
+}
+
+server_details_row() {
+    local label=$1 value=$2 style=${3:-value}
+    printf '    %s' "$label"
+    if [[ -z $value ]]; then
+        msg_warn "$(ui_text 'not found' 'не найдено')"
+    elif [[ $style == warn ]]; then
+        msg_warn "$value"
+    elif [[ $style == plain ]]; then
+        printf '%s\n' "$value"
+    else
+        ui_note '%s' '%s' "$value"
+        printf '\n'
+    fi
+}
+
+server_details_enabled() {
+    case "$1" in
+        true) ui_text 'enabled' 'включена' ;;
+        false) ui_text 'disabled' 'выключена' ;;
+    esac
+}
+
+server_details_action() {
+    local data
+    local -a fields
+    ui_section "$(ui_text 'My server details' 'Данные моего сервера')"
+    if (( EUID != 0 )); then
+        msg_err "$(ui_text 'Root required' 'Нужен root')"
+        return 0
+    fi
+    if [[ ! -e $XUIDB && ! -L $XUIDB ]]; then
+        ui_wrap '1;33' "$(ui_text '3X-UI AUTO NGINX server not found. Select option 1 (Installation).' 'Сервер 3X-UI AUTO NGINX не найден. Выберите пункт 1 (Установка).')"
+        return 0
+    fi
+    if data=$(server_details_data "$XUIDB" 2>/dev/null); then
+        mapfile -t fields <<< "$data"
+    else
+        if [[ $? == 3 ]]; then
+            ui_wrap '1;33' "$(ui_text 'Could not read a consistent view of the 3X-UI database. Server details were not shown.' 'Не удалось согласованно прочитать базу 3X-UI. Данные сервера не показаны.')"
+        else
+            ui_wrap '1;33' "$(ui_text 'This server was not recognized as an installation of this project. Addresses were hidden to avoid showing incorrect data. If your server already works, do not reinstall: Installation will erase it.' 'Сервер не распознан как установленный этим проектом. Адреса не показаны, чтобы не показать неверные. Если сервер уже работает, ничего не переустанавливайте: пункт Установка его сотрёт.')"
+        fi
+        return 0
+    fi
+
+    msg_inf "$(ui_text '  3x-ui panel' '  Панель 3x-ui')"
+    server_details_row "$(ui_text 'Address:      ' 'Адрес:        ')" "${fields[0]-}"
+    server_details_row "$(ui_text 'Login:        ' 'Логин:        ')" "${fields[1]-}"
+    server_details_row "$(ui_text 'Diagnostics:  ' 'Диагностика:  ')" "${fields[2]-}"
+    printf '\n'
+    msg_inf "$(ui_text '  Subscriptions' '  Подписки')"
+    server_details_row "$(ui_text 'Address:      ' 'Адрес:        ')" "${fields[3]-}"
+    server_details_row "$(ui_text 'RAW status:   ' 'Статус RAW:   ')" "$(server_details_enabled "${fields[4]-}")" plain
+    server_details_row "$(ui_text 'JSON address: ' 'Адрес JSON:   ')" "${fields[5]-}"
+    server_details_row "$(ui_text 'JSON status:  ' 'Статус JSON:  ')" "$(server_details_enabled "${fields[6]-}")" plain
+    server_details_row "$(ui_text 'Active:       ' 'Активных:     ')" "${fields[7]-}"
+    printf '\n'
+    msg_inf '  AdGuard Home'
+    if [[ ${fields[8]-} == absent ]]; then
+        msg_warn "$(ui_text '    not installed' '    не установлен')"
+    else
+        server_details_row "$(ui_text 'Panel:        ' 'Панель:       ')" "${fields[9]-}"
+        server_details_row "$(ui_text 'Login:        ' 'Логин:        ')" "${fields[10]-}"
+        server_details_row 'DoH:          ' "${fields[11]-}"
+    fi
+    server_details_row 'DoT:          ' "$(ui_text 'not enabled' 'не включён')" plain
+    printf '\n'
+    msg_inf "$(ui_text '  Domains' '  Домены')"
+    server_details_row 'REALITY:      ' "${fields[12]-}"
+    if [[ ${fields[13]-} == absent ]]; then
+        server_details_row 'Vision:       ' "$(ui_text 'not configured' 'не настроен')" warn
+    else
+        server_details_row 'Vision:       ' "${fields[13]-}"
+    fi
+    printf '\n'
+    ui_wrap '2' "$(ui_text '  Passwords are stored in protected form and cannot be shown.' '  Пароли хранятся только в защищённом виде, показать их нельзя.')"
+}
+
 manager_menu() {
     local choice status=0 reported=0 completion
     UI_INTERACTIVE=1
@@ -4397,7 +4656,7 @@ manager_menu() {
     while true; do
         reported=0
         ui_header "$(ui_text 'MAIN MENU' 'ГЛАВНОЕ МЕНЮ')" 1
-        ui_text '\n  1. Installation\n  2. Change Domains\n  3. Backups\n  4. Telegram Web Proxy Manager\n  5. Cascade\n\n' '\n  1. Установка\n  2. Смена доменов\n  3. Резервные копии\n  4. Telegram Web Proxy Manager\n  5. Каскад\n\n'
+        ui_text '\n  1. Installation\n  2. Change Domains\n  3. Backups\n  4. Telegram Web Proxy Manager\n  5. Cascade\n  6. My server details\n\n' '\n  1. Установка\n  2. Смена доменов\n  3. Резервные копии\n  4. Telegram Web Proxy Manager\n  5. Каскад\n  6. Данные моего сервера\n\n'
         ui_back "$(ui_text '  0. Exit' '  0. Выход')"
         printf '\n'; ui_prompt
         IFS= read -r choice || return "$status"
@@ -4442,6 +4701,7 @@ manager_menu() {
                 } 4>&1
                 if (( status == 0 )) && [[ $completion == completed ]]; then return 0; fi ;;
             5) cascade_menu; status=$?; reported=1 ;;
+            6) server_details_action; continue ;;
             *) ui_text 'Invalid selection.\n' 'Неверный выбор.\n'; continue ;;
         esac
         if (( status )); then
@@ -4509,7 +4769,7 @@ PY
     }
     local snippet
     snippet=$(cat "$AGH_SNIPPET") || exit 1
-    [[ "$snippet" == "$(agh_snippet)" || "$snippet" == "$(agh_snippet legacy)" ]] || exit 1
+    [[ "$snippet" == "$(agh_snippet)" || ( $AGH_DOH_PATH == dns-query && "$snippet" == "$(agh_snippet legacy)" ) ]] || exit 1
     [[ "$AGH_ARCH" == "$(dpkg --print-architecture)" ]] || exit 1
     if (( was_active )); then agh_health && agh_dns_probe || exit 1; fi
     if [[ -e "${targets[4]}" || -L "${targets[4]}" ]]; then

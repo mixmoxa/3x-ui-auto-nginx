@@ -123,6 +123,10 @@ def install(scenario, ref):
             assert re.search(r'\[✓\]\s+Subscription\s+Ready', private)
             if scenario == 'positive':
                 assert result.returncode == 0, 'Maximum installation failed'
+                metadata = json.loads(Path('/opt/AdGuardHome/managed.json').read_text())
+                assert re.fullmatch(r'dns-[A-Za-z0-9]{12}', metadata['doh_path']), 'AGH public path is not random'
+                expected_doh = ' DoH: https://'+metadata['domain']+'/'+metadata['doh_path']
+                assert expected_doh in private.splitlines(), 'Final summary did not show the managed DoH address'
                 assert report['components']['xhttp_cdn_disabled'], 'Requested XHTTP CDN was not created disabled'
                 for component in ('Global DoT', 'Fail2ban', 'APT security'):
                     assert component+' — Configured' in private

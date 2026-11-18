@@ -131,10 +131,11 @@ load_adguard_backup_state() {
         [[ -f /usr/local/lib/3x-ui-pro/managed-adguard.sh && ! -L /usr/local/lib/3x-ui-pro/managed-adguard.sh &&
            -f /etc/nginx/snippets/x-ui-auto-optional/adguard.conf && ! -e /etc/nginx/snippets/adguard.conf ]] || die 'Partial AdGuard Home state.'
         . /usr/local/lib/3x-ui-pro/managed-adguard.sh
+        # Historical installed helpers do not set AGH_DOH_PATH.
+        local snippet AGH_DOH_PATH=dns-query
         agh_config && agh_unit || die 'AdGuard Home configuration/service contract is invalid.'
-        local snippet
         snippet=$(cat "$AGH_SNIPPET") || die 'Cannot read AdGuard Home nginx state.'
-        [[ "$snippet" == "$(agh_snippet)" || "$snippet" == "$(agh_snippet legacy)" ]] || die 'AdGuard Home nginx state is inconsistent.'
+        [[ "$snippet" == "$(agh_snippet)" || ( $AGH_DOH_PATH == dns-query && "$snippet" == "$(agh_snippet legacy)" ) ]] || die 'AdGuard Home nginx state is inconsistent.'
         [[ "$AGH_ARCH" == "$ARCH" ]] || die 'AdGuard Home architecture does not match the host.'
         ADGUARD_HOME=true
     fi
@@ -1582,6 +1583,9 @@ if type(enabled) is not bool:
     raise ValueError('Invalid AGH native-update contract')
 if not (re.fullmatch(r'adg-[A-Za-z0-9]{12}', m['path'])):
     raise ValueError('Invalid AGH admin prefix')
+doh_path = m.get('doh_path', 'dns-query')
+if 'doh_path' in m and (not isinstance(doh_path, str) or not re.fullmatch(r'dns-[A-Za-z0-9]{12}', doh_path)):
+    raise ValueError('Invalid AGH public DoH path')
 domain = m['domain']
 if not (isinstance(domain, str) and len(domain) <= 253 and '.' in domain):
     raise ValueError('Invalid AGH domain')
@@ -1652,23 +1656,32 @@ for part in ('querylog', 'statistics'):
 for k in ('web_port', 'dns_port', 'path', 'domain', 'arch', 'version'):
     print(m[k])
 print('yes' if enabled else 'no')
+print(doh_path)
 PY
     ) || return 1
     local -a fields
     mapfile -t fields <<< "$values"
     AGH_WEB_PORT=${fields[0]} AGH_DNS_PORT=${fields[1]} AGH_PATH=${fields[2]} AGH_DOMAIN=${fields[3]} AGH_ARCH=${fields[4]}
-    AGH_INITIAL_VERSION=${fields[5]} AGH_UPDATES_ENABLED=${fields[6]}
+    AGH_INITIAL_VERSION=${fields[5]} AGH_UPDATES_ENABLED=${fields[6]} AGH_DOH_PATH=${fields[7]}
     agh_binary && "$AGH_DIR/AdGuardHome" -c "$AGH_DIR/AdGuardHome.yaml" -w "$AGH_DIR" --check-config
 }
 
 agh_snippet() {
-    local client_route=''
-    if [[ "${1:-}" != legacy ]]; then
-        # AdGuard Home v0.107.79 ValidateClientID: one hostname label, 1..63 bytes.
+    local doh_path=${AGH_DOH_PATH:-dns-query} client_route='' exact_rewrite='' client_rewrite=''
+    # AdGuard Home ValidateClientID: one hostname label, 1..63 bytes.
+    local client_id='[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?'
+    if [[ ${1:-} == legacy ]]; then
+        doh_path=dns-query
+    else
+        if [[ $doh_path != dns-query ]]; then
+            exact_rewrite=$'    rewrite ^ /dns-query break;\n'
+            client_rewrite='    rewrite ^ /dns-query/$agh_doh_client_id break;'$'\n'
+            client_id="(?<agh_doh_client_id>${client_id})"
+        fi
         client_route=$'\n'$(cat <<EOFCLIENT
-location ~ "^/dns-query/[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\$" {
+location ~ "^/${doh_path}/${client_id}\$" {
     limit_except GET POST { deny all; }
-    proxy_pass http://127.0.0.1:${AGH_WEB_PORT};
+${client_rewrite}    proxy_pass http://127.0.0.1:${AGH_WEB_PORT};
     proxy_http_version 1.1;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
@@ -1683,9 +1696,9 @@ EOFCLIENT
     fi
     cat <<EOFNG
 # Integrated AdGuard Home (project-owned).
-location = /dns-query {
+location = /${doh_path} {
     limit_except GET POST { deny all; }
-    proxy_pass http://127.0.0.1:${AGH_WEB_PORT};
+${exact_rewrite}    proxy_pass http://127.0.0.1:${AGH_WEB_PORT};
     proxy_http_version 1.1;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
@@ -1723,7 +1736,8 @@ preflight_staged_adguard() (
         [[ "$AGH_RUNNING_VERSION" == "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["adguard_version"])' "$STAGING/meta.json")" ]] ||
         die 'Staged AdGuard Home configuration/binary contract is invalid; target state was not changed.'
     [[ -f "$snippet" && ! -L "$snippet" ]] &&
-        { cmp -s "$snippet" <(agh_snippet) || cmp -s "$snippet" <(agh_snippet legacy); } ||
+        { cmp -s "$snippet" <(agh_snippet) ||
+          { [[ $AGH_DOH_PATH == dns-query ]] && cmp -s "$snippet" <(agh_snippet legacy); }; } ||
         die 'Staged AdGuard Home nginx snippet is invalid; target state was not changed.'
 )
 

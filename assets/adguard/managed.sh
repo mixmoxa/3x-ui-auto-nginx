@@ -73,6 +73,9 @@ if type(enabled) is not bool:
     raise ValueError('Invalid AGH native-update contract')
 if not (re.fullmatch(r'adg-[A-Za-z0-9]{12}', m['path'])):
     raise ValueError('Invalid AGH admin prefix')
+doh_path = m.get('doh_path', 'dns-query')
+if 'doh_path' in m and (not isinstance(doh_path, str) or not re.fullmatch(r'dns-[A-Za-z0-9]{12}', doh_path)):
+    raise ValueError('Invalid AGH public DoH path')
 domain = m['domain']
 if not (isinstance(domain, str) and len(domain) <= 253 and '.' in domain):
     raise ValueError('Invalid AGH domain')
@@ -143,12 +146,13 @@ for part in ('querylog', 'statistics'):
 for k in ('web_port', 'dns_port', 'path', 'domain', 'arch', 'version'):
     print(m[k])
 print('yes' if enabled else 'no')
+print(doh_path)
 PY
     ) || return 1
     local -a fields
     mapfile -t fields <<< "$values"
     AGH_WEB_PORT=${fields[0]} AGH_DNS_PORT=${fields[1]} AGH_PATH=${fields[2]} AGH_DOMAIN=${fields[3]} AGH_ARCH=${fields[4]}
-    AGH_INITIAL_VERSION=${fields[5]} AGH_UPDATES_ENABLED=${fields[6]}
+    AGH_INITIAL_VERSION=${fields[5]} AGH_UPDATES_ENABLED=${fields[6]} AGH_DOH_PATH=${fields[7]}
     agh_binary && "$AGH_DIR/AdGuardHome" -c "$AGH_DIR/AdGuardHome.yaml" -w "$AGH_DIR" --check-config
 }
 
@@ -227,13 +231,21 @@ agh_install_service() {
 }
 
 agh_snippet() {
-    local client_route=''
-    if [[ "${1:-}" != legacy ]]; then
-        # AdGuard Home v0.107.79 ValidateClientID: one hostname label, 1..63 bytes.
+    local doh_path=${AGH_DOH_PATH:-dns-query} client_route='' exact_rewrite='' client_rewrite=''
+    # AdGuard Home ValidateClientID: one hostname label, 1..63 bytes.
+    local client_id='[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?'
+    if [[ ${1:-} == legacy ]]; then
+        doh_path=dns-query
+    else
+        if [[ $doh_path != dns-query ]]; then
+            exact_rewrite=$'    rewrite ^ /dns-query break;\n'
+            client_rewrite='    rewrite ^ /dns-query/$agh_doh_client_id break;'$'\n'
+            client_id="(?<agh_doh_client_id>${client_id})"
+        fi
         client_route=$'\n'$(cat <<EOFCLIENT
-location ~ "^/dns-query/[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\$" {
+location ~ "^/${doh_path}/${client_id}\$" {
     limit_except GET POST { deny all; }
-    proxy_pass http://127.0.0.1:${AGH_WEB_PORT};
+${client_rewrite}    proxy_pass http://127.0.0.1:${AGH_WEB_PORT};
     proxy_http_version 1.1;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
@@ -248,9 +260,9 @@ EOFCLIENT
     fi
     cat <<EOFNG
 # Integrated AdGuard Home (project-owned).
-location = /dns-query {
+location = /${doh_path} {
     limit_except GET POST { deny all; }
-    proxy_pass http://127.0.0.1:${AGH_WEB_PORT};
+${exact_rewrite}    proxy_pass http://127.0.0.1:${AGH_WEB_PORT};
     proxy_http_version 1.1;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
@@ -350,9 +362,9 @@ agh_health() {
     expected=$(agh_snippet) || return 1
     [[ -f "$AGH_SNIPPET" && ! -L "$AGH_SNIPPET" ]] || return 1
     body=$(cat "$AGH_SNIPPET") || return 1
-    [[ "$body" == "$expected" || "$body" == "$(agh_snippet legacy)" ]] || return 1
+    [[ "$body" == "$expected" || ( $AGH_DOH_PATH == dns-query && "$body" == "$(agh_snippet legacy)" ) ]] || return 1
     agh_doh_probe "http://127.0.0.1:${AGH_WEB_PORT}/dns-query" || return 1
-    agh_doh_probe "https://${AGH_DOMAIN}/dns-query" "${AGH_DOMAIN}:443:127.0.0.1" || return 1
+    agh_doh_probe "https://${AGH_DOMAIN}/${AGH_DOH_PATH}" "${AGH_DOMAIN}:443:127.0.0.1" || return 1
     backend=$(curl --noproxy '*' -fsS --connect-timeout 5 --max-time 15 "http://127.0.0.1:${AGH_WEB_PORT}/login.html") || return 1
     body=$(curl --noproxy '*' -fsS --connect-timeout 5 --max-time 15 \
         --resolve "${AGH_DOMAIN}:443:127.0.0.1" "https://${AGH_DOMAIN}/${AGH_PATH}/login.html") || return 1

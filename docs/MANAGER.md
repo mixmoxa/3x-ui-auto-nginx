@@ -15,7 +15,9 @@ and 60-column ASCII separators. Color is optional: `NO_COLOR`, `TERM=dumb` and
 redirected output remain readable without ANSI escapes. System logs stay visible.
 
 The main menu is **1 Installation / Установка**, **2 Change Domains / Смена
-доменов**, **3 Backups / Резервные копии**, **4 Telegram Web Proxy Manager**, **0 Exit / Выход**. With no
+доменов**, **3 Backups / Резервные копии**, **4 Telegram Web Proxy Manager**,
+**5 Cascade / Каскад**, **6 My server details / Данные моего сервера** and
+**0 Exit / Выход**. With no
 unfinished domain operation, opening it, Back and Exit need no root access and
 perform no downloads, IP lookups or system preparation. An unfinished domain
 journal instead requires root and verified recovery before another menu action.
@@ -231,6 +233,44 @@ This opt-in mode does not change the ordinary CI jobs or the default full fresh
 installer acceptance. It selects no Vision, AWG, AGH or client/Mihomo integration.
 Private archives, database digests, keys and logs stay in the disposable stand and
 are removed by its existing cleanup; only fixed check results are public.
+
+## 5. Cascade / Каскад
+
+Use Cascade to send traffic from one 3x-ui server, the entry, through a second
+3x-ui server, the exit. Each action asks for the login and password of the panel
+on the server where you open it.
+
+- **Create key (exit server)** adds one Cascade client to the exit server's
+  REALITY connection, which receives traffic from the entry. It shows the key
+  link to paste on the entry server.
+  Existing clients stay in place.
+- **Connect exit server (entry server)** checks the entry server's settings and
+  asks for the key link from the exit. It adds the outgoing connection to the exit
+  and three rules. Where earlier rules do not apply, requests to Russian domains
+  and IP addresses go directly, and the remaining TCP and UDP traffic goes through
+  the exit. Applying the change may briefly interrupt existing connections.
+- **Status** shows whether this server is set up as an entry, an exit, or both.
+  It only reads the panel settings.
+- **Disable** asks for confirmation separately for each role it finds. On an
+  exit server it removes the Cascade client, so entry servers using that client
+  lose their connection to the exit. On an entry server it removes the outgoing
+  connection and the three Cascade rules. The other rules stay in place. Applying
+  the entry change may briefly interrupt existing connections.
+
+## 6. My server details / Данные моего сервера
+
+Open this option as root to see the 3x-ui panel address and login, the network
+diagnostics address and the domains used for REALITY and Vision connections.
+It shows the base addresses of regular subscriptions and JSON subscriptions,
+which are written in a format some client apps use. It also shows whether each
+format is enabled and how many subscriptions are active. The base addresses
+omit the part that gives access to an individual client's configuration.
+If AdGuard Home is installed, the screen shows its panel address, login and
+DoH address for sending DNS requests over HTTPS. Passwords cannot be shown.
+
+The option reads the installed settings and returns to the main menu. It does
+not update settings or restart services. If it cannot recognise a working server,
+keep the current installation. Option 1 can erase it.
 
 ## Installed description
 

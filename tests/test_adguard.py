@@ -246,6 +246,7 @@ class AdGuardInstaller(unittest.TestCase):
         self.assertNotEqual(m['web_port'],m['dns_port'])
         self.assertGreaterEqual(m['web_port'],10000);self.assertGreaterEqual(m['dns_port'],10000)
         self.assertEqual(m['path'],'adg-'+'A'*12)
+        self.assertEqual(m['doh_path'], 'dns-'+'A'*12)
         log = self.calls.read_text()
         self.assertNotIn('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',log)
         self.assertIn('bcrypt -niB -C 12 admin',log)
@@ -253,8 +254,10 @@ class AdGuardInstaller(unittest.TestCase):
         self.assertLess(log.index('--check-config'),log.index('-s install'))
         self.assertNotIn('--no-check-update',log)
         self.assertIn('--resolve example.com:443:127.0.0.1',log)
+        self.assertIn('https://example.com/'+m['doh_path']+'?dns=', log)
         snippet=(self.root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf').read_text()
-        self.assertIn('location = /dns-query',snippet)
+        self.assertIn('location = /'+m['doh_path'],snippet)
+        self.assertNotIn('location = /dns-query',snippet)
         self.assertIn('location ^~ /adg-'+'A'*12+'/',snippet)
         self.assertNotIn('$fwdport',snippet)
         self.assertNotIn('releases/latest',log)
@@ -381,11 +384,11 @@ entrypoint "$@"
 
     def test_optional_summary_and_unit_contract(self):
         for choice in ('n','y'):
-            r=self.run_shell(('show_results',), ('AGH_RESULT=installed; ' if choice=='y' else 'AGH_RESULT=not_requested; ') + 'AGH_PATH=adg-ABCDEFGHIJKL; AGH_PASSWORD=single-secret; panel_path=panel; config_username=user; config_password=panel-pass; reality_domain=cover.example; ufw() { echo "Status: active"; }; show_results',INSTALL_AGH=choice)
+            r=self.run_shell(('show_results',), ('AGH_RESULT=installed; ' if choice=='y' else 'AGH_RESULT=not_requested; ') + 'AGH_PATH=adg-ABCDEFGHIJKL; AGH_DOH_PATH=dns-AbCdEf123456; AGH_PASSWORD=single-secret; panel_path=panel; config_username=user; config_password=panel-pass; reality_domain=cover.example; ufw() { echo "Status: active"; }; show_results',INSTALL_AGH=choice)
             self.assertEqual(r.returncode,0,r.stderr)
             self.assertEqual('AdGuard Home:' in r.stdout,choice=='y')
             self.assertEqual(r.stdout.count('single-secret'),1 if choice=='y' else 0)
-            if choice=='y':self.assertIn('https://example.com/dns-query',r.stdout)
+            if choice=='y':self.assertIn('https://example.com/dns-AbCdEf123456',r.stdout)
         r=self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'),'install_adguard')
         self.assertEqual(r.returncode,0,r.stderr)
         unit=self.root/'etc/systemd/system/AdGuardHome.service'
@@ -458,7 +461,7 @@ entrypoint "$@"
         m = json.loads(original_meta)
         for key, value in (('web_port', 443), ('dns_port', 53), ('dns_port', m['web_port']),
                            ('web_port', '18081'), ('version', 'bad'), ('updates_enabled', 'true'), ('arch', 'bad'),
-                           ('path', 'bad'), ('domain', 'bad..domain')):
+                           ('path', 'bad'), ('domain', 'bad..domain'), ('doh_path', '/dns-query')):
             with self.subTest(key=key, value=value):
                 metadata.write_text(json.dumps({**m, key: value}))
                 self.assertNotEqual(call('agh_config').returncode, 0)
@@ -642,6 +645,21 @@ main
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(directory.stat().st_mode & 0o777, 0o755)
 
+    def test_live_and_staged_renderers_emit_the_same_three_snippets(self):
+        backup = (ROOT / 'assets/backup/x-ui-backup.sh').read_text()
+
+        for path, variant in (('', 'legacy'), ('', ''), ('dns-AbCdEf123456', '')):
+            with self.subTest(path=path, variant=variant):
+                rendered = []
+                for source in (HELPER, backup):
+                    snippet = source.split('\nagh_snippet() {\n', 1)[1].split('\nEOFNG\n}', 1)[0]
+                    command = ('agh_snippet() {\n' + snippet + '\nEOFNG\n}\n'
+                               'AGH_PATH=adg-ABCDEFGHIJKL AGH_WEB_PORT=18081 AGH_DOH_PATH=$1 agh_snippet "$2"')
+                    rendered.append(subprocess.check_output(['bash', '-c', command, 'fixture', path, variant]))
+                self.assertEqual(*rendered)
+                self.assertIn(f'location = /{path or "dns-query"} {{\n'.encode(), rendered[0])
+                self.assertEqual(b'location ~ ' in rendered[0], variant != 'legacy')
+
     def test_real_nginx_optional_include_and_exact_routes(self):
         nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
         self.assertTrue(nginx, 'Real nginx is required')
@@ -666,23 +684,23 @@ main
         config.write_text(f'pid {self.root}/nginx.pid;\nerror_log stderr;\nevents {{}}\nhttp {{ access_log off;\n{paths}\nserver {{ listen 127.0.0.1:{port}; include {optional}/*.conf; location / {{ return 404; }} }} }}')
         cmd=[nginx,'-p',str(self.root)+'/', '-c',str(config)]
         for enabled in (False,True):
+            public = '/dns-AbCdEf123456'
             if enabled:
-                r=subprocess.run(['bash','-c',HELPER+'\nAGH_WEB_PORT=$PORT; AGH_PATH=adg-ABCDEFGHIJKL; agh_snippet'],
-                                 capture_output=True,text=True,env={**os.environ,'PORT':str(server.server_port)})
+                r=subprocess.run(['bash','-c',HELPER+'\nAGH_WEB_PORT=$PORT; AGH_PATH=adg-ABCDEFGHIJKL; AGH_DOH_PATH=$1; agh_snippet',
+                                  'fixture', public[1:]], check=True, capture_output=True,text=True,
+                                 env={**os.environ,'PORT':str(server.server_port)})
                 (optional/'adguard.conf').write_text(r.stdout)
             checked=subprocess.run(cmd+['-t'],capture_output=True,text=True)
             self.assertEqual(checked.returncode,0,checked.stderr)
             subprocess.run(cmd,check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             try:
-                positive=('/dns-query','/dns-query/my-client?dns=fixture&extra=1',
-                          '/dns-query/'+random_id+'?dns=fixture', '/dns-query/extra',
-                          '/dns-query/A', '/dns-query/'+'a'*63)
+                positive=tuple(public+suffix for suffix in ('', '/my-client?dns=fixture&extra=1',
+                               '/'+random_id+'?dns=fixture', '/extra', '/A', '/'+'a'*63))
                 cases=[(path,method,200 if enabled else 404) for path in positive for method in ('GET','POST')]
-                invalid=('/dns-query/', '/dns-query/client/extra', '/dns-query/my-client/',
-                         '/dns-query/-bad', '/dns-query/bad-', '/dns-query/bad_id',
-                         '/dns-query/bad.id', '/dns-query/'+'a'*64,
-                         '/dns-query/adg-ABCDEFGHIJKL/control/status', '/dns-query/panel/api',
-                         '/3000/test','/9090/api')
+                invalid=tuple(public+suffix for suffix in ('/', '/client/extra', '/my-client/',
+                              '/-bad', '/bad-', '/bad_id', '/bad.id', '/'+'a'*64,
+                              '/adg-ABCDEFGHIJKL/control/status', '/panel/api'))
+                invalid += ('/dns-query','/dns-query/my-client','/3000/test','/9090/api')
                 cases += [(path,'GET',404) for path in invalid]
                 cases += [('/adg-ABCDEFGHIJKL/control/status','GET',200 if enabled else 404)]
                 cases += [(path,method,403 if enabled else 404) for path in positive for method in ('DELETE','PUT')]
@@ -692,7 +710,7 @@ main
                     r=subprocess.run(['curl','--noproxy','*','-s','-o','/dev/null','-w','%{http_code}','-X',method,url],text=True,capture_output=True)
                     self.assertEqual(r.stdout,str(status),(path,method,r.stderr))
                     if status==200:
-                        expected='/control/status' if path.startswith('/adg-') else path
+                        expected='/control/status' if path.startswith('/adg-') else '/dns-query'+path[len(public):]
                         self.assertEqual(hits[before:],[(method,expected)])
                     else:self.assertEqual(len(hits),before,(path,method))
                 if enabled:
@@ -709,7 +727,7 @@ main
                     self.assertIn('samesite=lax', [part.lower() for part in parts])
                     # The Secure policy is local to the admin prefix, not DoH.
                     doh = subprocess.run(['curl', '--noproxy', '*', '-fsS', '-D', '-', '-o', '/dev/null',
-                                          '-X', 'POST', f'http://127.0.0.1:{port}/dns-query'],
+                                          '-X', 'POST', f'http://127.0.0.1:{port}{public}'],
                                          text=True, capture_output=True)
                     self.assertEqual(doh.returncode, 0, doh.stderr)
                     doh_cookie = next(line for line in doh.stdout.splitlines() if line.lower().startswith('set-cookie:'))
@@ -717,7 +735,6 @@ main
                     self.assertIn(('POST','/control/login'),hits)
                     self.assertIn(('GET','/dns-query'),hits);self.assertIn(('POST','/dns-query'),hits)
                     self.assertIn(('GET','/control/status'),hits)
-                    self.assertFalse(any(p in invalid for _,p in hits))
                 else:self.assertEqual(hits,[])
             finally:
                 subprocess.run(cmd+['-s','quit'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)

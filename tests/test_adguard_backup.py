@@ -43,36 +43,73 @@ location ^~ /${AGH_PATH}/ {
 EOFNG
 }'''
 
+AGH_YAML = '''http:
+  address: 127.0.0.1:18081
+  doh:
+    insecure_enabled: true
+    routes:
+      - GET /dns-query
+      - POST /dns-query
+users:
+  - name: admin
+    password: '$2y$12$00000000000000000000000000000000000000000000000000000'
+dns:
+  bind_hosts:
+    - 127.0.0.1
+  port: 18082
+tls:
+  enabled: false
+schema_version: 34
+'''
+
+
+def adguard_yaml(legacy):
+    if legacy:
+        return AGH_YAML
+    return AGH_YAML.replace('      - POST /dns-query\n',
+        '      - POST /dns-query\n      - GET /dns-query/{ClientID}\n      - POST /dns-query/{ClientID}\n')
+
+
 class AdGuardBackup(unittest.TestCase):
-    def enablement_fixture(self, active=True, legacy=False):
+    def enablement_fixture(self, active=True, legacy=False, random_doh=False):
         import re, subprocess
         from unittest.mock import patch
         from test_adguard import AdGuardInstaller, MOCK, INSTALLER, FIXTURE_BINARY_SHA
         fixture = AdGuardInstaller('runTest')
-        # Real root ownership checks, including every ancestor, in private /run.
-        with patch('tempfile.tempdir', '/run'):
-            fixture.setUp()
-        self.addCleanup(fixture.doCleanups)
-        result = fixture.run_shell(('cleanup_adguard','adguard_stage','install_adguard'), 'install_adguard')
-        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
-        root = fixture.root
-        (root/'usr/local/bin').mkdir(parents=True)
-        backup = root/'usr/local/bin/x-ui-backup'
-        backup.write_text('#!/bin/bash\nexit 0\n'); backup.chmod(0o755)
-        agh = root/'opt/AdGuardHome'
-        (agh/'AdGuardHome').write_text(BINARY)
-        (agh/'AdGuardHome-public.gpg').unlink()
-        meta = json.loads((agh/'managed.json').read_text())
-        meta.update(version='v0.107.79', updates_enabled=False)
-        (agh/'managed.json').write_text(json.dumps(meta))
-        unit = root/'etc/systemd/system/AdGuardHome.service'
-        unit.write_text(unit.read_text().replace(' -s run', ' --no-check-update -s run'))
-        fixture.helper.write_text(fixture.helper.read_text().replace(FIXTURE_BINARY_SHA, LEGACY_FIXTURE_BINARY_SHA) + '\nagh_dns_probe() { echo native-dns-probe >> \"$CALLS\"; }\n')
-        if legacy:
-            result=fixture.run_shell((), 'source "$HELPER_FIXTURE"; agh_config >/dev/null; agh_snippet legacy')
+        previous_umask = os.umask(0o077)
+        try:
+            # The trusted ancestry check starts at /. An intermediate runner mount
+            # may be group-writable or noexec.
+            with patch('tempfile.tempdir', '/'):
+                fixture.setUp()
+            self.addCleanup(fixture.doCleanups)
+            root = fixture.root
+            (root/'usr/local/bin').mkdir(parents=True)
+            backup = root/'usr/local/bin/x-ui-backup'
+            backup.write_text('#!/bin/bash\nexit 0\n'); backup.chmod(0o755)
+            (root/'usr/local/lib/3x-ui-pro/managed-adguard.sh').write_bytes(fixture.helper.read_bytes())
+            agh = root/'opt/AdGuardHome'
+            agh.mkdir(mode=0o700)
+            binary = agh/'AdGuardHome'
+            binary.write_text(BINARY); binary.chmod(0o755)
+            (agh/'AdGuardHome.yaml').write_text(adguard_yaml(legacy))
+            meta = dict(version='v0.107.79', updates_enabled=False, arch='amd64', domain='example.com',
+                        path='adg-ABCDEFGHIJKL', web_port=18081, dns_port=18082)
+            if random_doh:
+                meta['doh_path'] = 'dns-AbCdEf123456'
+            (agh/'managed.json').write_text(json.dumps(meta))
+            unit = root/'etc/systemd/system/AdGuardHome.service'
+            unit.parent.mkdir(parents=True)
+            unit.write_text(f'ExecStart={binary} -c {agh}/AdGuardHome.yaml -w {agh} -s run --no-check-update\n')
+            if active:
+                (root/'active').touch()
+            fixture.helper.write_text(fixture.helper.read_text().replace(FIXTURE_BINARY_SHA, LEGACY_FIXTURE_BINARY_SHA) + '\nagh_dns_probe() { echo native-dns-probe >> \"$CALLS\"; }\n')
+            variant = ' legacy' if legacy else ''
+            result = fixture.run_shell((), 'source "$HELPER_FIXTURE"; agh_config >/dev/null; agh_snippet'+variant)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             (root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf').write_text(result.stdout)
-        if not active: (root/'active').unlink()
+        finally:
+            os.umask(previous_umask)
         (root/'release-backup').write_bytes((Path(__file__).resolve().parents[1]/'assets/backup/x-ui-backup.sh').read_bytes())
         body = re.search(r'^enable_agh_updates\(\) \(\n.*?^\)', INSTALLER, re.M|re.S)[0]
         # Only private relocation.
@@ -111,9 +148,10 @@ enable_agh_updates
         return fixture, run
 
     def test_enablement_preserves_legacy_version_data_and_service_state(self):
-        for active,legacy in ((True,False),(False,False),(True,True)):
-            with self.subTest(active=active,legacy=legacy):
-                fixture, run = self.enablement_fixture(active,legacy)
+        for active, legacy, random_doh in ((True,False,False), (False,False,False),
+                                            (True,True,False), (True,False,True)):
+            with self.subTest(active=active,legacy=legacy,random_doh=random_doh):
+                fixture, run = self.enablement_fixture(active,legacy,random_doh)
                 root = fixture.root; agh = root/'opt/AdGuardHome'
                 before = {name:(agh/name).read_bytes() for name in ('AdGuardHome','AdGuardHome.yaml')}
                 snippet=root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf'
@@ -126,6 +164,7 @@ enable_agh_updates
                     self.assertEqual((root/'active').exists(),active)
                     meta = json.loads((agh/'managed.json').read_text())
                     self.assertEqual(meta['version'],'v0.107.79'); self.assertIs(meta['updates_enabled'],True)
+                    self.assertEqual(meta.get('doh_path'), 'dns-AbCdEf123456' if random_doh else None)
                     self.assertNotIn('--no-check-update',(root/'etc/systemd/system/AdGuardHome.service').read_text())
                     self.assertFalse(list(root.glob('stage.*')), result.stdout+result.stderr)
 
@@ -140,6 +179,7 @@ enable_agh_updates
                 before = {name:(root/name).read_bytes() for name in paths}
                 result = run(ENABLE_FAULT='files')
                 self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
+                self.assertTrue((root/'fault-used').exists(), 'Fixture did not reach the injected replacement failure')
                 self.assertEqual({name:(root/name).read_bytes() for name in before},before)
                 self.assertEqual((root/'active').exists(),active)
                 self.assertFalse((root/'opt/AdGuardHome/AdGuardHome-public.gpg').exists())
@@ -173,40 +213,24 @@ enable_agh_updates
         # Private trusted fixture digest; actual sha256sum remains unstubbed.
         self.fixture.script.write_text(self.fixture.script.read_text().replace(OFFICIAL_AMD64_SHA, LEGACY_FIXTURE_BINARY_SHA))
 
-    def install_fixture(self, active=True, legacy=False):
+    def install_fixture(self, active=True, legacy=False, doh_path=None):
         f=self.fixture
         f.write('/opt/AdGuardHome/AdGuardHome',BINARY,0o755)
-        f.write('/opt/AdGuardHome/AdGuardHome.yaml', '''http:
-  address: 127.0.0.1:18081
-  doh:
-    insecure_enabled: true
-    routes:
-      - GET /dns-query
-      - POST /dns-query
-users:
-  - name: admin
-    password: '$2y$12$00000000000000000000000000000000000000000000000000000'
-dns:
-  bind_hosts:
-    - 127.0.0.1
-  port: 18082
-tls:
-  enabled: false
-schema_version: 34
-''',0o600)
-        f.write('/opt/AdGuardHome/managed.json',json.dumps(dict(version='v0.107.79',arch='amd64',domain='example.com',path='adg-ABCDEFGHIJKL',web_port=18081,dns_port=18082)),0o600)
+        f.write('/opt/AdGuardHome/AdGuardHome.yaml', adguard_yaml(legacy), 0o600)
+        metadata = dict(version='v0.107.79', arch='amd64', domain='example.com', path='adg-ABCDEFGHIJKL',
+                        web_port=18081, dns_port=18082)
+        if doh_path is not None:
+            metadata['doh_path'] = doh_path
+        f.write('/opt/AdGuardHome/managed.json', json.dumps(metadata), 0o600)
         f.write('/opt/AdGuardHome/data/querylog.json','persistent query state')
         start=HELPER.index('agh_snippet() {')
         end=HELPER.index('\nEOFNG\n}',start)+len('\nEOFNG\n}')
         helper=HELPER[:start]+LEGACY_SNIPPET+HELPER[end:] if legacy else HELPER
-        if not legacy:
-            yaml=f.path('/opt/AdGuardHome/AdGuardHome.yaml')
-            yaml.write_text(yaml.read_text().replace('      - POST /dns-query\n',
-                '      - POST /dns-query\n      - GET /dns-query/{ClientID}\n      - POST /dns-query/{ClientID}\n'))
         f.write('/usr/local/lib/3x-ui-pro/managed-adguard.sh',relocate(helper,self.root).replace(OFFICIAL_AMD64_SHA, LEGACY_FIXTURE_BINARY_SHA),0o600)
         # Generate the exact snippet from the same managed helper.
         import subprocess
-        r=subprocess.run(['bash','-c','source "$1"; AGH_WEB_PORT=18081; AGH_PATH=adg-ABCDEFGHIJKL; agh_snippet','fixture',str(f.path('/usr/local/lib/3x-ui-pro/managed-adguard.sh'))],capture_output=True,text=True)
+        r=subprocess.run(['bash','-c','source "$1"; AGH_WEB_PORT=18081; AGH_PATH=adg-ABCDEFGHIJKL; AGH_DOH_PATH=$2; agh_snippet',
+                          'fixture',str(f.path('/usr/local/lib/3x-ui-pro/managed-adguard.sh')),doh_path or ''],capture_output=True,text=True)
         self.assertEqual(r.returncode,0,r.stderr)
         f.write('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf',r.stdout,0o600)
         f.write('/etc/systemd/system/AdGuardHome.service',f'ExecStart={self.root}/opt/AdGuardHome/AdGuardHome -c {self.root}/opt/AdGuardHome/AdGuardHome.yaml -w {self.root}/opt/AdGuardHome -s run --no-check-update\n')
@@ -216,15 +240,18 @@ schema_version: 34
     def test_legacy_and_clientid_archives_restore_without_upgrading_state(self):
         import hashlib
         f=self.fixture
-        for legacy in (False,True):
-            with self.subTest(legacy=legacy):
-                self.install_fixture(legacy=legacy)
+        for legacy, doh_path in ((True, None), (False, None), (False, 'dns-AbCdEf123456')):
+            with self.subTest(legacy=legacy, doh_path=doh_path):
+                self.install_fixture(legacy=legacy, doh_path=doh_path)
                 snippet=f.path('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf')
+                metadata=f.path('/opt/AdGuardHome/managed.json')
                 saved={path:path.read_bytes() for path in (snippet,
+                    metadata,
                     f.path('/opt/AdGuardHome/AdGuardHome.yaml'),
                     f.path('/usr/local/lib/3x-ui-pro/managed-adguard.sh'))}
                 if not legacy:self.assertIn(b'location ~',saved[snippet])
                 archive=f.backup();digest=hashlib.sha256(archive.read_bytes()).digest()
+                self.assertIn(f'location = /{doh_path or "dns-query"} {{'.encode(), saved[snippet])
                 for _ in range(2):
                     result=f.run_tool('restore',archive)
                     self.assertEqual(result.returncode,0,result.stdout+result.stderr)
@@ -396,7 +423,8 @@ schema_version: 34
         self.trace_mutation_boundaries()
         metadata = json.loads(f.path('/opt/AdGuardHome/managed.json').read_text())
         for key, value in (('version', 'v0.107.78'), ('arch', 'arm64'), ('arch', 'invalid'),
-                           ('domain', 'bad..example.com'), ('path', 'adg-bad'),
+                           ('domain', 'bad..example.com'), ('path', 'adg-bad'), ('doh_path', 'dns-query'),
+                           ('doh_path', 'dns-AbCdEf123456'),
                            ('web_port', 443), ('dns_port', metadata['web_port'])):
             with self.subTest(key=key, value=value):
                 self.assert_staged_rejection_preserves_target(archive, {

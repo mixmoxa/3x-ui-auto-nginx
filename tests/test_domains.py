@@ -227,7 +227,8 @@ class DomainFixture:
         for name in ('vision.conf','vision-acme.conf'):
             self.p('/etc/nginx/sites-enabled/'+name).symlink_to('/etc/nginx/sites-available/'+name)
         self.write('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision', '# fixture retained '+domain+'\n',0o755)
-        self.write(self.module.AGH, json.dumps(dict(domain=self.panel, path='adg-AbCdEf123456', data='preserve', version='v0.107.79')),0o600)
+        self.write(self.module.AGH, json.dumps(dict(domain=self.panel, path='adg-AbCdEf123456',
+                                                   doh_path='dns-AbCdEf123456', data='preserve', version='v0.107.79')),0o600)
         self.write('/opt/AdGuardHome/AdGuardHome.yaml','users: [fixture-private-data]\n',0o600)
         self.write('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf','# fixture AdGuard route\n')
         self.write('/usr/local/lib/3x-ui-pro/managed-adguard.sh','# fixture installed helper; never executed\n',0o600)
@@ -933,6 +934,10 @@ curl() {
             with self.subTest(mode=mode):
                 f=self.fixture(optional=True); before=f.state(); oldcert=f.p('/etc/letsencrypt/archive/deploy.example/privkey1.pem').read_bytes()
                 guards=f.operation.guards(f.operation.discover()); agh=f.p('/opt/AdGuardHome/AdGuardHome.yaml').read_bytes()
+                metadata = f.p(f.module.AGH)
+                agh_before = json.loads(metadata.read_bytes())
+                snippet = f.p('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf')
+                snippet_before = snippet.read_bytes()
                 f.change('new-panel.example' if mode!='reality' else None,'new-cover.example' if mode!='panel' else None)
                 after=f.state()
                 for table in ('clients','users','client_inbounds','client_traffics'):
@@ -950,6 +955,8 @@ curl() {
                             previous['realitySettings'].pop('serverNames'); current=copy.deepcopy(current);current['realitySettings'].pop('serverNames')
                             self.assertTrue(previous==current,'REALITY secrets/target changed')
                 self.assertEqual(f.operation.guards(context),guards);self.assertEqual(f.p('/opt/AdGuardHome/AdGuardHome.yaml').read_bytes(),agh)
+                self.assertEqual(json.loads(metadata.read_bytes()), dict(agh_before, domain=context['domains']['panel']))
+                self.assertEqual(snippet.read_bytes(), snippet_before)
                 self.assertTrue(f.p('/etc/letsencrypt/archive/deploy.example/privkey1.pem').read_bytes()==oldcert,'Old certificate key changed')
                 self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
                 self.assertTrue(all(v=='active' for v in f.services.values()))

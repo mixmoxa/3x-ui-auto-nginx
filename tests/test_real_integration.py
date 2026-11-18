@@ -708,6 +708,35 @@ EOF
         self.assertTrue(all('snis' in h and 'sni_shared_random' in h and 'mihomo_x25519' in h for h in after['hosts']))
         self.passed.append('Change Domains native SQLite UPDATE / WAL / v3.11 Host bindings')
 
+    def test_server_details_counts_native_panel_subscriptions(self):
+        from contextlib import closing
+
+        dbdir = self.root/'db'
+        path = dbdir/'x-ui.db'
+        env = {**os.environ, 'XUI_DB_FOLDER':str(dbdir), 'XUI_BIN_FOLDER':str(self.root/'bin'),
+               'XUI_LOG_FOLDER':str(self.root/'logs')}
+        panel = self.launch([self.xui], 'server-details-panel', env)
+        self.ready(panel, ('127.0.0.1', self.backends['panel']))
+        sub_id = os.urandom(12).hex()
+        with closing(sqlite3.connect(path)) as db:
+            self.assertEqual(db.execute('PRAGMA journal_mode').fetchone(), ('wal',))
+            db.execute("UPDATE settings SET value='/root/cert/deploy.example/fullchain.pem' WHERE key='webCertFile'")
+            db.execute("UPDATE clients SET sub_id=? WHERE email='integration'", (sub_id,))
+            reality = db.execute("SELECT id FROM inbounds WHERE remark LIKE '%reality'").fetchone()[0]
+            db.commit()
+            (dbdir/'auto-nginx-managed.json').write_text(json.dumps(dict(format=1, layout='nginx-stream-v1',
+                installed_by='source@'+'a'*40, domains=dict(panel='deploy.example', reality='cover.example'),
+                inbound_roles=dict(reality=reality))))
+            for enabled, expected in ((1,'1'), (0,'0')):
+                db.execute("UPDATE clients SET enable=? WHERE email='integration'", (enabled,))
+                db.commit()
+                result = subprocess.check_output(['bash','-c','source "$1"; server_details_data "$2" "$3"',
+                        'fixture', ROOT/'x-ui-latest.sh', path, self.root], text=True, timeout=10)
+                self.assertEqual(result.splitlines()[7], expected)
+                self.assertFalse(sub_id in result, 'Native subscription identifier was disclosed')
+                self.assertFalse(self.auth in result, 'Native panel credential was disclosed')
+        self.passed.append('Server details / active and disabled subscriptions / native 3x-ui SQLite WAL')
+
     def test_native_panel_forwarding_headers_preserve_links_redirects_and_login_ip(self):
         from test_integrated_features import helper
         self.nginx_config()
