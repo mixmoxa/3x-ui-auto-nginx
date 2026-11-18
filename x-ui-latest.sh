@@ -3473,15 +3473,17 @@ with sqlite3.connect('file:'+path+'?mode=ro',uri=True) as db:
     columns={r[1] for r in db.execute('PRAGMA table_info(inbounds)')}
     share=','.join(name if name in columns else "''" for name in ('share_addr_strategy','share_addr'))
     rows=db.execute('SELECT id,protocol,listen,port,stream_settings,'+share+' FROM inbounds').fetchall()
-    def single(role,predicate):
+    def single(role,predicate,*,optional=False):
         found=[r for r in rows if predicate(r,json.loads(r[4] or '{}'))]
+        if optional and not found: return None
         if len(found)!=1: raise ValueError('Ambiguous installed role: '+role)
         roles[role]=found[0][0]
         return json.loads(found[0][4] or '{}')
     single('reality',lambda r,s:r[1:4]==('vless','127.0.0.1',8443) and s.get('security')=='reality' and
            s.get('realitySettings',{}).get('serverNames')==[reality] and s.get('realitySettings',{}).get('target')=='127.0.0.1:9443')
     for role,proto,network in (('ws','vless','ws'),('grpc','trojan','grpc')):
-        single(role,lambda r,s,proto=proto,network=network:r[1]==proto and r[2]=='127.0.0.1' and s.get('network')==network and s.get('security')=='none')
+        single(role,lambda r,s,proto=proto,network=network:r[1]==proto and r[2]=='127.0.0.1' and
+               s.get('network')==network and s.get('security')=='none',optional=True)
     single('xhttp',lambda r,s:r[1:4]==('vless','/dev/shm/uds2023.sock,0666',0) and s.get('network')=='xhttp' and s.get('xhttpSettings',{}).get('mode')=='stream-up')
     single('hysteria2',lambda r,s:r[1]=='hysteria' and r[3]==443 and s.get('tlsSettings',{}).get('serverName')==reality and s.get('hysteriaSettings',{}).get('masquerade')=={'type':'proxy','url':'unix:/run/3x-ui-hysteria-cover.sock','rewriteHost':False})
     if vision_result=='configured':

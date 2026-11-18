@@ -140,7 +140,8 @@ A consistent `/etc/x-ui/auto-nginx-managed.json` is checked against the real
 inbounds, Hosts, nginx, certificates and optional components. A missing manifest
 is supported for an unambiguously recognized v2.1.7 project layout: standard
 paths, separate loopback Panel/REALITY TLS, exact project hook and stream map,
-matching five transport roles/Hosts and optional routes. Names/tags alone are
+matching REALITY, XHTTP and Hysteria2 roles and Hosts, plus matching WS and
+Trojan gRPC roles, Hosts and routes when present. Names/tags alone are
 not ownership evidence. No reinstall is needed to obtain a manifest; a successful
 legacy switch records `installed_by=legacy-v2.1.7-layout`. Other layouts/versions
 are deliberately refused rather than guessed.
@@ -158,10 +159,10 @@ HTTP-01 routes stay available. The complete candidate nginx include tree is
 tested before the short x-ui stop and compare-and-set SQLite updates.
 
 Panel changes update its public endpoints, TLS paths, managed Hosts (including
-the REALITY connection address), WS/gRPC metadata, AWG share address, Clash
-template, Diagnostics and optional AGH metadata. In the fresh HTTP/3 cover layout,
-Hysteria2 instead follows REALITY: REALITY changes update its Host/SNI, certificate
-paths and static Unix vhost; Panel-only leaves them unchanged. The previous
+the REALITY connection address), metadata for present WS/gRPC roles, AWG share
+address, Clash template, Diagnostics and optional AGH metadata. In the fresh
+HTTP/3 cover layout, Hysteria2 follows REALITY. Its Host/SNI, certificate paths
+and static Unix vhost change with the REALITY domain. The previous
 supported Panel-bound Hysteria2 layout retains its existing role behavior without
 migration. Both changes share one Backup and recovery snapshot. Explicitly
 disabled managed inbounds keep their flags while their domain parameters update;

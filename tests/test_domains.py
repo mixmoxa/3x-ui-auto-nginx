@@ -121,6 +121,26 @@ class DomainFixture:
     def p(self, path):
         return self.root/path.lstrip('/')
 
+    def remove_optional_transports(self, roles=('ws', 'grpc')):
+        marker_path = self.p(self.module.MANIFEST)
+        marker = json.loads(marker_path.read_text())
+        shared = self.p('/etc/nginx/snippets/includes.conf')
+        text = shared.read_text()
+        with sqlite3.connect(self.p(self.module.DB)) as db:
+            for name in roles:
+                iid = marker['inbound_roles'].pop(name)
+                stream = json.loads(db.execute('SELECT stream_settings FROM inbounds WHERE id=?', (iid,)).fetchone()[0])
+                route = (stream['wsSettings']['path'] if name == 'ws' else
+                         stream['grpcSettings']['serviceName'].split('|')[0])
+                text, count = re.subn(r'(?ms)^    location = '+re.escape(route)+r' \{.*?^    \}\n', '', text)
+                if count != 1:
+                    raise AssertionError('Expected one fixture location for '+name)
+                for table in ('hosts', 'client_inbounds'):
+                    db.execute('DELETE FROM '+table+' WHERE inbound_id=?', (iid,))
+                db.execute('DELETE FROM inbounds WHERE id=?', (iid,))
+        shared.write_text(text)
+        marker_path.write_text(json.dumps(marker))
+
     def cdn(self, legacy=False):
         cdn=helper('xhttp-cdn'); path='/Independent12345/cookie'; port=12345
         with self.operation.connection(False) as db:
@@ -960,6 +980,49 @@ curl() {
                 self.assertTrue(f.p('/etc/letsencrypt/archive/deploy.example/privkey1.pem').read_bytes()==oldcert,'Old certificate key changed')
                 self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
                 self.assertTrue(all(v=='active' for v in f.services.values()))
+
+    def test_change_domains_without_ws_and_grpc(self):
+        for mode in ('panel', 'reality', 'both'):
+            with self.subTest(mode=mode):
+                f = self.fixture()
+                f.remove_optional_transports()
+                before = f.state()
+                shared = f.p('/etc/nginx/snippets/includes.conf')
+                shared_before = shared.read_bytes()
+                panel = 'new-panel.example' if mode != 'reality' else f.panel
+                reality = 'new-cover.example' if mode != 'panel' else f.reality
+                f.change(panel, reality)
+                context = f.operation.discover()
+                self.assertEqual(context['domains'], dict(panel=panel, reality=reality, vision=None))
+                self.assertEqual(set(context['inbound_roles']), {'reality', 'xhttp', 'hysteria2'})
+                self.assertEqual(set(context['hosts']), set(context['inbound_roles']))
+                self.assertEqual(shared.read_bytes(), shared_before)
+                after = f.state()
+                for table in ('clients', 'users', 'client_inbounds', 'client_traffics'):
+                    self.assertEqual(after[table], before[table])
+
+    def test_change_domains_refuses_ws_and_grpc_marker_mismatches(self):
+        for role in ('ws', 'grpc'):
+            for missing in ('database', 'marker'):
+                with self.subTest(role=role, missing=missing):
+                    f = self.fixture()
+                    marker_path = f.p(f.module.MANIFEST)
+                    if missing == 'database':
+                        original = marker_path.read_bytes()
+                        f.remove_optional_transports((role,))
+                        marker_path.write_bytes(original)
+                    else:
+                        marker = json.loads(marker_path.read_text())
+                        del marker['inbound_roles'][role]
+                        marker_path.write_text(json.dumps(marker))
+                    before = f.state()
+                    marker_before = marker_path.read_bytes()
+                    with self.assertRaisesRegex(f.module.Refusal, 'Manifest conflicts with the running configuration'):
+                        f.change('new-panel.example')
+                    self.assertEqual(f.state(), before)
+                    self.assertEqual(marker_path.read_bytes(), marker_before)
+                    self.assertFalse(any(args[:3] == ['bash', 'fixture-backup', 'backup'] for _, args in f.calls))
+                    self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
 
     def test_legacy_adoption_and_repeated_switch_without_reinstall(self):
         f=self.fixture(legacy=True)

@@ -1112,6 +1112,46 @@ manager_menu
         result=subprocess.run(['bash','-c',code,'fixture',str(dbpath)],capture_output=True,text=True)
         self.assertNotEqual(result.returncode,0);self.assertEqual(marker.read_bytes(),old)
 
+    def test_managed_state_allows_absent_ws_and_grpc_but_refuses_duplicates(self):
+        from test_domains import DomainFixture
+        from test_personal_backup import function
+
+        write_state = function('write_managed_state')
+        code = write_state + '\n' + '''
+CORE_RESULT=configured
+PROJECT_SOURCE_SHA=$2
+domain=$3
+reality_domain=$4
+XUIDB=$1
+write_managed_state
+'''
+        for missing in (('ws',), ('grpc',), ('ws', 'grpc')):
+            with self.subTest(missing=missing):
+                fixture = DomainFixture(self.f.root/('marker-'+'-'.join(missing)))
+                db_path = fixture.p(fixture.module.DB)
+                marker = fixture.p(fixture.module.MANIFEST)
+                original_roles = json.loads(marker.read_text())['inbound_roles']
+                fixture.remove_optional_transports(missing)
+                marker.unlink()
+                command = ['bash', '-c', code, 'fixture', str(db_path), 'a'*40, fixture.panel, fixture.reality]
+                result = subprocess.run(command, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = {name: iid for name, iid in original_roles.items() if name not in missing}
+                saved = marker.read_bytes()
+                self.assertEqual(json.loads(saved)['inbound_roles'], expected)
+                self.assertEqual(marker.stat().st_mode & 0o777, 0o600)
+                for name in {'ws', 'grpc'} & expected.keys():
+                    with sqlite3.connect(db_path) as db:
+                        db.row_factory = sqlite3.Row
+                        duplicate = dict(db.execute('SELECT * FROM inbounds WHERE id=?', (expected[name],)).fetchone())
+                        duplicate['id'] = 999
+                        db.execute('INSERT INTO inbounds ('+','.join(duplicate)+') VALUES ('+
+                                   ','.join('?' for _ in duplicate)+')', tuple(duplicate.values()))
+                    result = subprocess.run(command, capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('Ambiguous installed role: '+name, result.stderr)
+                    self.assertEqual(marker.read_bytes(), saved)
+
     def test_compatible_backup_helper_is_refreshed_from_selected_source(self):
         from test_personal_backup import function, relocated
         lock=self.lock_script('acquire_stack_lock || exit $?')

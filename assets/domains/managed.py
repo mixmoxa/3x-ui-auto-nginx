@@ -149,16 +149,21 @@ def database_context(db, panel, reality, manifest=None):
         except ValueError:
             raise Refusal('Invalid inbound stream JSON; no data changed.') from None
     roles = {}
-    def role(name, predicate):
-        row = single([r for r in rows if predicate(r, streams[r['id']])], 'Missing or ambiguous inbound role: '+name)
+    def role(name, predicate, *, optional=False):
+        candidates = [r for r in rows if predicate(r, streams[r['id']])]
+        if optional and not candidates:
+            return None
+        row = single(candidates, 'Missing or ambiguous inbound role: '+name)
         require(row['node_id'] in (None, 0), 'Remote node inbounds are unsupported.')
         roles[name] = row['id']
         return row, streams[row['id']]
     _, stream = role('reality', lambda r, s: (r['protocol'], r['listen'], r['port']) == ('vless', '127.0.0.1', 8443) and s.get('security') == 'reality')
     require(stream.get('realitySettings', {}).get('serverNames') == [reality] and
             stream['realitySettings'].get('target') == '127.0.0.1:9443', 'REALITY SNI/target differs from the managed topology.')
-    role('ws', lambda r, s: r['protocol'] == 'vless' and r['listen'] == '127.0.0.1' and s.get('network') == 'ws' and s.get('security') == 'none')
-    role('grpc', lambda r, s: r['protocol'] == 'trojan' and r['listen'] == '127.0.0.1' and s.get('network') == 'grpc' and s.get('security') == 'none')
+    role('ws', lambda r, s: r['protocol'] == 'vless' and r['listen'] == '127.0.0.1' and
+         s.get('network') == 'ws' and s.get('security') == 'none', optional=True)
+    role('grpc', lambda r, s: r['protocol'] == 'trojan' and r['listen'] == '127.0.0.1' and
+         s.get('network') == 'grpc' and s.get('security') == 'none', optional=True)
     role('xhttp', lambda r, s: (r['protocol'], r['listen'], r['port']) == ('vless', '/dev/shm/uds2023.sock,0666', 0) and
          s.get('network') == 'xhttp' and s.get('security') == 'none' and s.get('xhttpSettings', {}).get('mode') == 'stream-up')
     _, hy = role('hysteria2', lambda r, s: r['protocol'] == 'hysteria' and r['listen'] in ('', '0.0.0.0') and r['port'] == 443 and s.get('network') == 'hysteria')
@@ -249,7 +254,8 @@ def database_edits(db, context, panel, reality):
             if value:
                 add('settings', key, 'value', panel)
         for name in CORE:
-            if name == 'hysteria2' and context['hysteria_cover']: continue
+            if name not in context['hosts'] or (name == 'hysteria2' and context['hysteria_cover']):
+                continue
             host = context['hosts'][name]
             for key in ('sni', 'host_header', 'pinned_peer_cert_sha256', 'verify_peer_cert_by_name', 'ech_config_list'):
                 require(not host.get(key), 'Managed Host has a custom TLS/SNI/header override; preserved.')
@@ -257,10 +263,13 @@ def database_edits(db, context, panel, reality):
                     'Managed Host has a custom SNI policy; preserved.')
             add('hosts', host['id'], 'address', panel)
         for name, path in (('ws', '$.wsSettings.host'), ('grpc', '$.grpcSettings.authority')):
-            stream = context['streams'][context['inbound_roles'][name]]
+            iid = context['inbound_roles'].get(name)
+            if iid is None:
+                continue
+            stream = context['streams'][iid]
             section, field = path[2:].split('.')
             require(stream.get(section, {}).get(field) == old['panel'], 'Custom WS/gRPC domain override prevents a safe switch.')
-            add('inbounds', context['inbound_roles'][name], 'stream_settings', None, [(path, panel)])
+            add('inbounds', iid, 'stream_settings', None, [(path, panel)])
         cdn = (context.get('manifest') or {}).get('xhttp_cdn')
         if cdn and cdn['host'] in context['cdn_hosts']:
             # Only the exact initial Host is managed. Any user edit preserves it
@@ -485,7 +494,11 @@ class Operation:
         require(re.fullmatch(r'/[A-Za-z0-9_-]+', xhttp) is not None and 'location ^~ '+xhttp+'/ {' in shared and
                 shared.count('grpc_pass unix:/dev/shm/uds2023.sock;') == 1, 'XHTTP path/socket does not match nginx.')
         for name in ('ws', 'grpc'):
-            row = context['rows'][context['inbound_roles'][name]]; stream = context['streams'][row['id']]
+            iid = context['inbound_roles'].get(name)
+            if iid is None:
+                continue
+            row = context['rows'][iid]
+            stream = context['streams'][iid]
             if name == 'ws':
                 route = stream.get('wsSettings', {}).get('path')
                 require(isinstance(route, str) and re.fullmatch('/'+str(row['port'])+r'/[A-Za-z0-9_-]+', route) is not None and
