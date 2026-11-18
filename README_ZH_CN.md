@@ -507,11 +507,13 @@ SSH、系统配置及基础防火墙仍由管理员负责。对于 v2 备份，�
 
 ## 🤝 致谢与项目来源
 
-本项目基于 [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) 开发，并独立维护。Fork 之后，对 nginx/SNI 路由和 XHTTP 配置进行了大幅重构，重新设计了 TLS 证书签发与自动续期流程，并引入支持恢复和回滚的 Backup / Restore v3。此外还增加了运行于 UDP/443 的 Hysteria2，并修复了已发现的安全问题。
+本项目基于 mozaroc 的 [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) 开发。该项目由 [x-ui-pro](https://github.com/mozaroc/x-ui-pro) 的一个分支演变而来，最早可追溯至 GFW4Fun 的原始 [x-ui-pro](https://github.com/GFW4Fun/x-ui-pro) 项目。本项目目前独立维护。Fork 之后，对 nginx/SNI 路由和 XHTTP 配置进行了大幅重构，重新设计了 TLS 证书签发与自动续期流程，并引入支持恢复和回滚的 Backup / Restore v3。此外还增加了运行于 UDP/443 的 Hysteria2，并修复了已发现的安全问题。
 
 面板本身来自 [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui)。第三方组件的权利及其现有许可仍归原作者所有。
 
 xPROMSx 贡献者原创的开发内容和修改部分以 [GNU GPL-3.0-only](LICENSE) 授权。Copyright (C) 2026 xPROMSx contributors. 此许可仅适用于贡献者有权授权的内容，不会自动为继承代码重新授权，也不意味着整个仓库均采用 GPL。许可范围及第三方组件声明详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+**如果你想使用我们的代码。** 只是安装和使用本项目，无需额外操作，项目仍然免费。如果你发布自己的版本，或把我们的代码用于其他项目，请在 README 中保留 `© xPROMSx · github.com/xPROMSx/3x-ui-auto-nginx` 署名；如果你的项目有交互式安装程序，也要在启动界面或主菜单中显示这行署名。请明确说明你的版本经过修改，不要把我们的工作说成自己的。完整条款见 [docs/NOTICE.md](docs/NOTICE.md)。
 
 <a id="windows-flag-emojis"></a>
 

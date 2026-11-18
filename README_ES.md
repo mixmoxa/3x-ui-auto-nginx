@@ -507,11 +507,13 @@ La administración de SSH, el sistema operativo y el firewall básico sigue sien
 
 ## 🤝 Créditos y origen
 
-Este proyecto se basa en [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro), pero se mantiene de forma independiente. Desde la creación del fork se han rediseñado considerablemente el enrutamiento nginx/SNI y la configuración XHTTP, así como la emisión y renovación automática de certificados TLS. También se ha incorporado Backup / Restore v3 con recuperación y reversión, se ha añadido Hysteria2 sobre UDP/443 y se han corregido problemas de seguridad identificados.
+Este proyecto parte de [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) de mozaroc. Ese repositorio surgió de un fork de [x-ui-pro](https://github.com/mozaroc/x-ui-pro) y se remonta al [x-ui-pro](https://github.com/GFW4Fun/x-ui-pro) original de GFW4Fun. Actualmente se desarrolla de forma independiente. Desde la creación del fork se han rediseñado considerablemente el enrutamiento nginx/SNI y la configuración XHTTP, así como la emisión y renovación automática de certificados TLS. También se ha incorporado Backup / Restore v3 con recuperación y reversión, se ha añadido Hysteria2 sobre UDP/443 y se han corregido problemas de seguridad identificados.
 
 El panel oficial procede de [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Los autores de los componentes de terceros conservan sus derechos y licencias.
 
 Las contribuciones originales y modificaciones de xPROMSx se distribuyen bajo [GNU GPL-3.0-only](LICENSE). Copyright (C) 2026 xPROMSx contributors. Esta licencia solo cubre los derechos que nos corresponden sobre esos materiales; no cambia la licencia del código heredado ni significa que todo el repositorio esté sujeto a GPL. Consulta el [alcance de la licencia y los avisos de terceros](THIRD_PARTY_NOTICES.md).
+
+**Si quieres reutilizar nuestro código.** No tienes que hacer nada para instalar y usar este proyecto; sigue siendo gratuito. Si publicas tu propia versión o incorporas nuestro código a otro proyecto, conserva el crédito `© xPROMSx · github.com/xPROMSx/3x-ui-auto-nginx` en el README y, si tu proyecto incluye un instalador interactivo, en su pantalla de inicio o menú principal. Indica claramente que has modificado la versión y no presentes nuestro trabajo como si fuera tuyo. Condiciones completas: [docs/NOTICE.md](docs/NOTICE.md).
 
 <a id="windows-flag-emojis"></a>
 

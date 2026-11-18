@@ -73,7 +73,7 @@ Do not edit AGENTS.md or CLAUDE.md unless the owner's task says so.
 - Project-owned assets follow one selected ref (PROJECT_REF: main, a 40-hex SHA, or vX.Y.Z tag).
   No per-file fallback to main.
 - Panel and Xray versions: read verified_panel_release() in x-ui-latest.sh. Do not copy them elsewhere.
-- Keep attribution and licenses (mozaroc/3x-ui-pro, MHSanaei/3x-ui, LibreSpeed LGPL, GPL-3.0-only notices).
+- Keep attribution and licenses (lineage GFW4Fun/x-ui-pro -> mozaroc/x-ui-pro -> mozaroc/3x-ui-pro, MHSanaei/3x-ui, LibreSpeed LGPL, GPL-3.0-only notices, additional terms in docs/NOTICE.md). Keep the credit line from docs/NOTICE.md in the installer start screen and main menu.
 - Historical identifiers (/usr/local/lib/3x-ui-pro, personal-v* releases) are not renamed.
 - README.md is the Russian source; the other language files stay semantically aligned.
 - Architecture description: docs/ARCHITECTURE.md. Release process and local commands: CONTRIBUTING.md.

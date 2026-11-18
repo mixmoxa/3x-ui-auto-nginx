@@ -507,11 +507,13 @@ SSH, işletim sistemi yapılandırması ve temel güvenlik duvarı yöneticinin 
 
 ## 🤝 Katkılar ve köken
 
-Proje [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) temel alınarak geliştirilmiş ve bağımsız olarak sürdürülmektedir. Fork sonrasında nginx/SNI yönlendirmesi ile XHTTP yapılandırması kapsamlı biçimde yeniden düzenlenmiş, TLS sertifikalarının alınması ve otomatik yenilenmesi yeniden tasarlanmış ve kurtarma/geri alma özellikli Backup / Restore v3 eklenmiştir. Ayrıca UDP/443 üzerinde Hysteria2 desteği sağlanmış ve tespit edilen güvenlik sorunları giderilmiştir.
+Bu proje, mozaroc'un [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) projesini temel alır. Bu proje, [x-ui-pro](https://github.com/mozaroc/x-ui-pro) çatallanmasından doğmuş ve GFW4Fun'ın özgün [x-ui-pro](https://github.com/GFW4Fun/x-ui-pro) projesinden gelmiştir. Mevcut proje artık bağımsız olarak geliştirilmektedir. Fork sonrasında nginx/SNI yönlendirmesi ile XHTTP yapılandırması kapsamlı biçimde yeniden düzenlenmiş, TLS sertifikalarının alınması ve otomatik yenilenmesi yeniden tasarlanmış ve kurtarma/geri alma özellikli Backup / Restore v3 eklenmiştir. Ayrıca UDP/443 üzerinde Hysteria2 desteği sağlanmış ve tespit edilen güvenlik sorunları giderilmiştir.
 
 Resmî panel [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui) projesinden sağlanır. Üçüncü taraf bileşenlerin sahipleri haklarını ve mevcut lisanslarını korur.
 
 xPROMSx tarafından geliştirilen özgün katkılar ve değişiklikler [GNU GPL-3.0-only](LICENSE) kapsamında sunulur. Copyright (C) 2026 xPROMSx contributors. Bu lisans yalnızca söz konusu materyaller üzerinde sahip olduğumuz hakları kapsar; devralınmış kodu yeniden lisanslamaz veya deponun tamamının GPL kapsamında olduğunu göstermez. Ayrıntılar için [lisans kapsamına ve üçüncü taraf bildirimlerine](THIRD_PARTY_NOTICES.md) bakın.
+
+**Kodumuzu kullanmak istiyorsanız.** Bu projeyi kurup kullanmak için ayrıca bir şey yapmanız gerekmiyor; proje eskisi gibi ücretsiz. Kendi sürümünüzü yayımlıyor veya kodumuzu başka bir projeye aktarıyorsanız `© xPROMSx · github.com/xPROMSx/3x-ui-auto-nginx` ibaresini README dosyasında, etkileşimli bir yükleyiciniz varsa onun açılış ekranında veya ana menüsünde de gösterin. Sürümün değiştirildiğini açıkça belirtin ve çalışmalarımızı kendinize aitmiş gibi göstermeyin. Ayrıntılı koşullar: [docs/NOTICE.md](docs/NOTICE.md).
 
 <a id="windows-flag-emojis"></a>
 

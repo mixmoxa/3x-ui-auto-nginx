@@ -515,11 +515,13 @@ SSH, OS configuration, and the base firewall remain the administrator's responsi
 
 ## 🤝 Credits / Origins
 
-Based on [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro), this project is maintained independently. Since the fork, nginx/SNI routing and XHTTP configuration have been substantially reworked, TLS certificate issuance and automatic renewal redesigned, and Backup / Restore v3 introduced with recovery and rollback capabilities. Hysteria2 on UDP/443 was added, and identified security issues were fixed.
+This project is based on [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) by mozaroc. It grew out of a fork of [x-ui-pro](https://github.com/mozaroc/x-ui-pro) and traces back to the original [x-ui-pro](https://github.com/GFW4Fun/x-ui-pro) by GFW4Fun. This project is now maintained independently. Since the fork, nginx/SNI routing and XHTTP configuration have been substantially reworked, TLS certificate issuance and automatic renewal redesigned, and Backup / Restore v3 introduced with recovery and rollback capabilities. Hysteria2 on UDP/443 was added, and identified security issues were fixed.
 
 The panel comes from [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Third-party authors retain their rights and existing licenses.
 
 Original xPROMSx developments and changes are offered under [GNU GPL-3.0-only](LICENSE). Copyright (C) 2026 xPROMSx contributors. The license covers only our rights in those materials; it does not relicense inherited code or establish GPL status for the entire repository. The scope of our license and notices for third-party components are explained in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+**If you want to reuse our code.** You don't need to do anything to install or use this project; it's still free. If you publish your own version or reuse our code in another project, keep the credit `© xPROMSx · github.com/xPROMSx/3x-ui-auto-nginx` in the README and, if your project has an interactive installer, on its start screen or main menu. Clearly state that your version has been modified. Don't present our work as your own. Full terms: [docs/NOTICE.md](docs/NOTICE.md).
 
 <a id="windows-flag-emojis"></a>
 
