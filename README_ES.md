@@ -6,37 +6,39 @@
 
 ### Despliegue automático de 3X-UI / XRAY-CORE en tu propio VPS
 
-**REALITY · XHTTP · HYSTERIA2 · NGINX · HTTPS · BACKUP / RESTORE**
+**REALITY · XHTTP · HYSTERIA2 · CASCADE · ADGUARD HOME · BACKUP / RESTORE**
 
 Dos dominios, un VPS limpio y unos minutos para completar la instalación.
 
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 [![Downloads](https://img.shields.io/github/downloads/xPROMSx/3x-ui-auto-nginx/total?label=Downloads)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
+[![Debian](https://img.shields.io/badge/Debian-13-A81D33?logo=debian&logoColor=white)](#technical-details)
 [![Support](https://img.shields.io/badge/Support-Donate-EA4AAA)](docs/SUPPORT_ES.md)
 
 [📦 Versiones](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [🔗 Cascada](#cascade) · [🌐 Sitios de camuflaje](#cover-sites) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ Apoyar](#support-development) · [💬 Contacto](https://t.me/promsdev)
 
 </div>
 
-**3X-UI AUTO NGINX** es un instalador gratuito de [3x-ui](https://github.com/MHSanaei/3x-ui) y Xray para tu propio VPS. Configura Nginx, certificados HTTPS, REALITY, XHTTP, Hysteria2, suscripciones (también en formato Clash/Mihomo) y herramientas de diagnóstico. Su gestor interactivo permite instalar el servidor, cambiar dominios, administrar Backup/Restore v3 y configurar una cascada entre dos VPS. Entre las funciones opcionales están XTLS Vision, AmneziaWG 3.1, Cloudflare WARP para sitios rusos y AdGuard Home con DNS-over-HTTPS (DoH).
+**3X-UI AUTO NGINX** es un instalador gratuito de [3x-ui](https://github.com/MHSanaei/3x-ui) y Xray para tu VPS. Solo necesitas indicar dos dominios y ejecutar un comando. El script configura Nginx, los certificados HTTPS, las conexiones REALITY, XHTTP y Hysteria2, un enlace de suscripción y un sitio de camuflaje. El menú permite cambiar dominios, administrar copias, conectar dos servidores en cascada y configurar un DNS privado.
 
-**Más que una instalación estándar de 3x-ui:** cada servidor nuevo recibe sitios web multipágina propios para el panel y REALITY. Hay al menos 2592 combinaciones preparadas de diseño y textos, y en cada instalación también cambian los colores, los iconos y las fechas. Los sitios tienen navegación funcional y páginas adicionales. En el dominio de REALITY, las solicitudes HTTPS habituales por TCP y las solicitudes HTTP/3 no autenticadas por UDP muestran el mismo sitio. Todo funciona con Nginx y Xray, sin Docker ni servidores web adicionales.
+**Un sitio completo en lugar de una página vacía.** Cada instalación crea sitios multipágina con navegación, artículos e imágenes. Hay al menos 2592 variantes. Las solicitudes HTTP/3 no autenticadas de Hysteria2 reciben el mismo sitio. Todo funciona con Nginx y Xray, sin Docker ni servidores web adicionales.
 
 ## ✨ ¿Por qué elegir este proyecto?
 
 | | |
 | --- | --- |
-| **Conexiones listas para usar**<br>REALITY, XHTTP y Hysteria2 se configuran automáticamente. XTLS Vision, AmneziaWG y XHTTP para CDN también se configuran automáticamente si los eliges al instalar. | **Sitios de camuflaje completos**<br>Al menos 2592 combinaciones preparadas de diseño y textos. Sitios multipágina con navegación funcional, textos e imágenes propios y camuflaje HTTP/3 de Hysteria2. |
-| **Cascada entre dos VPS**<br>Conecta dos servidores desde el menú. Los sitios y las IP de Rusia se abren directamente desde el servidor de entrada; el resto del tráfico pasa por el de salida. | **Nginx y HTTPS propios**<br>Nginx en tu VPS recibe las conexiones TCP entrantes. El panel y las suscripciones usan HTTPS en tu dominio, sin exponer directamente los puertos internos a internet. |
-| **Backup / Restore v3**<br>Copias de seguridad, recuperación y migración a otro VPS conservando los datos y los sitios personalizados. | **Gestor y cambio de dominios**<br>Cambia el dominio del panel, el de REALITY o ambos sin reinstalar 3X-UI ni otros servicios. |
-| **Certificados y seguridad automáticos**<br>Certificados Let's Encrypt con renovación automática sin detener Nginx; protección SSH y actualizaciones de seguridad del VPS opcionales. | **Funciones adicionales**<br>XTLS Vision, AmneziaWG 3.1, XHTTP para CDN, Cloudflare WARP, AdGuard Home con DoH y configuración de cascada. |
+| **Listo en minutos**<br>Dos dominios, un VPS limpio y un comando. REALITY, XHTTP y Hysteria2 quedan configurados, con la dirección del panel y el enlace de suscripción. | **Parece un sitio normal**<br>Camuflaje multipágina con navegación, artículos e ilustraciones, 2592 variantes como mínimo y cobertura HTTP/3 de Hysteria2. |
+| **Cascada entre dos servidores**<br>Tus dispositivos se conectan al servidor de entrada y salen a internet por el de salida, por ejemplo en otro país. Todo se configura desde el menú. | **DNS privado sin publicidad**<br>AdGuard Home bloquea anuncios y rastreadores. Los dispositivos se conectan mediante DNS-over-HTTPS (DoH) o DNS-over-TLS (DoT) opcional. |
+| **Copias y cambio de dominios**<br>Backup / Restore v3 permite migrar los clientes y sitios a otro VPS. Puedes cambiar los dominios del panel y REALITY sin reinstalar. | **Seguridad sencilla**<br>El panel y las suscripciones usan HTTPS, los puertos internos permanecen locales y los certificados se renuevan solos. Protección SSH y actualizaciones de seguridad opcionales. |
+
+**Solo lo esencial por defecto.** Las tres conexiones principales se instalan automáticamente. WebSocket, Trojan gRPC, XTLS Vision, AmneziaWG y XHTTP para CDN se crean únicamente si los eliges. No hace falta Docker.
 
 <a id="installation"></a>
 
 ## 🚀 Inicio rápido
 
-Configura los registros DNS de **dos dominios** para que apunten a la IP de tu VPS: uno para el panel y otro para REALITY. Conéctate por SSH como **root** y comprueba que los puertos TCP **80 y 443** y el puerto UDP **443** sean accesibles desde internet. Consulta los [sistemas compatibles](#technical-details).
+Utiliza un VPS limpio con Ubuntu 24.04, Ubuntu 26.04 o Debian 13 y acceso SSH como **root**. Configura dos dominios con DNS apuntando a la IP del VPS: uno para el panel y otro para REALITY. Deben estar disponibles los puertos TCP **80** y **443**, y UDP **443**. Si activas DoT, también necesitas TCP **853**. Consulta los [detalles técnicos](#technical-details).
 
 ```bash
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
@@ -49,6 +51,7 @@ Al ejecutar el script, elige **1 — English** o **2 — Русский**. Despu
 - **3 — Backups:** crear, consultar y restaurar copias de seguridad.
 - **4 — Telegram Web Proxy Manager:** abrir o instalar el gestor independiente del proxy de Telegram.
 - **5 — Cascade:** conectar dos servidores, consultar el estado o desconectarlos.
+- **6 - My Server Details:** muestra las direcciones del panel, las suscripciones y AdGuard Home, además de los nombres de usuario. No cambia nada ni revela contraseñas.
 - **0 — Exit:** salir.
 
 El menú requiere una sesión SSH con terminal interactiva.
@@ -71,7 +74,11 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 >
 > Volver a ejecutar el script **sin parámetros** abre el gestor, pero no reinstala el servidor. Sin embargo, **Installation** sirve para un VPS limpio o una reinstalación completa.
 >
-> Si detecta una instalación existente, el script avisa de que se eliminarán los datos gestionados y solicita la confirmación exacta **YES**. La reinstalación sustituye la base de datos de 3X-UI y la configuración de nginx. **Guarda antes una copia de seguridad fuera del VPS.**
+> Si detecta una instalación existente, el script advierte de que eliminará los datos gestionados y solicita escribir **YES** exactamente. La reinstalación sustituye la base de datos de 3X-UI y la configuración de nginx. Además:
+> - si antes tenías XTLS Vision y ahora no lo seleccionas (o eliges otro dominio), elimina el certificado del antiguo dominio Vision creado por el instalador. Avisará de ello antes de pedir YES;
+> - si antes tenías AmneziaWG y ahora no lo seleccionas, se cierra el puerto 8443/udp (sin aviso independiente).
+>
+> **Guarda antes una copia de Backup fuera del VPS.**
 >
 > **Change Domains** y **Backups** son operaciones independientes que no reinstalan el panel.
 
@@ -81,12 +88,25 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 - **3X-UI y Xray:** utiliza las herramientas de actualización del panel. Es posible que las nuevas versiones aún no se hayan probado con la configuración del proyecto.
 - **3X-UI AUTO NGINX:** no se admite actualizar los componentes instalados sin reinstalarlos. Para usar las funciones nuevas del gestor, como **5 — Cascade**, descarga el script actual y selecciona la operación. El gestor comprobará si la instalación es compatible.
 - **Backup / Restore:** guarda y restaura los datos, pero no actualiza los componentes.
+- **Servidores instalados antes de 2.7.0:** la opción **6 - My Server Details** muestra la información que pueda recuperar. La ruta DoH aleatoria, las preguntas de conexiones adicionales y DoT requieren una instalación nueva. WebSocket y Trojan gRPC existentes permanecen como estaban y DoH conserva `/dns-query`.
 
 **¡No selecciones Installation solo para actualizar!** Actualiza nginx, el kernel de Linux y otros paquetes con las herramientas del sistema operativo.
 
 </details>
 
-A continuación se describen las opciones que ofrece el instalador al elegir **Installation** en el menú principal.
+Hay siete preguntas principales de instalación, algunas con opciones adicionales. Los valores predeterminados sirven para la mayoría de los usuarios.
+
+| Nº | Pregunta | Predeterminado | Función |
+| --- | --- | :---: | --- |
+| 1 | Dominio del panel | - | Panel, suscripciones y sitio de camuflaje |
+| 2 | Dominio REALITY | - | REALITY y sitio de camuflaje |
+| 3 | Seguridad avanzada del VPS | `Y` | Fail2ban, DNS cifrado del propio VPS y actualizaciones |
+| 4 | Conexiones adicionales (se eligen por separado) | `N` | WebSocket, Trojan gRPC, XTLS Vision, AmneziaWG y XHTTP para CDN |
+| 5 | Sitios rusos mediante WARP | `Y` en el menú ruso | Ocultar la IP del VPS |
+| 6 | AdGuard Home | `N` | DNS privado con DoH y DoT opcional |
+| 7 | Cliente y suscripción | `Y` | Enlace de suscripción al finalizar |
+
+Las preguntas 4.1 a 4.4 solo aparecen si habilitas las conexiones adicionales.
 
 ---
 
@@ -150,7 +170,30 @@ Se comprueba la compatibilidad de los ajustes existentes antes de modificarlos. 
 
 ---
 
-### 4. 🔗 VLESS XTLS Vision
+### 4. 🧩 Conexiones adicionales
+
+> `Set up additional connections? [y/N]:`
+
+*Desactivadas por defecto (`N`)*
+
+REALITY, XHTTP y Hysteria2 se configuran automáticamente. Puedes añadir WebSocket, Trojan gRPC, XTLS Vision, AmneziaWG y XHTTP para CDN por separado.
+
+> [!WARNING]
+> Estas conexiones pueden no funcionar en todos los países o proveedores. Úsalas bajo tu responsabilidad. Si tienes dudas, responde `N`.
+
+Si respondes `N`, no se crea ninguna conexión adicional y se omiten las preguntas 4.1 a 4.4. Si respondes `y`, podrás elegir cada tipo por separado.
+
+#### 4.1. WebSocket y Trojan gRPC
+
+> `Set up legacy VLESS WebSocket and Trojan gRPC connections? [y/N]:`
+
+Con `y` se crean las dos conexiones activadas. Con `N` no se crea ninguna.
+
+---
+
+<a id="4--vless-xtls-vision"></a>
+
+#### 4.2. 🔗 VLESS XTLS Vision
 
 > `Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]:`
 
@@ -165,7 +208,9 @@ Una conexión VLESS alternativa mediante TLS que puede ser útil si REALITY func
 
 ---
 
-### 5. 🔑 Amnezia WG
+<a id="5--amnezia-wg"></a>
+
+#### 4.3. 🔑 Amnezia WG
 
 > `Set up an additional AmneziaWG connection? [y/N]:`
 
@@ -190,7 +235,7 @@ La configuración y la regla del cortafuegos están incluidas en **Backup / Rest
 
 <a id="xhttp-cdn"></a>
 
-### 6. 🌐 VLESS + XHTTP para CDN
+#### 4.4. 🌐 VLESS + XHTTP para CDN
 
 > `Add an additional CDN-compatible XHTTP connection? [y/N]:`
 
@@ -206,7 +251,7 @@ Para utilizar una CDN, debes configurar tu proveedor y ajustar los parámetros d
 
 <a id="warp-ru"></a>
 
-### 7. 🌐 Sitios rusos a través de Cloudflare WARP
+### 5. 🌐 Sitios rusos a través de Cloudflare WARP
 
 > `Route Russian websites through Cloudflare WARP to hide your VPS IP? [y/N]:`
 
@@ -242,41 +287,44 @@ Después de instalar, comprueba `warp-masque` en **Xray → Outbounds** y las tr
 <a id="7--adguard-home--dns-over-https"></a>
 <a id="6--adguard-home--dns-over-https"></a>
 
-### 8. 🛡️ AdGuard Home + DNS-over-HTTPS
+### 6. 🛡️ AdGuard Home + DNS-over-HTTPS y DNS-over-TLS
 
 > `Install and configure AdGuard Home? [y/N]:`
 
-*Servidor DNS opcional · Desactivado por defecto (`N`)*
+*Servidor DNS adicional · Desactivado por defecto (`N`)*
 
-Un servidor DNS personal para bloquear anuncios y rastreadores, administrar clientes y realizar consultas DNS cifradas.
+Tu propio DNS para bloquear anuncios y rastreadores, administrar clientes y cifrar consultas. Los dispositivos pueden utilizar DoH o DoT opcional (por ejemplo, «DNS privado» de Android).
 
 <details>
-<summary>ℹ️ AdGuard Home y el control de acceso</summary>
+<summary>ℹ️ <strong>AdGuard Home y control de acceso</strong></summary>
 
-No se necesita un dominio adicional.
+No hace falta un dominio adicional.
 
-Después de instalarlo, estarán disponibles:
+Tras la instalación tendrás:
 
-- **Panel de administración de AdGuard Home:** `https://panel.example.com/adg-.../` — una ruta aleatoria y exclusiva.
-- **DNS-over-HTTPS:** `https://panel.example.com/dns-query`.
+- **Panel de AdGuard Home:** `https://panel.example.com/adg-.../`, con una ruta aleatoria propia.
+- **DNS-over-HTTPS:** `https://panel.example.com/dns-XXXXXXXXXXXX`. El segmento `dns-XXXXXXXXXXXX` se genera aleatoriamente en cada instalación.
+- **DNS-over-TLS** (si lo eliges): `panel.example.com`, puerto 853.
 
-No se abren los puertos públicos TCP/UDP **53**. La configuración y los datos de AdGuard Home se incluyen en **Backup / Restore v3**.
+Estas direcciones aparecen al terminar la instalación y después en **6 - My Server Details**. No podrás recuperar ahí la contraseña de AdGuard Home: guárdala al instalar.
+
+No se abren los puertos públicos **53** TCP y UDP. Para AdGuard Home solo se abre el puerto adicional **853** si activas DoT. La configuración y los datos se incluyen en **Backup / Restore v3**. Los servidores instalados antes de 2.7.0 conservan la dirección `https://panel.example.com/dns-query`.
 
 **⚠️ Recomendación de seguridad**
 
-Para un VPS personal, crea un [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) para cada dispositivo.
+Una ruta DoH aleatoria es más difícil de adivinar, pero queda almacenada en tus dispositivos. Crea un [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) diferente para cada dispositivo.
 
-En AdGuard Home, entra en **Configuración → Configuración DNS → Configuración de acceso → Clientes permitidos** y añade **solo los ClientID** creados, sin direcciones IP ni subredes.
+En AdGuard Home, abre **Settings → DNS settings → Access settings → Allowed clients** e introduce los ClientID creados. No necesitas direcciones IP ni subredes, salvo `127.0.0.1` si utilizas DoT (consulta más abajo).
 
-Utiliza direcciones DoH como:
+Usa direcciones DoH como:
 
-`https://panel.example.com/dns-query/<ClientID>`
+`https://panel.example.com/dns-XXXXXXXXXXXX/<ClientID>`
 
-Tras configurarlo, se rechazarán las consultas que no tengan un ClientID permitido, incluidas las dirigidas a `/dns-query`.
+Se rechazan las consultas sin un ClientID permitido. Utiliza identificadores largos y aleatorios. Consulta la [guía oficial de seguridad](https://adguard-dns.io/kb/adguard-home/running-securely/).
 
-Utiliza identificadores largos y aleatorios. Consulta las [recomendaciones oficiales de seguridad de AdGuard Home](https://adguard-dns.io/kb/adguard-home/running-securely/).
+**DoT y lista de clientes:** DoT no transmite ClientID. Al activar la lista de clientes permitidos, DoT deja de funcionar porque se rechazan las consultas. Añade `127.0.0.1` a los clientes permitidos para restaurarlo. Así, cualquier persona que conozca la dirección del servidor podrá usar DoT, igual que sin la lista.
 
-Desde **v2.4.1**, las instalaciones nuevas permiten buscar e instalar actualizaciones de AdGuard Home desde su interfaz web. Si instalaste AdGuard Home con una versión anterior de este instalador, habilita las actualizaciones con un solo comando en tu VPS:
+Desde **v2.4.1**, las instalaciones nuevas permiten actualizar AdGuard Home desde su interfaz web. Si lo instalaste con este script antes de **v2.4.1**, habilita las actualizaciones con este comando en el VPS:
 
 ```bash
 sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "$d"'\'' EXIT; cd "$d"; u=https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.2; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh" -o x-ui-latest.sh; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh.sha256" -o x-ui-latest.sh.sha256; sha256sum --check --strict x-ui-latest.sh.sha256; bash ./x-ui-latest.sh --enable-agh-updates'
@@ -284,13 +332,36 @@ sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "
 
 </details>
 
+#### 6.1. DNS-over-TLS (DoT)
+
+> `Enable DNS-over-TLS (DoT) for your devices? [y/N]:`
+
+DoT se utiliza sobre todo con «DNS privado» de Android, que solo admite un nombre de host. Si no lo necesitas, deja `N`.
+
+- Disponible solo en instalaciones nuevas junto con AdGuard Home.
+- DoT recibe consultas en `panel.example.com`, puerto **853**. Se añade automáticamente la regla UFW y se utiliza el certificado del dominio del panel.
+- **El puerto 853 está abierto a todo internet.** DoT no transmite ClientID; cualquiera que conozca la dirección puede conectarse. Las conexiones simultáneas se limitan a unas 50 por IP de origen.
+- En los registros de AdGuard Home, las consultas DoT aparecen como `127.0.0.1`, porque Nginx las reenvía localmente. No se pueden distinguir los dispositivos DoT.
+- Si activas la lista de clientes permitidos, DoT deja de funcionar. La solución está en la explicación de ClientID anterior.
+- Los ajustes de DoT se incluyen en Backup / Restore v3 y se tienen en cuenta al cambiar dominios.
+
+**Cómo conectar Android.** En Ajustes busca «DNS privado», elige el modo de nombre de host e introduce el dominio del panel.
+
+**Cómo desactivar DoT.** Ejecuta este comando como root en el servidor:
+
+```bash
+ufw delete allow 853/tcp
+```
+
+El puerto 853 se cerrará y los demás servicios seguirán funcionando. Para eliminar DoT por completo hay que reinstalar el servidor.
+
 ---
 
 <a id="7--creación-automática-del-cliente-y-la-suscripción"></a>
 
 <a id="8--creación-automática-del-cliente-y-la-suscripción"></a>
 
-### 9. 👤 Creación automática del cliente y la suscripción
+### 7. 👤 Creación automática del cliente y la suscripción
 
 > `Create a client in 3X-UI and display a subscription link after installation? [Y/n]:`
 
@@ -318,24 +389,22 @@ Si una actualización del sistema operativo requiere reiniciar, el instalador lo
 
 ## 🚀 Perfiles de conexión
 
-| Conexión | Estado |
+| Conexión | Cuándo se crea |
 | --- | :---: |
-| VLESS + REALITY | ✅ Activado por defecto |
-| VLESS + XHTTP | ✅ Activado por defecto |
-| VLESS + XHTTP para CDN | 🔧 Opcional, desactivado |
-| Hysteria2 | ✅ Activado por defecto |
-| VLESS + WebSocket (TLS) | ◻️ Desactivado por defecto |
-| Trojan + gRPC | ◻️ Desactivado por defecto |
-| VLESS + XTLS Vision | 🔧 Opcional |
+| VLESS + REALITY | ✅ Siempre, activada |
+| VLESS + XHTTP | ✅ Siempre, activada |
+| Hysteria2 | ✅ Siempre, activada |
+| VLESS + WebSocket (TLS) | 🔧 Opcional, activada si se elige |
+| Trojan + gRPC | 🔧 Opcional, activada si se elige |
+| VLESS + XTLS Vision | 🔧 Opcional, necesita tercer dominio |
 | Amnezia WG | 🔧 Opcional |
+| VLESS + XHTTP para CDN | 🔧 Opcional, creada desactivada |
 
-REALITY, XHTTP y Hysteria2 quedan activados tras la instalación. WebSocket TLS y Trojan gRPC se crean, pero permanecen desactivados hasta que los habilites en el panel 3X-UI.
+REALITY, XHTTP y Hysteria2 funcionan inmediatamente después de instalar. Las demás conexiones solo se crean si respondes `y` a la pregunta sobre conexiones adicionales (paso 4). Las que no elijas no se crean.
 
-XTLS Vision, Amnezia WG y XHTTP para CDN solo se añaden si los seleccionas durante la instalación. XHTTP para CDN se crea desactivado y no aparece en las suscripciones hasta que lo actives y vincules un cliente.
+XHTTP para CDN se crea desactivada y no aparece en las suscripciones hasta que la actives y asocies un cliente. En los servidores instalados antes de 2.7.0, WebSocket y Trojan gRPC siguen existiendo, desactivados como antes.
 
-Para usar las conexiones, crea clientes automáticamente durante la instalación o manualmente en el panel. Los clientes de Amnezia WG se crean por separado.
-
-La compatibilidad depende de la aplicación cliente y de su versión. Con XHTTP a través de una CDN, también influyen la configuración y las limitaciones del proveedor.
+Puedes crear clientes durante la instalación o después desde el panel. AmneziaWG necesita un cliente aparte. La compatibilidad depende de la aplicación cliente y su versión; XHTTP para CDN también depende del proveedor.
 
 ### Suscripciones
 
@@ -355,6 +424,8 @@ Solo se admiten instalaciones del proyecto que puedan reconocerse, incluidas las
 ## 💾 Copias de seguridad y restauración
 
 En el menú principal, abre **3 — Backups** para crear copias, consultar los archivos disponibles o restaurarlos. Puedes utilizar una copia después de reinstalar el sistema operativo o al cambiar de VPS. Para restaurarla, deben coincidir el sistema operativo, su versión y la arquitectura del procesador.
+
+En un VPS nuevo, Restore desde el menú espera a que termine la actualización automática del sistema (hasta 60 minutos). No reinicies el servidor durante ese tiempo.
 
 También puedes utilizar estos comandos como root:
 
@@ -466,7 +537,7 @@ Si encuentras un error, [infórmalo en GitHub](https://github.com/xPROMSx/3x-ui-
 
 ## 🔐 Seguridad
 
-Las interfaces de los servicios no se exponen directamente a Internet. Se accede al panel, las suscripciones y los servicios adicionales mediante nginx y HTTPS, mientras que los puertos internos permanecen limitados al servidor.
+Las interfaces de servicio no se exponen directamente a internet: el panel, las suscripciones y los servicios adicionales pasan por nginx y HTTPS y los puertos internos siguen siendo locales. El único puerto de servicio adicional es el 853, y solo si activas DNS-over-TLS (DoT). Los puertos de las conexiones de tus dispositivos están abiertos por naturaleza: TCP y UDP 443, además de UDP 8443 si eliges AmneziaWG.
 
 
 **¿No sabes cómo proteger tu VPS?** Puedes activar la seguridad avanzada durante la instalación para configurar protección SSH contra ataques de fuerza bruta, DNS cifrado y actualizaciones de seguridad. Antes, consulta los detalles y el horario de reinicios nocturnos en **Inicio rápido**.
@@ -481,12 +552,14 @@ Las interfaces de los servicios no se exponen directamente a Internet. Se accede
 
 **TWPM no forma parte de la instalación básica de 3X-UI.** La opción 4 del menú principal permite abrirlo o iniciar su instalación por separado tras confirmarla. Ambos proyectos se administran de manera independiente.
 
+Telegram Web Proxy Manager se instala en Ubuntu 24.04 y 26.04.
+
 <a id="technical-details"></a>
 
 ## ⚙️ Detalles técnicos y compatibilidad
 
 - **Sistemas:** Ubuntu 24.04, Ubuntu 26.04 y Debian 13.
-- **UFW:** permite 80/tcp, 443/tcp y 443/udp (también 8443/udp al seleccionar AmneziaWG). Durante Installation, UFW solo se activa después de comprobar el acceso SSH; si no es seguro hacerlo, permanece desactivado y se muestra una advertencia. Después de Restore, el gestor puede activarlo **solo si se solicita expresamente** y se superan las comprobaciones de seguridad. El comando `x-ui-backup restore` no activa UFW.
+- **UFW:** permite 80/tcp, 443/tcp y 443/udp (8443/udp al seleccionar AmneziaWG y 853/tcp al seleccionar DoT). Durante Installation, UFW solo se activa después de comprobar el acceso SSH; si no es seguro hacerlo, permanece desactivado y se muestra una advertencia. Después de Restore, el gestor puede activarlo **solo si se solicita expresamente** y se superan las comprobaciones de seguridad. El comando `x-ui-backup restore` no activa UFW.
 - **Certificados:** Let's Encrypt con webroot y `certbot.timer` renuevan los certificados automáticamente sin detener nginx.
 - **Versión de 3x-ui:** el instalador utiliza por defecto la versión más reciente cuya compatibilidad con 3x-ui Auto Nginx se ha comprobado exhaustivamente; puede no ser la última versión oficial publicada. Después puedes actualizar 3x-ui con su mecanismo integrado, aunque es posible que la nueva versión todavía no haya sido verificada con esta configuración. También puedes seleccionar expresamente otra versión estable mediante `-version <tag>` (mínimo compatible: v3.8.0); el instalador avisará si no se ha verificado su compatibilidad.
 

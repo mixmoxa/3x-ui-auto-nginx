@@ -33,29 +33,29 @@
 
 <a id="4--vless-xtls-vision"></a>
 
-[ 4. 🔗 VLESS XTLS Vision ](README.md#4--vless-xtls-vision)
+[ 4.2. 🔗 VLESS XTLS Vision ](README.md#4--vless-xtls-vision)
 
 <a id="5--amnezia-wg"></a>
 
-[ 5. 🔑 Amnezia WG ](README.md#5--amnezia-wg)
+[ 4.3. 🔑 Amnezia WG ](README.md#5--amnezia-wg)
 
 <a id="xhttp-cdn"></a>
 
-[ 6. 🌐 VLESS + XHTTP для CDN ](README.md#xhttp-cdn)
+[ 4.4. 🌐 VLESS + XHTTP для CDN ](README.md#xhttp-cdn)
 
 <a id="warp-ru"></a>
 
-[ 7. 🌐 Российские сайты через Cloudflare WARP ](README.md#warp-ru)
+[ 5. 🌐 Российские сайты через Cloudflare WARP ](README.md#warp-ru)
 
 <a id="6--adguard-home--dns-over-https"></a>
 
 <a id="6-️-adguard-home--dns-over-https"></a>
 
-[ 7. 🛡️ AdGuard Home + DNS-over-HTTPS ](README.md#7--adguard-home--dns-over-https)
+[ 6. 🛡️ AdGuard Home + DNS-over-HTTPS и DNS-over-TLS ](README.md#7--adguard-home--dns-over-https)
 
 <a id="7--автоматическое-создание-клиента-и-подписки"></a>
 
-[ 8. 👤 Автоматическое создание клиента и подписки ](README.md#8--автоматическое-создание-клиента-и-подписки)
+[ 7. 👤 Автоматическое создание клиента и подписки ](README.md#8--автоматическое-создание-клиента-и-подписки)
 
 <a id="-профили-подключения"></a>
 

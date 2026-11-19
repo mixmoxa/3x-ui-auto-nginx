@@ -6,37 +6,39 @@
 
 ### نشر 3X-UI / XRAY-CORE تلقائيًا على خادم VPS الخاص بك
 
-**REALITY · XHTTP · HYSTERIA2 · NGINX · HTTPS · BACKUP / RESTORE**
+**REALITY · XHTTP · HYSTERIA2 · CASCADE · ADGUARD HOME · BACKUP / RESTORE**
 
 نطاقان وخادم VPS جديد وبضع دقائق لإكمال التثبيت.
 
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 [![Downloads](https://img.shields.io/github/downloads/xPROMSx/3x-ui-auto-nginx/total?label=Downloads)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
+[![Debian](https://img.shields.io/badge/Debian-13-A81D33?logo=debian&logoColor=white)](#technical-details)
 [![Support](https://img.shields.io/badge/Support-Donate-EA4AAA)](docs/SUPPORT_AR.md)
 
 [📦 الإصدارات](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [🔗 الربط المتسلسل](#cascade) · [🌐 مواقع التمويه](#cover-sites) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ دعم المشروع](#support-development) · [💬 التواصل](https://t.me/promsdev)
 
 </div>
 
-**3X-UI AUTO NGINX** أداة تثبيت مجانية لنشر [3x-ui](https://github.com/MHSanaei/3x-ui) وXray على خادم VPS خاص بك. تضبط Nginx وشهادات HTTPS واتصالات REALITY وXHTTP وHysteria2 والاشتراكات (بما فيها الاشتراكات بصيغة Clash/Mihomo) وأدوات التشخيص. ومن خلال المدير التفاعلي يمكنك تثبيت الخادم وتغيير النطاقات وإدارة Backup/Restore v3 وإعداد الربط المتسلسل بين خادمي VPS. وتشمل الميزات الاختيارية XTLS Vision وAmneziaWG 3.1 وCloudflare WARP للمواقع الروسية وAdGuard Home مع DNS-over-HTTPS (DoH).
+**3X-UI AUTO NGINX** أداة مجانية لتثبيت [3x-ui](https://github.com/MHSanaei/3x-ui) وXray على VPS خاص بك. أدخل نطاقين وشغّل أمرًا واحدًا. يجهّز المثبّت Nginx وشهادات HTTPS واتصالات REALITY وXHTTP وHysteria2 ورابط الاشتراك وموقع التمويه. ومن القائمة يمكنك تغيير النطاقات، إدارة النسخ الاحتياطية، إعداد اتصال متسلسل بين خادمين وتشغيل خادم DNS شخصي.
 
-**أكثر من مجرد تثبيت اعتيادي لـ 3x-ui:** تحصل الخوادم الجديدة على مواقع مستقلة ومتعددة الصفحات للوحة وREALITY. يتوفر ما لا يقل عن 2592 تركيبة جاهزة من التصميم والنصوص، مع تغييرات إضافية في الألوان والأيقونات والتواريخ عند كل تثبيت. تحتوي المواقع على تنقّل فعلي وصفحات إضافية. وعلى نطاق REALITY يعرض HTTPS العادي عبر TCP وطلبات HTTP/3 غير المصادَق عليها عبر UDP الموقع نفسه. تعمل هذه الميزات باستخدام Nginx وXray الموجودين، دون Docker أو خوادم ويب إضافية.
+**مواقع تمويه بدل الصفحة الافتراضية:** ينشئ كل تثبيت مواقع متعددة الصفحات مع تنقّل ومقالات وصور. هناك 2592 نموذجًا على الأقل. وتظهر صفحات التمويه نفسها لطلبات Hysteria2 غير المصادَق عليها عبر HTTP/3. لا حاجة إلى Docker أو خادم ويب إضافي.
 
 ## ✨ لماذا هذا المشروع؟
 
 | | |
 | --- | --- |
-| **اتصالات جاهزة للاستخدام**<br>تُضبط REALITY وXHTTP وHysteria2 تلقائيًا. ويمكن اختيار XTLS Vision وAmneziaWG وXHTTP لشبكات CDN أثناء التثبيت، وتُضبط تلقائيًا أيضًا. | **مواقع تمويه متكاملة**<br>ما لا يقل عن 2592 تركيبة جاهزة من التصميم والنصوص. مواقع متعددة الصفحات مع روابط تنقّل فعّالة ونصوص وصور خاصة بها، ودعم تمويه HTTP/3 لـ Hysteria2. |
-| **ربط متسلسل بين خادمي VPS**<br>اربط خادمين من القائمة بسهولة. تمر المواقع وعناوين IP الروسية مباشرةً عبر خادم الدخول، بينما تمر بقية الحركة عبر خادم الخروج. | **Nginx وHTTPS على خادمك**<br>يستقبل Nginx على خادم VPS اتصالات TCP الواردة. تعمل اللوحة والاشتراكات عبر HTTPS على نطاقك، دون كشف المنافذ الداخلية مباشرةً للإنترنت. |
-| **Backup / Restore v3**<br>النسخ الاحتياطي والاستعادة والنقل إلى خادم VPS آخر مع الاحتفاظ بالبيانات والمواقع المخصّصة. | **المدير وتغيير النطاقات**<br>غيّر نطاق اللوحة أو REALITY أو كليهما دون إعادة تثبيت 3X-UI أو الخدمات الأخرى. |
-| **شهادات تلقائية وأمان إضافي**<br>تُجدَّد شهادات Let's Encrypt تلقائيًا دون إيقاف Nginx، مع خيار حماية SSH وتحديثات الأمان التلقائية للخادم. | **ميزات إضافية**<br>XTLS Vision وAmneziaWG 3.1 وXHTTP لشبكات CDN وCloudflare WARP وAdGuard Home مع DoH وإعداد الربط المتسلسل. |
+| **جاهز خلال دقائق**<br>نطاقان وVPS نظيف وأمر واحد. تحصل على عنوان اللوحة ورابط الاشتراك مع REALITY وXHTTP وHysteria2 مهيأة. | **يبدو كأنه موقع عادي**<br>مواقع متعددة الصفحات بتصاميم ونصوص وصور متنوعة، 2592 احتمالًا على الأقل، مع تمويه Hysteria2 عبر HTTP/3. |
+| **اتصال متسلسل بين خادمين**<br>تتصل أجهزتك بخادم الدخول ويخرج المرور إلى الإنترنت عبر خادم آخر، مثل خادم في بلد مختلف. الإعداد من القائمة. | **DNS خاص لحظر الإعلانات**<br>يحجب AdGuard Home الإعلانات والتتبّع. تتصل الأجهزة عبر DNS-over-HTTPS (DoH) أو DNS-over-TLS (DoT) الاختياري. |
+| **النسخ الاحتياطية وتغيير النطاقات**<br>ينقل Backup / Restore v3 بيانات العملاء والمواقع إلى VPS آخر. غيّر نطاق اللوحة أو REALITY دون إعادة التثبيت. | **أمان دون تعقيد**<br>تعمل اللوحة والاشتراكات عبر HTTPS، وتبقى المنافذ الداخلية محلية، وتتجدد الشهادات تلقائيًا. يمكن تفعيل حماية SSH وتحديثات VPS الأمنية. |
+
+**الأساسيات فقط افتراضيًا.** تُثبّت الاتصالات الثلاثة الرئيسية تلقائيًا. أما WebSocket وTrojan gRPC وXTLS Vision وAmneziaWG وXHTTP لشبكات CDN فلا تُنشأ إلا عند اختيارها. لا يلزم Docker أو خادم ويب آخر.
 
 <a id="installation"></a>
 
 ## 🚀 بدء التثبيت
 
-وجّه سجلات DNS الخاصة بـ **نطاقين** إلى عنوان IP لخادم VPS: أحدهما للوحة والآخر لـ REALITY. اتصل عبر SSH بحساب **root** وتأكد من إمكانية الوصول من الإنترنت إلى منفذي TCP **80 و443** ومنفذ UDP **443**. راجع [الأنظمة المدعومة](#technical-details).
+استخدم VPS جديدًا يعمل بنظام Ubuntu 24.04 أو Ubuntu 26.04 أو Debian 13، واتصل عبر SSH بحساب **root**. وجّه نطاقين إلى عنوان IP للخادم، أحدهما للوحة والآخر لـ REALITY. يجب إتاحة TCP **80** و**443** وUDP **443** من الإنترنت. وإذا اخترت DoT، يلزم أيضًا TCP **853**. [التفاصيل التقنية](#technical-details).
 
 ```bash
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
@@ -49,6 +51,7 @@ curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x
 - **3 — Backups:** إنشاء النسخ الاحتياطية وعرضها واستعادتها.
 - **4 — Telegram Web Proxy Manager:** تشغيل مدير بروكسي Telegram المستقل أو تثبيته.
 - **5 — Cascade:** ربط خادمين والتحقق من الحالة أو إيقاف الربط.
+- **6 - My Server Details:** عرض عناوين اللوحة والاشتراكات وAdGuard Home وأسماء المستخدمين دون تغيير الإعدادات أو إظهار كلمات المرور.
 - **0 — Exit:** خروج.
 
 تحتاج القائمة إلى جلسة SSH مع طرفية تفاعلية.
@@ -71,7 +74,11 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 >
 > إعادة تشغيل السكربت **دون معاملات** تفتح المدير ولا تعيد تثبيت الخادم. لكن خيار **Installation** مخصّص لخادم VPS نظيف أو لإعادة تثبيت كاملة.
 >
-> إذا اكتُشف تثبيت قائم، يحذّر السكربت من حذف البيانات التي يديرها المشروع ويطلب كتابة **YES** تمامًا للتأكيد. تحلّ إعادة التثبيت محل قاعدة بيانات 3X-UI وإعدادات nginx. **احتفظ أولًا بنسخة احتياطية خارج VPS.**
+> إذا اكتُشف تثبيت موجود، يحذّر المثبّت من حذف بيانات المشروع ويطلب إدخال **YES** حرفيًا. تستبدل إعادة التثبيت قاعدة بيانات 3X-UI وإعدادات nginx. كذلك:
+> - إذا كان XTLS Vision مثبتًا سابقًا ولم تختره مرة أخرى أو اخترت نطاقًا مختلفًا، تُحذف شهادة نطاق Vision القديم التي أنشأها المثبّت. يظهر تحذير بذلك قبل طلب YES؛
+> - إذا كان AmneziaWG مثبتًا ولم تختره مرة أخرى، يُغلق المنفذ 8443/udp (من دون تحذير منفصل).
+>
+> **احفظ نسخة Backup خارج VPS قبل المتابعة.**
 >
 > **Change Domains** و**Backups** عمليتان مستقلتان لا تعيدان تثبيت اللوحة.
 
@@ -81,12 +88,25 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 - **3X-UI وXray:** استخدم أدوات التحديث المدمجة في اللوحة. قد لا يكون توافق الإصدارات الجديدة مع إعدادات المشروع قد اختُبر بعد.
 - **3X-UI AUTO NGINX:** لا يُدعم تحديث المكوّنات المثبّتة مباشرةً. لاستخدام وظائف المدير الجديدة مثل **5 — Cascade**، نزّل السكربت الحالي واختر العملية المطلوبة. سيتحقق المدير من توافق الإعدادات الموجودة.
 - **Backup / Restore:** يحفظ البيانات ويستعيدها، لكنه لا يحدّث المكوّنات.
+- **ما الجديد للخوادم المثبتة قبل 2.7.0:** يعرض الخيار **6 - My Server Details** المعلومات المتوفرة. المسار العشوائي لـ DoH وخيار الاتصالات الإضافية وDoT تتطلب تثبيتًا جديدًا. تبقى اتصالات WebSocket وTrojan gRPC القديمة كما كانت، ويبقى عنوان DoH القديم `/dns-query`.
 
 **لا تختر Installation لمجرّد التحديث!** حدّث nginx ونواة Linux وحزم النظام الأخرى باستخدام أدوات نظام التشغيل.
 
 </details>
 
-فيما يلي الإعدادات التي يعرضها المُثبّت عند اختيار **Installation** من القائمة الرئيسية.
+الأسئلة الأساسية سبعة، وقد يتبع بعضها أسئلة إضافية. الإعدادات الافتراضية مناسبة لمعظم المستخدمين.
+
+| رقم | السؤال | الافتراضي | النتيجة |
+| --- | --- | :---: | --- |
+| 1 | نطاق اللوحة | - | اللوحة والاشتراكات وموقع التمويه |
+| 2 | نطاق REALITY | - | اتصال REALITY وموقع التمويه |
+| 3 | أمان VPS المتقدم | `Y` | Fail2ban وDNS مشفّر للخادم وتحديثات أمنية |
+| 4 | الاتصالات الإضافية (اختيار منفصل) | `N` | WebSocket وTrojan gRPC وXTLS Vision وAmneziaWG وXHTTP لشبكات CDN |
+| 5 | المواقع الروسية عبر WARP | `Y` في القائمة الروسية | إخفاء IP الخادم عن المواقع الروسية |
+| 6 | AdGuard Home | `N` | DNS شخصي مع DoH وDoT اختياري |
+| 7 | العميل والاشتراك | `Y` | رابط اشتراك عند اكتمال التثبيت |
+
+الأسئلة 4.1 إلى 4.4 لا تظهر إلا إذا فعّلت الاتصالات الإضافية.
 
 ---
 
@@ -150,7 +170,30 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ---
 
-### 4. 🔗 VLESS XTLS Vision
+### 4. 🧩 الاتصالات الإضافية
+
+> `Set up additional connections? [y/N]:`
+
+*معطّلة افتراضيًا (`N`)*
+
+تُنشأ اتصالات REALITY وXHTTP وHysteria2 تلقائيًا. يمكنك اختيار WebSocket وTrojan gRPC وXTLS Vision وAmneziaWG وXHTTP لشبكات CDN أيضًا.
+
+> [!WARNING]
+> قد لا تعمل هذه الاتصالات في كل البلدان والشبكات. استخدمها على مسؤوليتك، وإذا لم تكن متأكدًا فاختر `N`.
+
+إذا أجبت `N` فلا ينشأ أي اتصال إضافي وتُتخطّى الأسئلة 4.1 إلى 4.4. عند اختيار `y` يطلب المثبّت اختيار كل نوع على حدة.
+
+#### 4.1. WebSocket وTrojan gRPC
+
+> `Set up legacy VLESS WebSocket and Trojan gRPC connections? [y/N]:`
+
+عند اختيار `y` يُنشأ الاتصالان مفعّلين، وعند `N` لا يُنشأ أي منهما.
+
+---
+
+<a id="4--vless-xtls-vision"></a>
+
+#### 4.2. 🔗 VLESS XTLS Vision
 
 > `Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]:`
 
@@ -165,7 +208,9 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ---
 
-### 5. 🔑 Amnezia WG
+<a id="5--amnezia-wg"></a>
+
+#### 4.3. 🔑 Amnezia WG
 
 > `Set up an additional AmneziaWG connection? [y/N]:`
 
@@ -190,7 +235,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 <a id="xhttp-cdn"></a>
 
-### 6. 🌐 VLESS + XHTTP لشبكات CDN
+#### 4.4. 🌐 VLESS + XHTTP لشبكات CDN
 
 > `Add an additional CDN-compatible XHTTP connection? [y/N]:`
 
@@ -206,7 +251,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 <a id="warp-ru"></a>
 
-### 7. 🌐 المواقع الروسية عبر Cloudflare WARP
+### 5. 🌐 المواقع الروسية عبر Cloudflare WARP
 
 > `Route Russian websites through Cloudflare WARP to hide your VPS IP? [y/N]:`
 
@@ -242,47 +287,73 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 <a id="7--adguard-home--dns-over-https"></a>
 <a id="6--adguard-home--dns-over-https"></a>
 
-### 8. 🛡️ AdGuard Home + DNS-over-HTTPS
+### 6. 🛡️ AdGuard Home + DNS-over-HTTPS وDNS-over-TLS
 
 > `Install and configure AdGuard Home? [y/N]:`
 
-*خادم DNS اختياري · معطّل افتراضيًا (`N`)*
+*خادم DNS إضافي · معطّل افتراضيًا (`N`)*
 
-خادم DNS شخصي لحجب الإعلانات والتتبّع وإدارة العملاء وإرسال استعلامات DNS مشفّرة.
+خادم DNS شخصي لحظر الإعلانات والتتبع وإدارة العملاء وإرسال طلبات DNS مشفّرة. يمكن للأجهزة استخدام DoH أو DoT الاختياري، مثل ميزة «DNS خاص» في Android.
 
 <details>
-<summary>ℹ️ تفاصيل AdGuard Home والتحكم في الوصول</summary>
+<summary>ℹ️ <strong>تفاصيل AdGuard Home والتحكم في الوصول</strong></summary>
 
 لا يلزم نطاق إضافي.
 
-بعد التثبيت، تتوفر العناوين التالية:
+بعد التثبيت تتوفر العناوين:
 
-- **لوحة إدارة AdGuard Home:** `https://panel.example.com/adg-.../` — مسار عشوائي فريد.
-- **DNS-over-HTTPS:** `https://panel.example.com/dns-query`.
+- **لوحة AdGuard Home:** `https://panel.example.com/adg-.../` بمسار عشوائي خاص.
+- **DNS-over-HTTPS:** `https://panel.example.com/dns-XXXXXXXXXXXX`، ويُنشأ الجزء `dns-XXXXXXXXXXXX` عشوائيًا لكل تثبيت.
+- **DNS-over-TLS** (عند اختياره): `panel.example.com` والمنفذ 853.
 
-لا يُفتح المنفذ العام **53** عبر TCP أو UDP. تُضمَّن إعدادات AdGuard Home وبياناته في **Backup / Restore v3**.
+تُعرض العناوين في تقرير التثبيت وفي الخيار **6 - My Server Details**. لا يمكن عرض كلمة مرور AdGuard Home مرة أخرى، لذا احفظها أثناء التثبيت.
+
+لا تُفتح منافذ **53** العامة عبر TCP أو UDP. يفتح AdGuard Home المنفذ العام الإضافي **853** فقط إذا فعّلت DoT. تُحفظ إعداداته وبياناته في **Backup / Restore v3**. أما التثبيتات الأقدم من 2.7.0 فتستمر باستخدام `https://panel.example.com/dns-query`.
 
 **⚠️ توصية أمنية**
 
-لخادم VPS شخصي، أنشئ [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) مستقلًا لكل جهاز.
+المسار العشوائي لـ DoH أصعب تخمينًا لكنه محفوظ على الأجهزة. استخدم [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) مستقلًا لكل جهاز.
 
-في AdGuard Home افتح **الإعدادات ← إعدادات DNS ← إعدادات الوصول ← العملاء المسموح لهم**، وأضف **معرّفات ClientID هذه فقط**، دون عناوين IP أو شبكات فرعية.
+افتح **Settings → DNS settings → Access settings → Allowed clients** داخل AdGuard Home وأضف معرّفات ClientID التي أنشأتها. لا تحتاج إلى عناوين IP أو الشبكات الفرعية، باستثناء `127.0.0.1` إذا استخدمت DoT (انظر أدناه).
 
-استخدم روابط DoH بالشكل التالي:
+استخدم روابط DoH مثل:
 
-`https://panel.example.com/dns-query/<ClientID>`
+`https://panel.example.com/dns-XXXXXXXXXXXX/<ClientID>`
 
-بعد ضبط ذلك ستُرفض الطلبات التي لا تتضمن ClientID مسموحًا به، بما فيها الطلبات إلى `/dns-query` الافتراضي.
+تُرفض الطلبات بلا ClientID مسموح به. اختر معرّفات طويلة وعشوائية. راجع [التوصيات الرسمية](https://adguard-dns.io/kb/adguard-home/running-securely/).
 
-اختر معرّفات عشوائية طويلة. راجع [إرشادات AdGuard Home الرسمية للأمان](https://adguard-dns.io/kb/adguard-home/running-securely/).
+**DoT وقائمة العملاء:** لا يرسل DoT معرّف ClientID. لذلك تتوقف طلباته بعد تفعيل قائمة العملاء المسموح لهم. لإعادته إلى العمل أضف `127.0.0.1` إلى القائمة؛ عندها يمكن لأي شخص يعرف عنوان الخادم استخدام DoT كما كان قبل تفعيل القائمة.
 
-بدءًا من **v2.4.1**، يمكنك في التثبيتات الجديدة التحقق من تحديثات AdGuard Home وتثبيتها مباشرةً من واجهته على الويب. إذا ثبّتَّ AdGuard Home بإصدار أقدم من هذا المثبّت، فعِّل التحديثات بأمر واحد على خادم VPS:
+منذ **v2.4.1** تدعم التثبيتات الجديدة تحديث AdGuard Home من واجهة الويب. إذا ثبّتَّه بهذا السكربت قبل **v2.4.1**، فعِّل الميزة بهذا الأمر على VPS:
 
 ```bash
 sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "$d"'\'' EXIT; cd "$d"; u=https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.2; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh" -o x-ui-latest.sh; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh.sha256" -o x-ui-latest.sh.sha256; sha256sum --check --strict x-ui-latest.sh.sha256; bash ./x-ui-latest.sh --enable-agh-updates'
 ```
 
 </details>
+
+#### 6.1. DNS-over-TLS (DoT)
+
+> `Enable DNS-over-TLS (DoT) for your devices? [y/N]:`
+
+يُستخدم خصوصًا مع إعداد «DNS خاص» في Android، الذي يقبل اسم مضيف فقط. إذا لم تكن بحاجة إليه فاترك `N`.
+
+- يتوفر عند التثبيت الجديد فقط مع AdGuard Home.
+- يستقبل DoT على `panel.example.com` عبر المنفذ **853**. تُضاف قاعدة UFW تلقائيًا وتُستخدم شهادة نطاق اللوحة.
+- **المنفذ 853 مفتوح للإنترنت كله.** لا ينقل DoT معرّف ClientID، ويمكن لأي شخص يعرف عنوان الخادم الاتصال. ويُحد عدد الاتصالات المتزامنة لكل IP بحوالي 50 اتصالًا.
+- تظهر طلبات DoT في سجل AdGuard Home من `127.0.0.1` لأنها تمر عبر Nginx محليًا، لذلك لا يمكن تمييز الأجهزة في سجل DoT.
+- إذا فُعّلت قائمة العملاء المسموح لهم، تتوقف خدمة DoT. طريقة الإصلاح موضّحة أعلاه في شرح ClientID.
+- تُحفظ إعدادات DoT في Backup / Restore v3 وتُراعى عند تغيير النطاقات.
+
+**إعداد Android.** ابحث عن «DNS خاص» في إعدادات الهاتف، اختر وضع اسم المضيف وأدخل نطاق اللوحة.
+
+**تعطيل DoT.** نفّذ الأمر التالي على الخادم بصلاحيات root:
+
+```bash
+ufw delete allow 853/tcp
+```
+
+يُغلق المنفذ 853 وتظل الخدمات الأخرى تعمل. إزالة DoT بالكامل تتطلب إعادة تثبيت الخادم.
 
 ---
 
@@ -292,7 +363,7 @@ sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "
 
 <a id="8--إنشاء-العميل-والاشتراك-تلقائيًا"></a>
 
-### 9. 👤 إنشاء العميل والاشتراك تلقائيًا
+### 7. 👤 إنشاء العميل والاشتراك تلقائيًا
 
 > `Create a client in 3X-UI and display a subscription link after installation? [Y/n]:`
 
@@ -320,24 +391,22 @@ sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "
 
 ## 🚀 ملفات الاتصال
 
-| الاتصال | الحالة |
+| الاتصال | وقت الإنشاء |
 | --- | :---: |
-| VLESS + REALITY | ✅ مُفعّل افتراضيًا |
-| VLESS + XHTTP | ✅ مُفعّل افتراضيًا |
-| VLESS + XHTTP لشبكات CDN | 🔧 اختياري، معطّل |
-| Hysteria2 | ✅ مُفعّل افتراضيًا |
-| VLESS + WebSocket (TLS) | ◻️ معطّل افتراضيًا |
-| Trojan + gRPC | ◻️ معطّل افتراضيًا |
-| VLESS + XTLS Vision | 🔧 اختياري |
+| VLESS + REALITY | ✅ دائمًا، مفعّل |
+| VLESS + XHTTP | ✅ دائمًا، مفعّل |
+| Hysteria2 | ✅ دائمًا، مفعّل |
+| VLESS + WebSocket (TLS) | 🔧 اختياري، مفعّل عند اختياره |
+| Trojan + gRPC | 🔧 اختياري، مفعّل عند اختياره |
+| VLESS + XTLS Vision | 🔧 اختياري، يحتاج نطاقًا ثالثًا |
 | Amnezia WG | 🔧 اختياري |
+| VLESS + XHTTP لشبكات CDN | 🔧 اختياري، يُنشأ معطّلًا |
 
-تُفعّل REALITY وXHTTP وHysteria2 بعد التثبيت. ويُنشأ WebSocket TLS وTrojan gRPC لكنهما يظلان معطّلين حتى تفعّلهما من لوحة 3X-UI.
+تعمل الاتصالات الثلاثة الأساسية فور التثبيت. لا تُنشأ الاتصالات الأخرى إلا بعد الإجابة `y` على سؤال الاتصالات الإضافية (الخطوة 4)، ولا تُنشأ الاتصالات غير المختارة.
 
-تُضاف XTLS Vision وAmnezia WG وXHTTP لشبكات CDN فقط عند اختيارها أثناء التثبيت. يُنشأ XHTTP لشبكات CDN معطّلًا ولا يظهر في الاشتراكات إلا بعد تفعيله وربط عميل به.
+يُنشأ XHTTP لشبكات CDN معطّلًا ولا يظهر في الاشتراكات حتى تفعّله وتربط عميلًا به. في الخوادم المثبتة قبل 2.7.0 تبقى WebSocket وTrojan gRPC موجودة ومعطّلة كما كانت.
 
-لاستخدام الاتصالات، أنشئ العملاء تلقائيًا أثناء التثبيت أو يدويًا من اللوحة. يُنشأ عملاء Amnezia WG بصورة منفصلة.
-
-يعتمد التوافق على تطبيق العميل وإصداره. وعند استخدام XHTTP عبر CDN، تؤثر أيضًا إعدادات المزوّد وقيوده.
+أنشئ العملاء أثناء التثبيت أو يدويًا في اللوحة. يحتاج AmneziaWG إلى عميل مستقل. يعتمد التوافق على تطبيق العميل وإصداره، وبالنسبة إلى CDN يعتمد أيضًا على مزوّد الخدمة.
 
 ### الاشتراكات
 
@@ -357,6 +426,8 @@ sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "
 ## 💾 النسخ الاحتياطي والاستعادة
 
 من القائمة الرئيسية افتح **3 — Backups** لإنشاء نسخة احتياطية أو عرض الأرشيفات أو إجراء Restore. يمكنك استخدام النسخة بعد إعادة تثبيت نظام التشغيل أو عند الانتقال إلى VPS آخر. للاستعادة، يجب أن يتطابق نظام التشغيل وإصداره وبنية المعالج مع النسخة الاحتياطية.
+
+عند استخدام Restore من القائمة على VPS جديد، ينتظر المثبّت انتهاء تحديث النظام التلقائي (حتى 60 دقيقة). لا تعِد تشغيل الخادم أثناء الانتظار.
 
 تتوفر أيضًا الأوامر التالية بحساب root:
 
@@ -468,7 +539,7 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 
 ## 🔐 الأمان
 
-لا تُعرَض واجهات الخدمات مباشرةً على الإنترنت. تُتاح اللوحة والاشتراكات والخدمات الإضافية عبر nginx وHTTPS، بينما تظل المنافذ الداخلية محلية.
+لا تُعرَض واجهات الخدمات مباشرةً على الإنترنت: تتوفر اللوحة والاشتراكات والخدمات الإضافية عبر nginx وHTTPS، وتبقى المنافذ الداخلية محلية. يُفتح منفذ الخدمة 853 فقط عند تفعيل DNS-over-TLS (DoT). أما منافذ اتصالات الأجهزة فهي مفتوحة بطبيعتها: TCP وUDP على 443، وكذلك UDP على 8443 عند اختيار AmneziaWG.
 
 
 **لست متأكدًا من كيفية حماية خادم VPS؟** يمكنك تفعيل إعدادات الأمان المحسّنة أثناء التثبيت لضبط حماية SSH من محاولات التخمين وDNS المشفّر والتحديثات الأمنية تلقائيًا. اقرأ أولًا الشرح التفصيلي وجدول إعادة التشغيل الليلية في قسم **بدء التثبيت**.
@@ -483,12 +554,14 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 
 **TWPM ليس جزءًا من التثبيت الأساسي لـ 3X-UI.** يتيح الخيار 4 في القائمة الرئيسية تشغيله أو بدء تثبيته بشكل منفصل بعد التأكيد. وتُدار المشروعات بصورة مستقلة.
 
+يتوفر تثبيت Telegram Web Proxy Manager على Ubuntu 24.04 و26.04.
+
 <a id="technical-details"></a>
 
 ## ⚙️ التفاصيل التقنية والتوافقية
 
 - **الأنظمة:** Ubuntu 24.04 وUbuntu 26.04 وDebian 13.
-- **UFW:** يسمح بالمنافذ 80/tcp و443/tcp و443/udp (ويضيف 8443/udp عند اختيار AmneziaWG). أثناء Installation، لا يُفعّل UFW إلا بعد التحقق من إمكانية الوصول عبر SSH؛ وإلا يبقى غير نشط مع تحذير. بعد Restore من القائمة، يمكن تفعيله **فقط إذا اخترت ذلك صراحةً** واجتازت الإعدادات فحوص الأمان. الأمر `x-ui-backup restore` لا يفعّل UFW.
+- **UFW:** يسمح بالمنافذ 80/tcp و443/tcp و443/udp (ويضيف 8443/udp عند اختيار AmneziaWG و853/tcp عند تفعيل DoT). أثناء Installation، لا يُفعّل UFW إلا بعد التحقق من إمكانية الوصول عبر SSH؛ وإلا يبقى غير نشط مع تحذير. بعد Restore من القائمة، يمكن تفعيله **فقط إذا اخترت ذلك صراحةً** واجتازت الإعدادات فحوص الأمان. الأمر `x-ui-backup restore` لا يفعّل UFW.
 - **الشهادات:** يجري إصدار شهادات Let's Encrypt وتجديدها تلقائيًا باستخدام webroot و`certbot.timer`، دون إيقاف nginx.
 - **إصدار 3x-ui:** يثبّت المُثبّت افتراضيًا أحدث إصدار جرى التحقق جيدًا من توافقه مع 3x-ui Auto Nginx، وقد لا يكون أحدث إصدار صادر عن المشروع الأصلي. يمكنك تحديث 3x-ui لاحقًا بآليته المدمجة، لكن قد لا يكون توافق الإصدار الجديد مع إعداداتنا قد اختُبر بعد. ويمكنك اختيار إصدار مستقر آخر صراحةً باستخدام `-version <tag>` (الحد الأدنى المدعوم v3.8.0)؛ وسيظهر تحذير إذا لم يُتحقق من توافقه.
 

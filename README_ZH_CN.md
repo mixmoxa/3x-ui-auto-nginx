@@ -6,37 +6,39 @@
 
 ### 在自己的 VPS 上自动部署 3X-UI / XRAY-CORE
 
-**REALITY · XHTTP · HYSTERIA2 · NGINX · HTTPS · BACKUP / RESTORE**
+**REALITY · XHTTP · HYSTERIA2 · CASCADE · ADGUARD HOME · BACKUP / RESTORE**
 
 两个域名，一台全新的 VPS，只需几分钟即可完成安装。
 
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 [![Downloads](https://img.shields.io/github/downloads/xPROMSx/3x-ui-auto-nginx/total?label=Downloads)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
+[![Debian](https://img.shields.io/badge/Debian-13-A81D33?logo=debian&logoColor=white)](#technical-details)
 [![Support](https://img.shields.io/badge/Support-Donate-EA4AAA)](docs/SUPPORT_ZH_CN.md)
 
 [📦 发布版本](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [🔗 级联](#cascade) · [🌐 伪装网站](#cover-sites) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ 支持开发](#support-development) · [💬 交流反馈](https://t.me/promsdev)
 
 </div>
 
-**3X-UI AUTO NGINX** 是一款免费安装工具，可在自己的 VPS 上自动部署 [3x-ui](https://github.com/MHSanaei/3x-ui) 和 Xray。它负责配置 Nginx、HTTPS 证书、REALITY、XHTTP、Hysteria2、订阅（包括 Clash/Mihomo 格式）和诊断功能。通过交互式管理菜单，你可以安装服务器、更换域名、管理 Backup/Restore v3，以及配置两台 VPS 之间的级联。XTLS Vision、AmneziaWG 3.1、用于俄罗斯网站的 Cloudflare WARP，以及支持 DNS-over-HTTPS（DoH）的 AdGuard Home 均为可选功能。
+**3X-UI AUTO NGINX** 是一款免费的安装工具，可在自己的 VPS 上部署 [3x-ui](https://github.com/MHSanaei/3x-ui) 和 Xray。只需填写两个域名并运行一条命令。脚本会配置 Nginx、HTTPS 证书、REALITY、XHTTP、Hysteria2、订阅链接及伪装网站。通过菜单还可更换域名、管理备份、配置两台 VPS 的级联，以及部署个人 DNS 服务器。
 
-**不只是常规的 3x-ui 安装：**全新部署会为面板和 REALITY 分别生成专属的多页面网站。项目提供至少 2592 种现成的设计与文案组合，每次安装还会调整颜色、图标和日期。网站包含可用的导航和附加页面。在 REALITY 域名上，普通的 TCP HTTPS 请求和未经认证的 UDP HTTP/3 请求会显示同一个网站。所有功能均利用现有的 Nginx 和 Xray，无须 Docker 或额外的 Web 服务器。
+**不只是默认占位页。** 新安装会为面板和 REALITY 创建带导航、文章与图片的多页面网站，共有至少 2592 种变化。未经认证的 Hysteria2 HTTP/3 请求也会显示伪装网站。无需 Docker 或额外 Web 服务器。
 
 ## ✨ 为什么选择这个项目？
 
 | | |
 | --- | --- |
-| **自动配置连接**<br>REALITY、XHTTP 和 Hysteria2 会自动配置。安装时选择的 XTLS Vision、AmneziaWG 和面向 CDN 的 XHTTP 也会自动配置。 | **完整的伪装网站**<br>至少 2592 种现成的设计与文案组合。多页面网站配有可用的导航、专属文字和图片，并支持 Hysteria2 的 HTTP/3 伪装。 |
-| **两台 VPS 级联**<br>通过菜单将两台服务器串联。俄罗斯网站及 IP 地址由入口服务器直接访问，其余流量经出口服务器转发。 | **自己的 Nginx 和 HTTPS**<br>由 VPS 上的 Nginx 接收传入的 TCP 连接。面板和订阅通过自有域名的 HTTPS 访问，无须将内部端口直接暴露到互联网。 |
-| **Backup / Restore v3**<br>支持备份、恢复及迁移到其他 VPS，并保留用户数据与个性化网站。 | **管理菜单与域名更换**<br>无需重装 3X-UI 或其他服务，即可更换面板域名、REALITY 域名或两者。 |
-| **自动证书与安全设置**<br>Let's Encrypt 证书自动续期，无须停止 Nginx；可选 SSH 防护和 VPS 自动安全更新。 | **其他功能**<br>XTLS Vision、AmneziaWG 3.1、面向 CDN 的 XHTTP、Cloudflare WARP、支持 DoH 的 AdGuard Home，以及级联配置。 |
+| **几分钟即可使用**<br>两个域名、一台全新 VPS 和一条命令。自动配置 REALITY、XHTTP 和 Hysteria2，提供面板地址和订阅链接。 | **看起来像普通网站**<br>完整的多页面伪装站点，带导航、文章和图片，至少 2592 种变化，支持 Hysteria2 HTTP/3 伪装。 |
+| **两台 VPS 级联**<br>设备连接入口服务器，流量从另一个出口服务器访问互联网，例如不同国家的 VPS。通过菜单配置，无需手改文件。 | **个人去广告 DNS**<br>AdGuard Home 可以拦截广告和跟踪。设备可使用 DNS-over-HTTPS（DoH）或可选的 DNS-over-TLS（DoT）。 |
+| **备份和域名更换**<br>Backup / Restore v3 可将客户端及网站迁移到新的 VPS。更换面板和 REALITY 域名无需重装。 | **简便的安全保护**<br>面板和订阅通过 HTTPS 提供，内部端口仅本地使用，证书自动续期。可选择启用 SSH 防护和 VPS 安全更新。 |
+
+**默认仅安装必要连接。** REALITY、XHTTP、Hysteria2 始终创建。WebSocket、Trojan gRPC、XTLS Vision、AmneziaWG 和 CDN 专用 XHTTP 仅在选择后创建。无需 Docker。
 
 <a id="installation"></a>
 
 ## 🚀 快速开始
 
-将**两个域名**的 DNS 记录指向 VPS 的 IP 地址：一个用于面板，另一个用于 REALITY。通过 SSH 以 **root** 身份登录，并确认 TCP 端口 **80、443** 和 UDP 端口 **443** 可从互联网访问。查看[支持的系统](#technical-details)。
+使用全新的 Ubuntu 24.04、Ubuntu 26.04 或 Debian 13 VPS，通过 SSH 以 **root** 身份登录。将两个域名的 DNS 指向 VPS IP，分别用于面板和 REALITY。需要开放 TCP **80**、**443** 及 UDP **443**。若开启 DoT，还需要 TCP **853**。参见[技术详情](#technical-details)。
 
 ```bash
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
@@ -49,6 +51,7 @@ curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x
 - **3 — Backups：**创建、查看和恢复备份。
 - **4 — Telegram Web Proxy Manager：**启动或安装独立的 Telegram 代理管理器。
 - **5 — Cascade：**连接两台服务器、查看状态或断开级联。
+- **6 - My Server Details：**查看面板、订阅、AdGuard Home 地址及用户名，不更改配置，也不显示密码。
 - **0 — Exit：**退出。
 
 菜单需要在交互式 SSH 终端中使用。
@@ -71,7 +74,11 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 >
 > **不带参数**再次运行脚本只会打开管理菜单，**不会**重装服务器。但 **Installation** 选项用于全新 VPS 部署或完整重装。
 >
-> 如果检测到已有安装，脚本会提示将删除项目管理的数据，并要求准确输入 **YES** 确认。重装时会替换 3X-UI 数据库和 nginx 配置。**请先在 VPS 之外保存备份。**
+> 如果发现已有安装，脚本会警告将删除所管理的数据，并要求准确输入 **YES**。重装将替换 3X-UI 数据库及 nginx 配置。此外：
+> - 如果之前安装了 XTLS Vision，但本次不再选择，或改用其他域名，安装器会删除此前由它创建的旧 Vision 域名证书，并在要求输入 YES 之前警告；
+> - 如果此前安装了 AmneziaWG，但本次不再选择，8443/udp 端口将关闭（不会另行警告）。
+>
+> **请提前将 Backup 保存到 VPS 之外。**
 >
 > **Change Domains** 和 **Backups** 是独立操作，不会重装面板。
 
@@ -81,12 +88,25 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 - **3X-UI 和 Xray：**使用面板自带的更新功能。新版本与项目配置的兼容性可能尚未验证。
 - **3X-UI AUTO NGINX：**不支持直接升级已安装的整套服务。要使用 **5 — Cascade** 等新版管理功能，可以下载最新脚本并选择对应操作。管理器会检查现有配置是否兼容。
 - **Backup / Restore：**用于保存和恢复数据，不会升级已安装的服务。
+- **对于 2.7.0 之前安装的服务器：**菜单 **6 - My Server Details** 会显示能够读取的旧数据。随机 DoH 路径、额外连接的配置问题和 DoT 仅适用于全新安装。已有的 WebSocket 和 Trojan gRPC 保持原状，DoH 继续使用 `/dns-query`。
 
 **不要为了更新而选择 Installation！** 请使用操作系统的软件包管理工具更新 nginx、Linux 内核和其他系统软件包。
 
 </details>
 
-以下介绍在主菜单中选择 **Installation** 后提供的安装选项。
+安装包含七个主要问题，其中部分会有追问。大多数用户可以使用默认值。
+
+| # | 问题 | 默认值 | 用途 |
+| --- | --- | :---: | --- |
+| 1 | 面板域名 | - | 面板、订阅、伪装网站 |
+| 2 | REALITY 域名 | - | REALITY 连接、伪装网站 |
+| 3 | VPS 增强安全 | `Y` | Fail2ban、服务器自身的加密 DNS、安全更新 |
+| 4 | 额外连接（分别选择） | `N` | WebSocket、Trojan gRPC、XTLS Vision、AmneziaWG、CDN XHTTP |
+| 5 | 俄罗斯网站使用 WARP | 俄语菜单为 `Y` | 隐藏 VPS IP |
+| 6 | AdGuard Home | `N` | 含 DoH 和可选 DoT 的个人 DNS |
+| 7 | 客户端和订阅 | `Y` | 安装后提供订阅链接 |
+
+仅选择启用额外连接时，才会显示 4.1 至 4.4 的追问。
 
 ---
 
@@ -150,7 +170,30 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ---
 
-### 4. 🔗 VLESS XTLS Vision
+### 4. 🧩 额外连接
+
+> `Set up additional connections? [y/N]:`
+
+*默认关闭 (`N`)*
+
+默认设置 REALITY、XHTTP 和 Hysteria2。你还可以选择 VLESS WebSocket、Trojan gRPC、XTLS Vision、AmneziaWG 以及面向 CDN 的 XHTTP。
+
+> [!WARNING]
+> 这些连接可能在某些国家或网络中不可用。请自行评估风险；不确定时回答 `N`。
+
+选择 `N` 时不会创建任何额外连接，也不会询问 4.1 至 4.4。选择 `y` 后逐一选择。
+
+#### 4.1. WebSocket 和 Trojan gRPC
+
+> `Set up legacy VLESS WebSocket and Trojan gRPC connections? [y/N]:`
+
+选择 `y` 时同时创建并启用两种连接；选择 `N` 时两者都不创建。
+
+---
+
+<a id="4--vless-xtls-vision"></a>
+
+#### 4.2. 🔗 VLESS XTLS Vision
 
 > `Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]:`
 
@@ -165,7 +208,9 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ---
 
-### 5. 🔑 Amnezia WG
+<a id="5--amnezia-wg"></a>
+
+#### 4.3. 🔑 Amnezia WG
 
 > `Set up an additional AmneziaWG connection? [y/N]:`
 
@@ -190,7 +235,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 <a id="xhttp-cdn"></a>
 
-### 6. 🌐 面向 CDN 的 VLESS + XHTTP
+#### 4.4. 🌐 面向 CDN 的 VLESS + XHTTP
 
 > `Add an additional CDN-compatible XHTTP connection? [y/N]:`
 
@@ -206,7 +251,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 <a id="warp-ru"></a>
 
-### 7. 🌐 通过 Cloudflare WARP 访问俄罗斯网站
+### 5. 🌐 通过 Cloudflare WARP 访问俄罗斯网站
 
 > `Route Russian websites through Cloudflare WARP to hide your VPS IP? [y/N]:`
 
@@ -242,41 +287,44 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 <a id="7--adguard-home--dns-over-https"></a>
 <a id="6--adguard-home--dns-over-https"></a>
 
-### 8. 🛡️ AdGuard Home + DNS-over-HTTPS
+### 6. 🛡️ AdGuard Home + DNS-over-HTTPS 和 DNS-over-TLS
 
 > `Install and configure AdGuard Home? [y/N]:`
 
-*可选 DNS 服务器 · 默认关闭（`N`）*
+*附加 DNS 服务器 · 默认关闭 (`N`)*
 
-个人 DNS 服务器，可屏蔽广告与跟踪请求、管理客户端并提供加密 DNS 查询。
+个人 DNS 可拦截广告和跟踪、管理设备，并加密 DNS 查询。设备可使用 DoH 或可选的 DoT，例如 Android 的“私人 DNS”。
 
 <details>
-<summary>ℹ️ AdGuard Home 与访问控制说明</summary>
+<summary>ℹ️ <strong>AdGuard Home 和访问设置</strong></summary>
 
-无须额外域名。
+无需额外域名。
 
-安装完成后可访问：
+安装后可使用：
 
-- **AdGuard Home 管理面板：** `https://panel.example.com/adg-.../` — 独立生成的随机路径.
-- **DNS-over-HTTPS：** `https://panel.example.com/dns-query`.
+- **AdGuard Home 管理页面：** `https://panel.example.com/adg-.../`，每次安装随机生成路径。
+- **DNS-over-HTTPS：** `https://panel.example.com/dns-XXXXXXXXXXXX`，其中 `dns-XXXXXXXXXXXX` 为随机路径。
+- **DNS-over-TLS**（选择时）：`panel.example.com`，端口 853。
 
-不会向公网开放 TCP/UDP **53** 端口。AdGuard Home 的配置和数据将纳入 **Backup / Restore v3**。
+安装完成后以及菜单 **6 - My Server Details** 中会显示这些地址。AdGuard Home 的密码之后无法查看，请在安装时保存。
+
+不会开放公网 TCP/UDP **53**。只有选择 DoT 时才会为 AdGuard Home 额外开放公网 **853** 端口。配置和数据包含在 **Backup / Restore v3** 中。2.7.0 之前安装的服务器继续使用 `https://panel.example.com/dns-query`。
 
 **⚠️ 安全建议**
 
-个人 VPS 建议为每台设备创建独立的 [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid)。
+随机 DoH 地址更难被猜测，但它会保存在设备的设置中。建议为每台设备创建一个独立的 [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid)。
 
-在 AdGuard Home 的 **设置 → DNS 设置 → 访问设置 → 允许的客户端** 中，**仅添加这些 ClientID**，不要添加 IP 地址或子网。
+在 AdGuard Home 中打开 **Settings → DNS settings → Access settings → Allowed clients**，填写创建的 ClientID。通常无需添加 IP 或网段；使用 DoT 时需要将 `127.0.0.1` 作为例外加入。
 
-DoH 地址格式示例：
+DoH 地址示例：
 
-`https://panel.example.com/dns-query/<ClientID>`
+`https://panel.example.com/dns-XXXXXXXXXXXX/<ClientID>`
 
-配置后，没有携带获准 ClientID 的查询（包括对普通 `/dns-query` 的请求）都会被拒绝。
+不带允许的 ClientID 的查询会被拒绝。请使用长且随机的标识符。阅读[官方安全指南](https://adguard-dns.io/kb/adguard-home/running-securely/)。
 
-请使用较长的随机标识符。参见 [AdGuard Home 官方安全建议](https://adguard-dns.io/kb/adguard-home/running-securely/)。
+**DoT 与客户端允许列表：** DoT 不会传递 ClientID。启用允许列表后，DoT 查询会被拒绝而停止工作。将 `127.0.0.1` 添加到允许列表即可恢复；但这也意味着任何知道服务器地址的人都能使用 DoT，与未启用列表时一样。
 
-从 **v2.4.1** 开始，全新安装的 AdGuard Home 可直接在网页界面中检查并安装更新。如果你使用本安装脚本的旧版本安装了 AdGuard Home，可以在 VPS 上运行一条命令来启用更新：
+自 **v2.4.1** 起，新安装可以直接在 AdGuard Home 网页界面更新。若此前使用该安装器安装的是旧版本，请在 VPS 上执行：
 
 ```bash
 sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "$d"'\'' EXIT; cd "$d"; u=https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.2; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh" -o x-ui-latest.sh; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh.sha256" -o x-ui-latest.sh.sha256; sha256sum --check --strict x-ui-latest.sh.sha256; bash ./x-ui-latest.sh --enable-agh-updates'
@@ -284,13 +332,36 @@ sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "
 
 </details>
 
+#### 6.1. DNS-over-TLS (DoT)
+
+> `Enable DNS-over-TLS (DoT) for your devices? [y/N]:`
+
+DoT 主要用于 Android 的“私人 DNS”，该设置仅接收主机名。若不需要，请保留默认 `N`。
+
+- 仅在全新安装 AdGuard Home 时可选择。
+- DoT 在 `panel.example.com` 的 **853** 端口接收查询。安装器会自动加入 UFW 规则并使用面板域名证书。
+- **853 端口向整个互联网开放。** DoT 不传递 ClientID，因此知道地址的人均可连接。每个来源 IP 同时连接数限制在约 50 个。
+- DoT 查询在 AdGuard Home 日志中显示为 `127.0.0.1`，因为 Nginx 在同一服务器上进行本地转发。因此无法在日志中区分各个 DoT 设备。
+- 启用允许客户端列表后，DoT 会停止工作。修复方法见上方 ClientID 说明。
+- DoT 配置保存在 Backup / Restore v3 中，并在更换域名时得到处理。
+
+**Android 设置。** 在手机设置中找到“私人 DNS”，选择主机名模式并填写面板域名。
+
+**关闭 DoT。** 在服务器上以 root 身份执行：
+
+```bash
+ufw delete allow 853/tcp
+```
+
+这会关闭 853 端口，其他服务保持正常。彻底删除 DoT 只能重新安装服务器。
+
 ---
 
 <a id="7--自动创建客户端和订阅"></a>
 
 <a id="8--自动创建客户端和订阅"></a>
 
-### 9. 👤 自动创建客户端和订阅
+### 7. 👤 自动创建客户端和订阅
 
 > `Create a client in 3X-UI and display a subscription link after installation? [Y/n]:`
 
@@ -318,24 +389,22 @@ sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "
 
 ## 🚀 连接配置
 
-| 连接 | 状态 |
+| 连接 | 创建条件 |
 | --- | :---: |
-| VLESS + REALITY | ✅ 默认启用 |
-| VLESS + XHTTP | ✅ 默认启用 |
-| 面向 CDN 的 VLESS + XHTTP | 🔧 可选，默认禁用 |
-| Hysteria2 | ✅ 默认启用 |
-| VLESS + WebSocket (TLS) | ◻️ 默认禁用 |
-| Trojan + gRPC | ◻️ 默认禁用 |
-| VLESS + XTLS Vision | 🔧 可选 |
+| VLESS + REALITY | ✅ 始终创建并启用 |
+| VLESS + XHTTP | ✅ 始终创建并启用 |
+| Hysteria2 | ✅ 始终创建并启用 |
+| VLESS + WebSocket (TLS) | 🔧 可选，选择后启用 |
+| Trojan + gRPC | 🔧 可选，选择后启用 |
+| VLESS + XTLS Vision | 🔧 可选，需要第三个域名 |
 | Amnezia WG | 🔧 可选 |
+| VLESS + XHTTP for CDN | 🔧 可选，创建后关闭 |
 
-安装完成后，REALITY、XHTTP 和 Hysteria2 默认启用。WebSocket TLS 和 Trojan gRPC 也会创建，但需要在 3X-UI 面板中手动启用。
+REALITY、XHTTP 和 Hysteria2 安装后即可使用。其他连接只有在第 4 步选择开启额外连接时才会创建；未选择的连接完全不创建。
 
-XTLS Vision、Amnezia WG 和面向 CDN 的 XHTTP 仅在安装时选择后才会添加。面向 CDN 的 XHTTP 默认禁用，启用并绑定客户端后才会出现在订阅中。
+面向 CDN 的 XHTTP 默认关闭，启用并绑定客户端前不会出现在订阅中。2.7.0 之前安装的服务器保留原来已创建但关闭的 WebSocket 和 Trojan gRPC。
 
-使用连接前需要创建客户端，可以在安装时自动创建，也可以在面板中手动创建。Amnezia WG 客户端需单独创建。
-
-兼容性取决于客户端应用及其版本。通过 CDN 使用 XHTTP 时，还需考虑 CDN 服务商的设置和限制。
+可以在安装时或之后在面板中创建客户端。AmneziaWG 客户端需单独创建。兼容性取决于客户端程序与版本，CDN XHTTP 还受到 CDN 服务商设置限制。
 
 ### 订阅
 
@@ -355,6 +424,8 @@ XTLS Vision、Amnezia WG 和面向 CDN 的 XHTTP 仅在安装时选择后才会�
 ## 💾 备份与恢复
 
 在主菜单中打开 **3 — Backups**，即可创建备份、查看备份文件或执行 Restore。重装操作系统后，或者迁移到另一台 VPS 时，都可以使用备份。恢复时，操作系统、其版本和处理器架构必须与备份一致。
+
+在全新 VPS 上通过菜单执行 Restore 时，安装器会等待自动系统更新结束（最长 60 分钟）；此期间不要重启服务器。
 
 也可以使用以下命令（以 root 身份运行）：
 
@@ -466,7 +537,7 @@ Backup v3 会保存级联设置。在入口服务器恢复备份后，级联配�
 
 ## 🔐 安全性
 
-服务接口不会直接暴露到互联网。面板、订阅和附加服务均通过 nginx 和 HTTPS 访问，内部端口仅在本机监听。
+服务接口不会直接暴露到互联网：面板、订阅和附加服务通过 nginx 和 HTTPS 提供，内部端口保持本地监听。只有自行启用 DNS-over-TLS (DoT) 时才会额外开放公网 853 服务端口。客户端连接端口本来就是公网开放的：TCP 和 UDP 443，选择 AmneziaWG 时还有 UDP 8443。
 
 
 **不确定怎样保护自己的 VPS？** 安装时可以启用增强安全配置，由安装程序自动设置 SSH 防暴力破解、加密 DNS 和安全更新。启用前请先阅读“快速开始”中的详细说明和夜间自动重启计划。
@@ -481,12 +552,14 @@ Backup v3 会保存级联设置。在入口服务器恢复备份后，级联配�
 
 **TWPM 不包含在 3X-UI 的默认安装中。**主菜单选项 4 可启动此管理器，或在确认后单独安装。两个项目分别管理。
 
+Telegram Web Proxy Manager 可安装在 Ubuntu 24.04 和 26.04 上。
+
 <a id="technical-details"></a>
 
 ## ⚙️ 技术细节与兼容性
 
 - **系统：** Ubuntu 24.04、Ubuntu 26.04 和 Debian 13。
-- **UFW：**允许 80/tcp、443/tcp 和 443/udp（选择 AmneziaWG 时还会开放 8443/udp）。Installation 期间，只有确认 SSH 访问安全后才会启用 UFW；否则保持关闭并显示警告。通过菜单执行 Restore 后，**只有明确选择启用**且通过安全检查时，管理器才会启用 UFW。独立命令 `x-ui-backup restore` 不会启用 UFW。
+- **UFW：**允许 80/tcp、443/tcp 和 443/udp（选择 AmneziaWG 时开放 8443/udp，选择 DoT 时开放 853/tcp）。Installation 期间，只有确认 SSH 访问安全后才会启用 UFW；否则保持关闭并显示警告。通过菜单执行 Restore 后，**只有明确选择启用**且通过安全检查时，管理器才会启用 UFW。独立命令 `x-ui-backup restore` 不会启用 UFW。
 - **证书：** 通过 Let's Encrypt webroot 和系统 `certbot.timer` 自动续期，无需停止 nginx。
 - **3x-ui 版本：** 默认安装已针对 3X-UI AUTO NGINX 进行充分兼容性测试的最新版本，并不一定是 3x-ui 上游刚发布的最新版。安装完成后，你可以通过 3x-ui 自带的更新功能自行升级，但新版本与现有配置的兼容性可能尚未得到验证。也可以通过 `-version <tag>` 明确指定其他稳定版（最低支持 v3.8.0）；安装程序会提醒该版本尚未通过兼容性验证。
 
