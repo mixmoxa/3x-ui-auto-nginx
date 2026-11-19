@@ -853,15 +853,17 @@ sysctl() {
         script+='\n'.join(function(name) for name in helpers+names)+'\n'+'; '.join(names)
         result=subprocess.run(['bash','-eu','-c',script],input='panel.example.com\nreality.example.com\ny\ny\nn\ny\nvision.example.com\nn\nn\nn\ny\n',text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual(' '.join(result.stdout.replace('  > ', '').split()),
-            'Enter the domain for your 3X-UI panel: Enter the domain for VLESS REALITY: Enhance VPS security? [Y/n]: '
+        self.assertTrue(result.stdout.startswith(
+            'Enter the domain for your 3X-UI panel:\n> Enter the domain for VLESS REALITY:\n> Enhance VPS security?\n[Y/n]: '))
+        self.assertEqual(' '.join(result.stdout.split()),
+            'Enter the domain for your 3X-UI panel: > Enter the domain for VLESS REALITY: > Enhance VPS security? [Y/n]: '
             'By default, VLESS Reality, VLESS XHTTP and Hysteria2 will be installed and configured. '
             'Additional connections: VLESS WebSocket, Trojan gRPC, VLESS TCP/TLS (XTLS Vision), AmneziaWG, XHTTP for CDN. '
-            'Set up additional connections? [y/N]: '
-            'Warning: all optional connections listed above may not work everywhere, it depends on your country and provider. Use at your own risk. If unsure, answer N. '
+            'Set up additional connections? '
+            'Warning: all optional connections listed above may not work everywhere, it depends on your country and provider. Use at your own risk. If unsure, answer N. [y/N]: '
             'Set up the outdated VLESS WebSocket and Trojan gRPC connections? [y/N]: '
             'Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]: '
-            'Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains): '
+            'Enter the domain for VLESS TLS Vision: (must differ from the panel and REALITY domains) > '
             'Set up an additional AmneziaWG connection? [y/N]: Add an additional CDN-compatible XHTTP connection? [y/N]: '
             'Install and configure AdGuard Home? [y/N]: Create a client in 3X-UI and display a subscription link after installation? [Y/n]:')
 
@@ -885,7 +887,7 @@ sysctl() {
         sequence = main[first:main.index('\n', last)]
         source = 'source "$1"\nuname() { echo x86_64; }\nINSTALL_AGH_DOT=n\n' + sequence
         source += '\nprintf "\\nRESULT:%s:%s\\n" "$INSTALL_AGH_DOT" "$CREATE_CLIENT"'
-        prompt = 'Enable DNS-over-TLS (DoT) for your devices? [y/N]:'
+        prompt = 'Enable DNS-over-TLS (DoT) for your devices?'
         client = 'Create a client in 3X-UI'
         for answers, expected, count in (
             ('n\ny\n', 'n:y', 0), ('y\n', 'n:n', 1), ('y\n\ny\n', 'n:y', 1),
@@ -901,7 +903,8 @@ sysctl() {
                 if count:
                     plain = ' '.join(result.stdout.split())
                     self.assertLess(plain.index(prompt), plain.index('It opens port 853'))
-                    self.assertLess(result.stdout.rindex(prompt), result.stdout.index(client))
+                    self.assertEqual(result.stdout.count('answer N.\n[y/N]: '), count)
+                    self.assertLess(result.stdout.rindex('\n[y/N]: '), result.stdout.index(client))
                 self.assertEqual('Please enter y or n.' in result.stdout, count == 2)
 
     def test_all_choices_and_preflights_before_destruction(self):
@@ -1301,14 +1304,24 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
             functions=relocated('\n'.join(function(name) for name in (
                 'render_vision_hook', 'previous_vision_hook_domain', 'preflight_vision_artifacts')),root)
             run=lambda: subprocess.run(['bash','-eu','-c',stubs+functions+'\ncheck_webroot_lineage() { :; }; INSTALL_VISION=y; vision_domain=vision.example; preflight_vision_artifacts'],env={**os.environ,'PANEL_STAGE':str(stage)},capture_output=True,text=True)
-            self.assertNotEqual(run().returncode,0,'Foreign existing lineage adopted')
+            for language, message in (
+                ('en', 'For Vision domain vision.example, an existing certificate or configuration'),
+                ('ru', 'Для домена Vision vision.example на сервере уже есть сертификат или конфигурация'),
+            ):
+                with self.subTest(language=language):
+                    with patch.dict(os.environ, UI_LANG=language):
+                        result = run()
+                    self.assertNotEqual(result.returncode, 0, 'Foreign existing lineage adopted')
+                    self.assertIn(message, result.stderr)
+                    self.assertIn('sudo certbot delete --cert-name vision.example --non-interactive', result.stderr)
             hook.write_text(subprocess.check_output(['bash','-c',relocated(function('render_vision_hook'),root)+'\nrender_vision_hook vision.example'],text=True)); hook.chmod(0o755)
             self.assertNotEqual(run().returncode,0,'Incomplete old ownership adopted')
             (available/'vision.conf').write_text(vision.fallback_config('vision.example',12001))
             # The canonical ACME generator is introduced by the ownership fix.
             acme='# Managed by 3x-ui Auto Nginx: Vision\nserver {\n    listen 80;\n    listen [::]:80;\n    server_name vision.example;\n    location ^~ /.well-known/acme-challenge/ { root /var/www/acme; try_files $uri =404; }\n    location / { return 301 https://$host$request_uri; }\n}\n'
             (available/'vision-acme.conf').write_text(acme)
-            self.assertEqual(run().returncode,0)
+            result = run()
+            self.assertEqual(result.returncode, 0, result.stderr)
             hook.write_text(subprocess.check_output(['bash','-c',relocated(function('render_vision_hook'),root)+'\nrender_vision_hook vision.example legacy'],text=True))
             self.assertEqual(run().returncode,0,'Previous canonical hook must permit a safe reinstall')
             hook.write_text(hook.read_text()+'\n# administrator modification\n')

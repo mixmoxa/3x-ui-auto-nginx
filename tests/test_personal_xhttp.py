@@ -140,10 +140,10 @@ make_port() {
 main
 '''
         questions = (
-            'Set up the outdated VLESS WebSocket and Trojan gRPC connections? [y/N]:',
+            'Set up the outdated VLESS WebSocket and Trojan gRPC connections?\n[y/N]: ',
             'Set up an additional VLESS TCP/TLS',
-            'Set up an additional AmneziaWG connection? [y/N]:',
-            'Add an additional CDN-compatible XHTTP connection? [y/N]:',
+            'Set up an additional AmneziaWG connection?\n[y/N]: ',
+            'Add an additional CDN-compatible XHTTP connection?\n[y/N]: ',
         )
         cases = (
             ('n\nN\nn\nn\ny\n', False, 'n:n:n:n:y', 0),
@@ -159,7 +159,7 @@ main
                 result = subprocess.run(['bash', '-eu', '-c', script, 'fixture', str(ROOT/'x-ui-latest.sh')],
                                         input=answers, text=True, capture_output=True, timeout=10)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn('Set up additional connections? [y/N]:', result.stdout)
+                self.assertIn('Set up additional connections?\n  Warning:', result.stdout)
                 self.assertIn('FLAGS:'+flags, result.stdout)
                 self.assertEqual(result.stdout.count('Please enter y or n.'), invalid)
                 ports = 'sub_port panel_port ' + ('ws_port trojan_port ' if flags.startswith('y') else '') + 'mtr_backend_port'

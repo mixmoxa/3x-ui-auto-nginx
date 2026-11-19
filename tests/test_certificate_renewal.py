@@ -350,7 +350,7 @@ UI_LANG=$LANGUAGE
                            if language == 'ru' else f'The Vision certificate for {domain} will be deleted. It can only be restored from a Backup made before reinstalling.')
                 prompt = 'введите YES' if language == 'ru' else 'Type YES'
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual(warning in ' '.join(result.stdout.split(prompt)[0].split()), deletes)
+                self.assertEqual(warning in ' '.join(result.stdout.split(prompt, 1)[1].split('\n> ', 1)[0].split()), deletes)
                 command = f'delete --cert-name {domain} --non-interactive'
                 self.assertEqual(self.calls.read_text().splitlines() if self.calls.exists() else [], [command] if deletes else [])
                 self.assertEqual(('certbot '+command) in result.stdout, deletes)

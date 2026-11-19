@@ -25,6 +25,8 @@ def function(name, source=INSTALLER):
         # Isolated main fixtures provide their own optional selector stubs.
         body = INSTALLER_OPTION_STUBS + body
     helpers = []
+    if 'ui_install_question ' in body:
+        helpers.append('ui_install_question')
     if 'ui_wrap ' in body:
         helpers.append('ui_wrap')
     if name == 'show_results':

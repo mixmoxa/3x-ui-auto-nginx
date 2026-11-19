@@ -162,14 +162,14 @@ printf 'FLAGS:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s\n' "$INSTALL_SECURITY" "$INSTALL_WS_
 ''')
             code,text=tty_run(script,b'Panel.Example\nReality.Example\n\ny\ny\ny\nVision.Example\ny\ny\ny\n\n')
             self.assertEqual(code,0,text)
-            for prompt in ('домен панели 3X-UI','домен VLESS REALITY','Усилить безопасность VPS? [Y/n]',
-                           'Настроить дополнительные подключения? [y/N]:',
-                           'Настроить устаревшие подключения VLESS WebSocket и Trojan gRPC? [y/N]:',
+            for prompt in ('домен панели 3X-UI','домен VLESS REALITY','Усилить безопасность VPS?\r\n[Y/n]: ',
+                           'Настроить дополнительные подключения?\r\n',
+                           'Настроить устаревшие подключения VLESS WebSocket и Trojan gRPC?\r\n[y/N]: ',
                            'дополнительное подключение VLESS TCP/TLS','домен VLESS TLS Vision',
-                           'дополнительное подключение AmneziaWG? [y/N]','Установить и настроить AdGuard Home? [y/N]',
+                           'дополнительное подключение AmneziaWG?\r\n[y/N]: ','Установить и настроить AdGuard Home?\r\n[y/N]: ',
                            'Создать клиента в 3X-UI'):
                 self.assertIn(prompt,text)
-            self.assertIn('Добавить дополнительное подключение XHTTP, совместимое с CDN? [y/N]:',text)
+            self.assertIn('Добавить дополнительное подключение XHTTP, совместимое с CDN?\r\n[y/N]: ',text)
             self.assertIn('FLAGS:y:y:y:y:y:y:y:panel.example:reality.example:vision.example',text)
             for name,variable,default in (('select_security','INSTALL_SECURITY','y'),('select_vision','INSTALL_VISION','n'),
                     ('select_amneziawg','INSTALL_AWG','n'),('select_xhttp_cdn','INSTALL_XHTTP_CDN','n'),('select_adguard','INSTALL_AGH','n'),('select_client','CREATE_CLIENT','y')):
@@ -184,7 +184,7 @@ printf 'FLAGS:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s\n' "$INSTALL_SECURITY" "$INSTALL_WS_
         source = (ROOT/'x-ui-latest.sh').read_text()
         first = source.index('    select_adguard || exit 1')
         last = source.index('\n', source.index('    select_client || exit 1', first))
-        prompt = 'Включить DNS-over-TLS (DoT) для ваших устройств? [y/N]:'
+        prompt = 'Включить DNS-over-TLS (DoT) для ваших устройств?'
         client = 'Создать клиента в 3X-UI'
         with tempfile.TemporaryDirectory() as temporary:
             script = Path(temporary)/'questions.sh'
@@ -203,11 +203,30 @@ printf 'FLAGS:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s\n' "$INSTALL_SECURITY" "$INSTALL_WS_
                     self.assertLess(text.index('Установить и настроить AdGuard Home'), text.index(prompt))
                     plain = ' '.join(re.sub(r'\x1b\[[0-9;]*m', '', text).split())
                     self.assertLess(plain.index(prompt), plain.index('Он открывает порт 853'))
-                    self.assertLess(text.rindex(prompt), text.index(client))
-                    self.assertIn('\x1b[38;5;208m', text)
+                    self.assertIn(f'\x1b[1m{prompt}\x1b[0m\r\n\x1b[38;5;208m', text)
+                    self.assertIn('ответьте N.\x1b[0m\r\n[y/N]: ', text)
+                    self.assertLess(text.rindex('\r\n[y/N]: '), text.index(client))
                     if b'bad' in answers:
                         self.assertEqual(text.count(prompt), 2)
                         self.assertIn('Введите y или n.', text)
+
+    def test_warp_question_and_input_on_terminal_in_both_languages(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            script = Path(temporary)/'questions.sh'
+            script.write_text(f'source "{ROOT / "x-ui-latest.sh"}"\n'
+                              'UI_LANG=$LANGUAGE; select_warp_ru; printf "RESULT:%s\\n" "$INSTALL_WARP_RU"\n')
+            for language, question, note, hint, default in (
+                ('en', 'Route Russian websites through Cloudflare WARP to hide your VPS IP?',
+                 'Russian websites will see a Cloudflare IP', '[y/N]', 'n'),
+                ('ru', 'Скрыть IP вашего VPS от российских сайтов через Cloudflare WARP?',
+                 'Российские сайты будут видеть IP Cloudflare', '[Y/n]', 'y'),
+            ):
+                with self.subTest(language=language):
+                    code, text = tty_run(script, b'\n', env={
+                        'TERM': 'xterm', 'NO_COLOR': None, 'LANGUAGE': language})
+                    self.assertEqual(code, 0, text)
+                    self.assertIn(f'\x1b[1m{question}\x1b[0m\r\n\x1b[38;5;208m  {note}', text)
+                    self.assertIn(f'\x1b[0m\r\n{hint}: RESULT:{default}', text)
 
     def test_russian_destructive_confirmation_still_requires_exact_yes(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -223,6 +242,7 @@ printf permitted > "$MARKER"
                     code,text=tty_run(script,answer,env={'MARKER':str(marker)})
                     self.assertEqual(code,0 if answer==b'YES\n' else 1,text)
                     self.assertEqual(marker.exists(),answer==b'YES\n')
+                    self.assertIn('за пределы VPS.\r\n> ', text)
                     for warning in ('полная переустановка, а не обновление','Обновление ОС нельзя откатить','введите YES'):
                         self.assertIn(warning,' '.join(text.split()))
 

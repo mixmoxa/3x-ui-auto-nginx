@@ -57,6 +57,18 @@ ui_wrap() {
     done <<< "${2%$'\n'}"
 }
 
+# ui_install_question INPUT QUESTION [ANSI-CODE EXPLANATION]...
+ui_install_question() {
+    local input=$1
+    ui_wrap '1' "$2" 76
+    shift 2
+    while (( $# )); do
+        ui_wrap "$1" "$2" 76
+        shift 2
+    done
+    printf '%s ' "$input"
+}
+
 ui_rule() {
     printf '%s\n' '------------------------------------------------------------'
 }
@@ -417,6 +429,7 @@ detect_existing_installation() {
 
 confirm_destructive_reinstall() {
     local answer category vision_hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision
+    local -a vision_warning=()
     VISION_CERTIFICATE_TO_DELETE=''
     detect_existing_installation
     (( ${#EXISTING_INSTALL_CATEGORIES[@]} )) || return 0
@@ -426,12 +439,12 @@ confirm_destructive_reinstall() {
     for category in "${EXISTING_INSTALL_CATEGORIES[@]}"; do msg_warn " [!] $category"; done
     if [[ -e $vision_hook || -L $vision_hook ]] &&
        VISION_CERTIFICATE_TO_DELETE=$(vision_certificate_for_reinstall "$vision_hook"); then
-        ui_wrap '1;33' "$(ui_text ' [!] The Vision certificate for %s will be deleted. It can only be restored from a Backup made before reinstalling.' ' [!] Сертификат Vision для %s будет удалён. Вернуть его можно только из Backup, сделанного до переустановки.' "$VISION_CERTIFICATE_TO_DELETE")" 76
+        vision_warning=('1;33' "$(ui_text ' [!] The Vision certificate for %s will be deleted. It can only be restored from a Backup made before reinstalling.' ' [!] Сертификат Vision для %s будет удалён. Вернуть его можно только из Backup, сделанного до переустановки.' "$VISION_CERTIFICATE_TO_DELETE")")
     fi
     printf '\n'
-    ui_wrap '' "$(ui_text 'Type YES to remove the existing deployment and continue: ' 'Чтобы удалить существующую установку и продолжить, введите YES: ')" 76
-    ui_wrap '38;5;208' "$(ui_text '  Continuing will run a full OS dist-upgrade (services may restart),\n  remove data in project-managed installation paths and replace nginx configuration.\n  Use a clean dedicated VPS; this is a full rebuild, not an update.\n  The OS upgrade cannot be rolled back. Copy a backup off-host first.' '  Продолжение запустит полный dist-upgrade ОС (службы могут перезапуститься),\n  удалит данные в управляемых проектом каталогах и заменит конфигурацию nginx.\n  Используйте чистый выделенный VPS: это полная переустановка, а не обновление.\n  Обновление ОС нельзя откатить. Сначала скопируйте Backup за пределы VPS.')" 76
-    printf '  > '
+    ui_install_question '>' "$(ui_text 'Type YES to remove the existing deployment and continue:' 'Чтобы удалить существующую установку и продолжить, введите YES:')" \
+        "${vision_warning[@]}" \
+        '38;5;208' "$(ui_text '  Continuing will run a full OS dist-upgrade (services may restart),\n  remove data in project-managed installation paths and replace nginx configuration.\n  Use a clean dedicated VPS; this is a full rebuild, not an update.\n  The OS upgrade cannot be rolled back. Copy a backup off-host first.' '  Продолжение запустит полный dist-upgrade ОС (службы могут перезапуститься),\n  удалит данные в управляемых проектом каталогах и заменит конфигурацию nginx.\n  Используйте чистый выделенный VPS: это полная переустановка, а не обновление.\n  Обновление ОС нельзя откатить. Сначала скопируйте Backup за пределы VPS.')"
     if ! IFS= read -r answer || [[ "$answer" != YES ]]; then
         msg_err "$(ui_text 'Cancelled. Existing deployment was not changed.' 'Отменено. Существующая установка не изменена.')"
         return 1
@@ -503,7 +516,7 @@ validate_domains() {
     local LC_ALL=C
     while true; do
         [[ -n "$domain" ]] && break
-        ui_text 'Enter the domain for your 3X-UI panel: ' 'Введите домен панели 3X-UI: '
+        ui_install_question '>' "$(ui_text 'Enter the domain for your 3X-UI panel:' 'Введите домен панели 3X-UI:')"
         IFS= read -r domain || { msg_err "$(ui_text 'Panel domain is required.' 'Необходимо указать домен панели.')"; return 1; }
     done
     valid_hostname "$domain" || { msg_err "$(ui_text 'Invalid panel hostname: use ASCII DNS labels (punycode supported), without URL, whitespace or terminal dot.' 'Некорректный домен панели: используйте DNS-имя в ASCII (punycode поддерживается), без URL, пробелов и точки в конце.')"; return 1; }
@@ -514,7 +527,7 @@ validate_domains() {
 
     while true; do
         [[ -n "$reality_domain" ]] && break
-        ui_text 'Enter the domain for VLESS REALITY: ' 'Введите домен VLESS REALITY: '
+        ui_install_question '>' "$(ui_text 'Enter the domain for VLESS REALITY:' 'Введите домен VLESS REALITY:')"
         IFS= read -r reality_domain || { msg_err "$(ui_text 'REALITY domain is required.' 'Необходимо указать домен REALITY.')"; return 1; }
     done
     valid_hostname "$reality_domain" || { msg_err "$(ui_text 'Invalid REALITY hostname: use ASCII DNS labels (punycode supported), without URL, whitespace or terminal dot.' 'Некорректный домен REALITY: используйте DNS-имя в ASCII (punycode поддерживается), без URL, пробелов и точки в конце.')"; return 1; }
@@ -2468,7 +2481,7 @@ select_amneziawg() {
     INSTALL_AWG=n
     local answer
     while true; do
-        ui_text 'Set up an additional AmneziaWG connection? [y/N]: ' 'Настроить дополнительное подключение AmneziaWG? [y/N]: '
+        ui_install_question '[y/N]:' "$(ui_text 'Set up an additional AmneziaWG connection?' 'Настроить дополнительное подключение AmneziaWG?')"
         IFS= read -r answer || return 0
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -2482,7 +2495,7 @@ select_xhttp_cdn() {
     INSTALL_XHTTP_CDN=n
     local answer
     while true; do
-        ui_text 'Add an additional CDN-compatible XHTTP connection? [y/N]: ' 'Добавить дополнительное подключение XHTTP, совместимое с CDN? [y/N]: '
+        ui_install_question '[y/N]:' "$(ui_text 'Add an additional CDN-compatible XHTTP connection?' 'Добавить дополнительное подключение XHTTP, совместимое с CDN?')"
         IFS= read -r answer || return 0
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -2503,9 +2516,8 @@ select_warp_ru() {
         return 0
     fi
     while true; do
-        ui_wrap '' "$(ui_text 'Route Russian websites through Cloudflare WARP to hide your VPS IP? [y/N]: ' 'Скрыть IP вашего VPS от российских сайтов через Cloudflare WARP? [Y/n]: ')" 76
-        ui_wrap '38;5;208' "$(ui_text '  Russian websites will see a Cloudflare IP instead of your VPS IP. This is not a Russian IP: some sites may be slower or may not open. It only affects traffic that goes through the VPS; if your app opens Russian sites directly, it will not help. The installer registers a device with Cloudflare and accepts their terms of service. If this fails, installation continues without it and the final report says so.' '  Российские сайты будут видеть IP Cloudflare, а не IP вашего VPS. Это не российский IP: часть сайтов может открываться медленнее или не открываться. Работает только для трафика, который идёт через VPS: если приложение само открывает российские сайты напрямую, это не поможет. Установщик зарегистрирует устройство в Cloudflare и примет их условия использования. Если не получится, установка продолжится без этого, об этом будет написано в итоговом отчёте.')" 76
-        printf '  > '
+        ui_install_question "$(ui_text '[y/N]:' '[Y/n]:')" "$(ui_text 'Route Russian websites through Cloudflare WARP to hide your VPS IP?' 'Скрыть IP вашего VPS от российских сайтов через Cloudflare WARP?')" \
+            '38;5;208' "$(ui_text '  Russian websites will see a Cloudflare IP instead of your VPS IP. This is not a Russian IP: some sites may be slower or may not open. It only affects traffic that goes through the VPS; if your app opens Russian sites directly, it will not help. The installer registers a device with Cloudflare and accepts their terms of service. If this fails, installation continues without it and the final report says so.' '  Российские сайты будут видеть IP Cloudflare, а не IP вашего VPS. Это не российский IP: часть сайтов может открываться медленнее или не открываться. Работает только для трафика, который идёт через VPS: если приложение само открывает российские сайты напрямую, это не поможет. Установщик зарегистрирует устройство в Cloudflare и примет их условия использования. Если не получится, установка продолжится без этого, об этом будет написано в итоговом отчёте.')"
         IFS= read -r answer || return 0
         case "$answer" in
             '') [[ ${UI_LANG:-en} != ru ]] || INSTALL_WARP_RU=y; return 0 ;;
@@ -2731,7 +2743,7 @@ select_adguard() {
     INSTALL_AGH=n
     local answer
     while true; do
-        ui_text 'Install and configure AdGuard Home? [y/N]: ' 'Установить и настроить AdGuard Home? [y/N]: '
+        ui_install_question '[y/N]:' "$(ui_text 'Install and configure AdGuard Home?' 'Установить и настроить AdGuard Home?')"
         if ! IFS= read -r answer; then return 0; fi
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -2750,10 +2762,9 @@ select_dot() {
     local answer
     printf '\n'
     while true; do
-        ui_wrap '' "$(ui_text 'Enable DNS-over-TLS (DoT) for your devices? [y/N]: ' 'Включить DNS-over-TLS (DoT) для ваших устройств? [y/N]: ')" 76
-        ui_wrap '38;5;208' "$(ui_text '  DNS-over-TLS lets Android Private DNS use your AdGuard Home. It opens port 853 to the whole internet: anyone who knows your server address can send DNS queries to it. The number of simultaneous connections from one IP address is limited. In AdGuard Home all DoT queries are shown as 127.0.0.1, so ClientID and per-device rules do not work for DoT. If unsure, answer N.' \
-        '  DNS-over-TLS нужен, чтобы «Частный DNS» на Android работал через ваш AdGuard Home. Он открывает порт 853 для всего интернета: любой, кто знает адрес вашего сервера, сможет отправлять на него DNS-запросы. Число одновременных соединений с одного IP-адреса ограничено. В AdGuard Home все запросы по DoT видны как 127.0.0.1, поэтому ClientID и правила для отдельных устройств для DoT не работают. Если не уверены, ответьте N.')" 76
-        printf '  > '
+        ui_install_question '[y/N]:' "$(ui_text 'Enable DNS-over-TLS (DoT) for your devices?' 'Включить DNS-over-TLS (DoT) для ваших устройств?')" \
+            '38;5;208' "$(ui_text '  DNS-over-TLS lets Android Private DNS use your AdGuard Home. It opens port 853 to the whole internet: anyone who knows your server address can send DNS queries to it. The number of simultaneous connections from one IP address is limited. In AdGuard Home all DoT queries are shown as 127.0.0.1, so ClientID and per-device rules do not work for DoT. If unsure, answer N.' \
+                '  DNS-over-TLS нужен, чтобы «Частный DNS» на Android работал через ваш AdGuard Home. Он открывает порт 853 для всего интернета: любой, кто знает адрес вашего сервера, сможет отправлять на него DNS-запросы. Число одновременных соединений с одного IP-адреса ограничено. В AdGuard Home все запросы по DoT видны как 127.0.0.1, поэтому ClientID и правила для отдельных устройств для DoT не работают. Если не уверены, ответьте N.')"
         IFS= read -r answer || return 0
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -3229,7 +3240,7 @@ show_results() {
 select_security() {
     local answer
     INSTALL_SECURITY=n
-    ui_text 'Enhance VPS security? [Y/n]: ' 'Усилить безопасность VPS? [Y/n]: '
+    ui_install_question '[Y/n]:' "$(ui_text 'Enhance VPS security?' 'Усилить безопасность VPS?')"
     while IFS= read -r answer; do
         case "$answer" in
             ''|y|Y) INSTALL_SECURITY=y; return 0 ;;
@@ -3246,9 +3257,8 @@ select_additional_connections() {
     ui_wrap '' "$(ui_text 'By default, VLESS Reality, VLESS XHTTP and Hysteria2 will be installed and configured.\n' 'По умолчанию будут установлены и настроены: VLESS Reality, VLESS XHTTP и Hysteria2.\n')" 76
     ui_wrap '' "$(ui_text 'Additional connections: VLESS WebSocket, Trojan gRPC, VLESS TCP/TLS (XTLS Vision), AmneziaWG, XHTTP for CDN.\n' 'Дополнительные подключения: VLESS WebSocket, Trojan gRPC, VLESS TCP/TLS (XTLS Vision), AmneziaWG, XHTTP для CDN.\n')" 76
     while true; do
-        ui_wrap '' "$(ui_text 'Set up additional connections? [y/N]: ' 'Настроить дополнительные подключения? [y/N]: ')" 76
-        ui_wrap '38;5;208' "$(ui_text '  Warning: all optional connections listed above may not work everywhere, it depends on your country and provider. Use at your own risk. If unsure, answer N.' '  Внимание: все перечисленные выше дополнительные подключения могут работать не везде, это зависит от страны и провайдера. Используйте на свой риск. Если не уверены, ответьте N.')" 76
-        printf '  > '
+        ui_install_question '[y/N]:' "$(ui_text 'Set up additional connections?' 'Настроить дополнительные подключения?')" \
+            '38;5;208' "$(ui_text '  Warning: all optional connections listed above may not work everywhere, it depends on your country and provider. Use at your own risk. If unsure, answer N.' '  Внимание: все перечисленные выше дополнительные подключения могут работать не везде, это зависит от страны и провайдера. Используйте на свой риск. Если не уверены, ответьте N.')"
         IFS= read -r answer || return 0
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -3263,7 +3273,7 @@ select_ws_grpc() {
     INSTALL_WS_GRPC=n
     local answer
     while true; do
-        ui_text 'Set up the outdated VLESS WebSocket and Trojan gRPC connections? [y/N]: ' 'Настроить устаревшие подключения VLESS WebSocket и Trojan gRPC? [y/N]: '
+        ui_install_question '[y/N]:' "$(ui_text 'Set up the outdated VLESS WebSocket and Trojan gRPC connections?' 'Настроить устаревшие подключения VLESS WebSocket и Trojan gRPC?')"
         IFS= read -r answer || return 0
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -3277,8 +3287,8 @@ select_vision() {
     local LC_ALL=C answer
     INSTALL_VISION=n
     while true; do
-        ui_wrap '' "$(ui_text 'Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]: ' 'Настроить дополнительное подключение VLESS TCP/TLS (XTLS Vision)? Нужен отдельный домен. [y/N]: ')" 76
-        printf '  > '
+        ui_install_question '[y/N]:' "$(ui_text 'Set up an additional VLESS TCP/TLS (XTLS Vision) connection?' 'Настроить дополнительное подключение VLESS TCP/TLS (XTLS Vision)?')" \
+            '' "$(ui_text '(requires a separate domain)' 'Нужен отдельный домен.')"
         IFS= read -r answer || return 0
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -3286,8 +3296,8 @@ select_vision() {
             *) ui_text 'Please enter y or n.\n' 'Введите y или n.\n' ;;
         esac
     done
-    ui_wrap '' "$(ui_text 'Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains): ' 'Введите домен VLESS TLS Vision (отличный от доменов панели и REALITY): ')" 76
-    printf '  > '
+    ui_install_question '>' "$(ui_text 'Enter the domain for VLESS TLS Vision:' 'Введите домен VLESS TLS Vision:')" \
+        '' "$(ui_text '(must differ from the panel and REALITY domains)' '(отличный от доменов панели и REALITY)')"
     IFS= read -r vision_domain || return 1
     vision_domain=${vision_domain,,}
     [[ -n "$vision_domain" ]] || {
@@ -3301,8 +3311,7 @@ select_client() {
     local answer
     CREATE_CLIENT=n
     while true; do
-        ui_wrap '' "$(ui_text 'Create a client in 3X-UI and display a subscription link after installation? [Y/n]: ' 'Создать клиента в 3X-UI и показать ссылку подписки после установки? [Y/n]: ')" 76
-        printf '  > '
+        ui_install_question '[Y/n]:' "$(ui_text 'Create a client in 3X-UI and display a subscription link after installation?' 'Создать клиента в 3X-UI и показать ссылку подписки после установки?')"
         IFS= read -r answer || return 0
         case "$answer" in
             ''|y|Y) CREATE_CLIENT=y; return 0 ;;
@@ -3375,7 +3384,8 @@ preflight_vision_artifacts() {
           -e "/etc/letsencrypt/renewal/$vision_domain.conf" || -L "/etc/letsencrypt/renewal/$vision_domain.conf" ]]; then
         [[ "$VISION_PREVIOUS_DOMAIN" == "$vision_domain" && "$nginx_domain" == "$vision_domain" &&
            -f /etc/nginx/sites-available/vision.conf && -f /etc/nginx/sites-available/vision-acme.conf ]] || {
-            msg_err 'Existing Vision lineage has no complete verified project ownership; deployment preserved.'; return 1;
+            msg_err "$(ui_text 'For Vision domain %s, an existing certificate or configuration on this server cannot be safely used by the installer. Your data is unchanged. Choose a different Vision domain or, if you no longer need the certificate, delete it: sudo certbot delete --cert-name %s --non-interactive' \
+                'Для домена Vision %s на сервере уже есть сертификат или конфигурация, которые установщик не может безопасно использовать. Данные не изменены. Выберите другой домен Vision или, если сертификат вам не нужен, удалите его: sudo certbot delete --cert-name %s --non-interactive' "$vision_domain" "$vision_domain")"; return 1;
         }
         check_webroot_lineage "$vision_domain" || return 1
         VISION_OWNED_LINEAGE=$vision_domain
