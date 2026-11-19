@@ -620,7 +620,7 @@ main
                 if not enabled:
                     self.assertEqual(main.read_bytes(), previous[0])
                     self.assertFalse(directory.exists())
-                    self.assertNotIn('DNS-over-TLS (Android', result.stdout)
+                    self.assertNotIn('DNS-over-TLS:', result.stdout)
                     continue
                 self.assertEqual(fragment.stat().st_mode & 0o777, 0o644)
                 self.assertEqual(directory.stat().st_mode & 0o777, 0o755)
@@ -637,9 +637,9 @@ main
                     '    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;\n'
                     '    ssl_protocols TLSv1.2 TLSv1.3;\n    limit_conn dot_conn 50;\n'
                     f'    proxy_pass 127.0.0.1:{dns};\n}}\n')
-                summary = ('DNS-over-TLS (Android «Частный DNS»): example.com, порт 853' if ipv6 else
-                           'DNS-over-TLS (Android Private DNS): example.com, port 853')
-                self.assertIn(summary, result.stdout)
+                summary = ('DNS-over-TLS: example.com, порт 853 (Android «Частный DNS»)' if ipv6 else
+                           'DNS-over-TLS: example.com, port 853 (Android Private DNS)')
+                self.assertIn(summary, ' '.join(result.stdout.split()))
                 fragment.unlink()
                 directory.rmdir()
 
@@ -665,7 +665,7 @@ main
                 self.assertIn('UFW could not allow 853/tcp for DNS-over-TLS.', result.stdout + result.stderr)
                 self.assert_core_credentials(result)
                 self.assert_no_agh_credentials_or_success(result)
-                self.assertNotIn('DNS-over-TLS (Android', result.stdout)
+                self.assertNotIn('DNS-over-TLS:', result.stdout)
 
     def test_agh_listeners_requires_tcp_dns_only_with_dot_file(self):
         self.assertEqual(self.run_shell(('cleanup_adguard', 'adguard_stage', 'install_adguard'),
@@ -683,8 +683,8 @@ main
     def assert_core_credentials(self, result):
         self.assertIn('3X-UI Auto Nginx — Installation Result', result.stdout)
         self.assertIn('https://example.com/panel/', result.stdout)
-        self.assertIn('Username: panel-user', result.stdout)
-        self.assertEqual(result.stdout.count('Password: generated-panel-secret'), 1)
+        self.assertRegex(result.stdout, r'Username: +panel-user')
+        self.assertEqual(len(re.findall(r'Password: +generated-panel-secret', result.stdout)), 1)
         self.assertIn('Save these credentials', result.stdout)
         self.assertIn('core-health 1', self.calls.read_text())
 
@@ -692,10 +692,10 @@ main
         r = self.final_result(True)
         self.assertEqual(r.returncode, 0, r.stdout+r.stderr)
         self.assert_core_credentials(r)
-        self.assertIn('[✓] AdGuard Home           Running (v0.107.80)', r.stdout)
-        self.assertIn('[✓] DNS-over-HTTPS         Ready', r.stdout)
-        self.assertIn('AdGuard Home:\n https://example.com/adg-'+'A'*12+'/', r.stdout)
-        self.assertEqual(r.stdout.count('Password: '+'A'*32), 1)
+        self.assertRegex(r.stdout, r'\[✓\] AdGuard Home +Running \(v0\.107\.80\)')
+        self.assertRegex(r.stdout, r'\[✓\] DNS-over-HTTPS +Ready')
+        self.assertRegex(r.stdout, r'AdGuard Home: +https://example\.com/adg-'+'A'*12+'/')
+        self.assertEqual(len(re.findall(r'Password: '+' +'+'A'*32, r.stdout)), 1)
         self.assertNotIn('A'*32, self.calls.read_text())
 
     def test_final_result_opt_out_keeps_only_core_credentials(self):
@@ -703,7 +703,7 @@ main
         self.assertEqual(r.returncode, 0, r.stdout+r.stderr)
         self.assert_core_credentials(r)
         self.assertNotIn('AdGuard Home:', r.stdout)
-        self.assertNotIn('Login: admin', r.stdout)
+        self.assertNotRegex(r.stdout, r'Login: +admin')
         self.assertNotIn('A'*32, r.stdout)
         self.assertNotIn('control/login', self.calls.read_text())
 
@@ -711,10 +711,10 @@ main
         r = self.final_result(True, 'cookie-unusable')
         self.assertEqual(r.returncode, 1, r.stdout+r.stderr)
         self.assert_core_credentials(r)
-        self.assertIn('[✓] 3X-UI / Xray           Running', r.stdout)
-        self.assertIn('[!] AdGuard Home           Failed — rolled back', r.stdout)
-        self.assertIn('[!] DNS-over-HTTPS         Not installed', r.stdout)
-        self.assertIn('The core 3X-UI stack remains operational.', r.stdout)
+        self.assertRegex(r.stdout, r'\[✓\] 3X-UI / Xray +Running')
+        self.assertRegex(r.stdout, r'\[!\] AdGuard Home +Failed — rolled back')
+        self.assertRegex(r.stdout, r'\[!\] DNS-over-HTTPS +Not installed')
+        self.assertIn('The core 3X-UI stack remains operational.', ' '.join(r.stdout.split()))
         self.assert_no_agh_credentials_or_success(r)
         self.assertIn('core-health 2', self.calls.read_text())
         self.assertFalse((self.root/'opt/AdGuardHome').exists())
@@ -724,7 +724,7 @@ main
         self.assertEqual(r.returncode, 1, r.stdout+r.stderr)
         self.assert_core_credentials(r)
         self.assertIn('Post-rollback core health could not be verified.', r.stdout)
-        self.assertIn('[!] AdGuard Home           Failed — rollback not verified', r.stdout)
+        self.assertRegex(r.stdout, r'\[!\] AdGuard Home +Failed — rollback not verified')
         for label in ('3X-UI / Xray', 'nginx', 'XHTTP', 'Diagnostics', 'Certificate renewal'):
             line = next(l for l in r.stdout.splitlines() if label in l and '[!]' in l)
             self.assertIn('Post-rollback health not verified', line)
@@ -733,8 +733,8 @@ main
         self.assertIn('core-health 2', self.calls.read_text())
 
     def assert_no_agh_credentials_or_success(self, result):
-        self.assertNotIn('AdGuard Home: https://', result.stdout)
-        self.assertNotIn('Login: admin', result.stdout)
+        self.assertNotRegex(result.stdout, r'AdGuard Home: +https://')
+        self.assertNotRegex(result.stdout, r'Login: +admin')
         self.assertNotIn('A'*32, result.stdout + result.stderr + self.calls.read_text())
         self.assertNotIn('[✓] AdGuard Home', result.stdout)
         self.assertNotIn('[✓] DNS-over-HTTPS', result.stdout)

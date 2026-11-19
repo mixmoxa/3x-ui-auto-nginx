@@ -238,7 +238,7 @@ def adguard_state(rewrite=None):
     """Private API assertions; never publish AGH credentials or configuration."""
     metadata=json.loads(Path('/opt/AdGuardHome/managed.json').read_text())
     log=re.sub(r'\x1b\[[0-9;]*m','',(ROOT/'installer.raw.log').read_text())
-    password=re.search(r'Login: admin\n Password: (\S+)',log)[1]
+    password=re.search(r'^ +Login: +admin\n +Password: +(\S+)$',log,re.M)[1]
     headers={'Authorization':'Basic '+base64.b64encode(('admin:'+password).encode()).decode(),
              'Content-Type':'application/json'}
     def request(path,body=None):
@@ -339,7 +339,7 @@ def installed(cold=False):
         assert run(*args,'-o','/dev/null','-w','%{http_code}','https://'+domain+'/absent-cover-page') == '404'
     checks['independent_static_cover_sites']=True
     log=re.sub(r'\x1b\[[0-9;]*m','',(root/'installer.raw.log').read_text())
-    username=re.search(r'^ Username: (\S+)$',log,re.M)[1];password=re.search(r'^ Password: (\S+)$',log,re.M)[1]
+    username=re.search(r'^ +Username: +(\S+)$',log,re.M)[1];password=re.search(r'^ +Password: +(\S+)$',log,re.M)[1]
     with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:
         settings=dict(db.execute('SELECT key,value FROM settings'))
     with tempfile.TemporaryDirectory(prefix='cold-session-') as directory:
@@ -403,7 +403,7 @@ def core_flags():
 def core_enable(enabled,panel_domain='panel.example.test',names=('reality','hysteria2','xhttp')):
     """Only the official API changes flags, including after an actual cold boot."""
     log=re.sub(r'\x1b\[[0-9;]*m','',(ROOT/'installer.raw.log').read_text())
-    username=re.search(r'^ Username: (\S+)$',log,re.M)[1];password=re.search(r'^ Password: (\S+)$',log,re.M)[1]
+    username=re.search(r'^ +Username: +(\S+)$',log,re.M)[1];password=re.search(r'^ +Password: +(\S+)$',log,re.M)[1]
     roles=json.loads(Path('/etc/x-ui/auto-nginx-managed.json').read_text())['inbound_roles']
     with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:
         settings=dict(db.execute('SELECT key,value FROM settings'))
@@ -487,7 +487,7 @@ def transports(vision=True, panel_domain='panel.example.test', positive_only=Fal
     subprocess.run(rule,check=True,timeout=10)
     try:
         log=re.sub(r'\x1b\[[0-9;]*m','',(root/'installer.raw.log').read_text())
-        username=re.search(r'^ Username: (\S+)$',log,re.M)[1];password=re.search(r'^ Password: (\S+)$',log,re.M)[1]
+        username=re.search(r'^ +Username: +(\S+)$',log,re.M)[1];password=re.search(r'^ +Password: +(\S+)$',log,re.M)[1]
         with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:settings=dict(db.execute('SELECT key,value FROM settings'))
         with tempfile.TemporaryDirectory(prefix='installed-consumer-') as directory:
             directory=Path(directory)
@@ -962,7 +962,7 @@ def native_agh_update():
     # The actual API is reached only through the managed nginx admin prefix.
     state=json.loads(metadata.read_text())
     log=re.sub(r'\x1b\[[0-9;]*m','',(ROOT/'installer.raw.log').read_text())
-    password=re.search(r'Login: admin\n Password: (\S+)',log)[1]
+    password=re.search(r'^ +Login: +admin\n +Password: +(\S+)$',log,re.M)[1]
     headers={'Authorization':'Basic '+base64.b64encode(('admin:'+password).encode()).decode(),'Content-Type':'application/json'}
     def request(path,body=None):
         req=urllib.request.Request('https://panel.example.test/'+state['path']+'/control/'+path,

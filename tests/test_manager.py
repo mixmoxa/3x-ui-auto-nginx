@@ -52,6 +52,15 @@ AUTHOR_CREDIT = '© xPROMSx · github.com/xPROMSx/3x-ui-auto-nginx'
 
 
 class Manager(unittest.TestCase):
+    def test_installer_wrap_keeps_words_whole(self):
+        words = ('сервера ' * 8 + 'обратите путь-с-дефисами ' + '/' + 'x' * 80).split()
+        result = subprocess.run(
+            ['bash', '-c', 'source "$1"; ui_wrap "38;5;208" "  $2" 76',
+             'fixture', str(ROOT/'x-ui-latest.sh'), ' '.join(words)],
+            env={**os.environ, 'LC_ALL': 'C', 'TERM': 'xterm'}, capture_output=True, text=True, check=True)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines, ['  ' + ' '.join(words[:9]), '  ' + words[9], '  ' + words[10]])
+
     def test_server_details_requires_root_in_both_languages(self):
         for language, expected in (('1', 'Root required'), ('2', 'Нужен root')):
             with self.subTest(language=language):
@@ -192,7 +201,8 @@ printf 'FLAGS:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s\n' "$INSTALL_SECURITY" "$INSTALL_WS_
                         self.assertNotIn(prompt, text)
                         continue
                     self.assertLess(text.index('Установить и настроить AdGuard Home'), text.index(prompt))
-                    self.assertLess(text.index('Он открывает порт 853'), text.index(prompt))
+                    plain = ' '.join(re.sub(r'\x1b\[[0-9;]*m', '', text).split())
+                    self.assertLess(plain.index(prompt), plain.index('Он открывает порт 853'))
                     self.assertLess(text.rindex(prompt), text.index(client))
                     self.assertIn('\x1b[38;5;208m', text)
                     if b'bad' in answers:
@@ -214,7 +224,7 @@ printf permitted > "$MARKER"
                     self.assertEqual(code,0 if answer==b'YES\n' else 1,text)
                     self.assertEqual(marker.exists(),answer==b'YES\n')
                     for warning in ('полная переустановка, а не обновление','Обновление ОС нельзя откатить','введите YES'):
-                        self.assertIn(warning,text)
+                        self.assertIn(warning,' '.join(text.split()))
 
     def test_russian_summary_keeps_credentials_urls_protocols_and_states(self):
         payload={'url':'https://panel.example/subscription/fixture%25id','protocols':['REALITY','XHTTP','Hysteria2','Vision']}
@@ -234,12 +244,14 @@ show_results
         self.assertEqual(result.returncode,0,result.stderr)
         for phrase in ('Результат установки','Часовой пояс','Работает','Готов','Логин: fixture-user',
                        'Подписка:','Сохраните эти учётные данные','configured','перезагрузка 04:38'):
-            self.assertIn(phrase,result.stdout)
+            self.assertIn(phrase,' '.join(result.stdout.split()))
+        self.assertNotIn('\x1b', result.stdout)
         for value in (password,payload['url'],'https://panel.example/fixture/',
                       'https://panel.example/fixture/diag','https://panel.example/adg-fixture/',
                       'https://panel.example/dns-query',' / '.join(payload['protocols'])):
             self.assertTrue(value in result.stdout,'A displayed fixture payload changed')
         self.assertEqual(result.stdout.count(password),1)
+        self.assertRegex(result.stdout, r'(?m)^ +Флаги подписки: +REALITY / XHTTP / Hysteria2 / Vision$')
         self.assertNotIn('\\n AmneziaWG:',result.stdout)
 
     def test_successful_installation_ends_at_summary_without_another_menu(self):
@@ -430,8 +442,8 @@ show_results "$RESULT_FIXTURE"
                     capture_output=True,text=True,env={**os.environ,'RESULT_FIXTURE':str(status),
                         'CORE_FIXTURE':'failed_unverified' if status else 'configured'})
                 self.assertEqual(result.returncode,0,result.stderr)
-                for title in (('COMPONENTS','PANEL ACCESS','SUBSCRIPTION AND SERVICES','OTHER INFORMATION') if language=='en' else
-                              ('КОМПОНЕНТЫ','ДОСТУП К ПАНЕЛИ','ПОДПИСКА И ДОПОЛНИТЕЛЬНЫЕ СЕРВИСЫ','ПРОЧАЯ ИНФОРМАЦИЯ')):
+                for title in (('PANEL ACCESS','CONNECTIONS','COMPONENTS','SECURITY','OTHER INFORMATION') if language=='en' else
+                              ('ДОСТУП К ПАНЕЛИ','ПОДКЛЮЧЕНИЯ','КОМПОНЕНТЫ','БЕЗОПАСНОСТЬ','ПРОЧАЯ ИНФОРМАЦИЯ')):
                     self.assertIn(title,result.stdout)
                 self.assertNotIn('\\n AmneziaWG:',result.stdout)
                 self.assertEqual(result.stdout.count('fixture%25\\n$(literal)'),1)
@@ -879,6 +891,12 @@ entrypoint
                 for prompt in ('Номер архива или абсолютный путь','Автоматическая перезагрузка разрешена в 04:38',
                                'Fail2ban для SSH? [y/N]','Включить UFW с защитой доступа по SSH','введите YES'):
                     self.assertIn(prompt,text)
+                security, ufw = ('\r\n  '+name+'\r\n\r\n' for name in ('Security', 'UFW'))
+                self.assertLess(text.index(security), text.index('Fail2ban для SSH? [y/N]'))
+                self.assertLess(text.index('Fail2ban для SSH? [y/N]'), text.index(ufw))
+                self.assertLess(text.index(ufw), text.index('Включить UFW с защитой доступа по SSH'))
+                self.assertIn('Yes: на Ubuntu 24.04/26.04 попробуем включить UFW', text)
+                self.assertIn('No: добавим правила для приложений и сохраним состояние UFW.', text)
                 self.assertNotIn('{"format_version":3}',text);self.assertIn('Формат: Backup v3',text)
                 self.assertIn(f'{YES_RU} {FRAME} {YES_RU_PROMPT}',' '.join(text.replace(str(root),'').split()))  # the fixture relocates paths into its root
                 self.assertEqual(self.f.path('/etc/x-ui/x-ui.db').read_bytes(),original)
@@ -1084,9 +1102,12 @@ manager_menu
                 retained=list(self.f.path('/var/backups/x-ui').glob('.rollback-*'))
                 self.assertEqual(bool(retained),scenario=='unverified')
                 if scenario=='pre-mutation':
+                    self.assertIn('Restore stopped before replacing project data. No recovery directory was created.', text)
                     self.assertFalse(any(c[:2]==['systemctl','stop'] for c in self.f.commands()))
                 elif scenario=='verified':self.assertIn('Previous managed state/service states restored and checked',text)
-                else:self.assertIn('Automatic rollback could not be verified',text)
+                else:
+                    self.assertIn('Automatic rollback could not be verified',text)
+                    self.assertIn(f'Private recovery directory: {retained[0]}',text)
 
     def test_inspect_machine_result_marker_and_historical_roundtrip(self):
         import hashlib,json

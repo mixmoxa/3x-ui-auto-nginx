@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -109,7 +110,11 @@ class Warp(unittest.TestCase):
                                     env={**os.environ, 'PANEL_VERSION': 'v0.0.0', 'UI_LANG': lang})
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('RESULT:n:keep', result.stdout)
-            self.assertEqual(len(result.stdout.splitlines()), 2)
+            notice, marker = result.stdout.strip().rsplit('\n', 1)
+            expected = ('Cloudflare WARP: шаг пропущен, он доступен только с проверенной версией 3X-UI.'
+                        if lang == 'ru' else 'Cloudflare WARP: skipped; this step is available only with the verified 3X-UI version.')
+            self.assertEqual(' '.join(notice.split()), expected)
+            self.assertEqual(marker, 'RESULT:n:keep')
             self.assertNotIn('[y/N]', result.stdout); self.assertNotIn('[Y/n]', result.stdout)
         text = text[:text.index('\nselect_warp_ru;')]+'\nselect_warp_ru; echo RESULT:$INSTALL_WARP_RU'
         for version in (baseline()['version'], baseline()['version'].removeprefix('v')):
@@ -367,17 +372,18 @@ timedatectl() { printf UTC; }
                          'config_username':'fixture-user','config_password':'fixture-password'})
                 self.assertEqual(result.returncode,0,result.stderr)
                 rows=[s for s in result.stdout.splitlines() if 'Cloudflare WARP' in s]
+                text = ' '.join(result.stdout.split())
                 self.assertEqual(len(rows),0 if state=='not_requested' else 1)
-                if state=='configured': self.assertIn('[✓]', rows[0]); self.assertIn('3 ',rows[0])
+                if state=='configured': self.assertIn('[✓]', rows[0]); self.assertRegex(text, r'Cloudflare WARP [^(]+\(3 ')
                 if state.startswith('failed'):
                     self.assertIn('[!]',rows[0]); self.assertIn('Outbounds',result.stdout)
                 if state in ('failed','failed_rolled_back'):
                     hint=(' WARP не настроен: российские сайты по-прежнему видят IP вашего VPS. Если он нужен, добавьте WARP в панели 3X-UI (Xray, Outbounds, WARP) и направьте на него нужные сайты в разделе Routing.'
                           if language=='ru' else ' WARP is not configured: Russian websites still see your VPS IP. If you need it, add WARP in the 3X-UI panel (Xray, Outbounds, WARP) and send the sites you need to it in Routing.')
-                    self.assertIn(hint,result.stdout)
+                    self.assertIn(hint.strip(),text)
                     self.assertNotIn('Продолжите настройку' if language=='ru' else 'Continue',result.stdout)
                 if state=='failed_unverified':
-                    self.assertIn('WARP - RU3',result.stdout)
+                    self.assertIn('WARP - RU3',text)
                     self.assertIn('Сохранить' if language=='ru' else 'Save',result.stdout)
                     self.assertIn('Работа после отката не подтверждена' if language=='ru' else 'Post-rollback health not verified',result.stdout)
 
@@ -394,17 +400,19 @@ ufw() { echo 'Status: inactive'; }; timedatectl() { echo UTC; }
                          'panel_path':'panel','config_username':'fixture-user','config_password':'fixture-password'})
                 self.assertEqual(result.returncode,0,result.stderr)
                 rows=[line for line in result.stdout.splitlines() if 'Cloudflare WARP' in line]
+                summary = re.sub(r'\n(?:OK:|WARN:) {34}', ' ', result.stdout)
+                summary = ' '.join(summary.split())
                 self.assertEqual(len(rows),1)
                 if core=='failed_unverified':
                     text=('Настроен, но работа основного стека не подтверждена: проверьте Xray в панели.'
                           if language=='ru' else 'Configured, but core health is not verified: check Xray in the panel.')
-                    self.assertEqual(rows[0],'WARN: [!] Cloudflare WARP        '+text)
+                    self.assertIn('WARN: [!] Cloudflare WARP '+text,summary)
                     self.assertNotIn('идут через WARP',result.stdout)
                     self.assertNotIn('use WARP (3 rules)',result.stdout)
                 else:
                     text=('Настроен: российские сайты и выбранные домены идут через WARP (3 правила)'
                           if language=='ru' else 'Configured: Russian sites and selected domains use WARP (3 rules)')
-                    self.assertEqual(rows[0],'OK: [✓] Cloudflare WARP        '+text)
+                    self.assertIn('OK: [✓] Cloudflare WARP '+text,summary)
 
     def test_summary_does_not_claim_core_works_after_failed_final_gate(self):
         for language in ('ru','en'):
@@ -418,7 +426,8 @@ ufw() { echo 'Status: inactive'; }; timedatectl() { echo UTC; }
                          'UI_INTERACTIVE':'0','domain':'fixture.test','reality_domain':'other.test',
                          'panel_path':'panel','config_username':'fixture-user','config_password':'fixture-password'})
                 self.assertEqual(result.returncode,0,result.stderr)
-                row=next(s for s in result.stdout.splitlines() if 'Cloudflare WARP' in s)
+                row=re.search(r'Cloudflare WARP[^\n]*(?:\n {34}[^\n]*)*', result.stdout)[0]
+                row=' '.join(row.split())
                 self.assertNotIn('Основной стек работает' if language=='ru' else 'The core stack works',row)
                 self.assertIn('не подтверждена' if language=='ru' else 'not verified',row)
 
@@ -490,7 +499,7 @@ msg_warn() { :; }
                      'CREATE_CLIENT','INSTALL_XHTTP_CDN')},'FIXTURE_RESULT':state})
             self.assertEqual(result.returncode,0 if state=='configured' else 1,result.stderr)
             self.assertEqual(result.stdout.count('HEALTH'),2)
-            self.assertLess(result.stdout.index('WARP'),result.stdout.rindex('HEALTH'))
+            self.assertLess(result.stdout.index('\nWARP\n'),result.stdout.rindex('HEALTH'))
             self.assertIn('RESULT:'+('0' if state=='configured' else '1')+':'+state,result.stdout)
         main=function('main')
         self.assertLess(main.index('select_additional_connections ||'),main.index('select_warp_ru ||'))

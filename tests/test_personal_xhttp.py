@@ -19,7 +19,7 @@ import threading
 import time
 import unittest
 
-from certificate_fixtures import INSTALLER_OPTION_STUBS
+from certificate_fixtures import function
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -124,16 +124,6 @@ SHARED = "cat > /etc/nginx/snippets/includes.conf"
 MAIN = 'cat > "/etc/nginx/sites-available/${domain}"'
 
 
-def function(name, source=SOURCE):
-    matches = re.findall(r"^" + re.escape(name) + r"\(\)\s*\{.*?^\}", source, re.M | re.S)
-    if len(matches) != 1:
-        raise AssertionError(f"Expected one {name} function")
-    body = matches[0]
-    if name == 'main':
-        body = INSTALLER_OPTION_STUBS + body
-    return (function('ui_text', source) + '\n' if name != 'ui_text' and 'ui_text ' in body else '') + body
-
-
 class PersonalXHTTP(unittest.TestCase):
     def test_additional_connection_questions_and_ports(self):
         script = r'''
@@ -220,6 +210,7 @@ show_results
                 result = subprocess.check_output(['bash', '-eu', '-c', script, 'fixture', str(ROOT/'x-ui-latest.sh')],
                                                  text=True, env={**os.environ, **FIXTURE, 'INSTALL_WS_GRPC': choice,
                                                                  'config_username': 'fixture', 'config_password': 'fixture'})
+                result = ' '.join(result.split())
                 self.assertIn('Enabled by default: REALITY · XHTTP · Hysteria2', result)
                 self.assertEqual('Optional profiles: WS · Trojan gRPC' in result, choice == 'y')
 
@@ -442,10 +433,10 @@ echo 'x-ui 3.9.0'
                              "Password: fixture-password", "Backup:", "x-ui-backup backup", "Certificate renewal",
                              "https://deploy.example/panel/", "https://deploy.example/panel/diag",
                              "Enabled by default: REALITY · XHTTP · Hysteria2", "Optional profiles: WS · Trojan gRPC"):
-                    self.assertIn(item, text)
+                    self.assertIn(item, ' '.join(text.split()))
                 self.assertEqual("(3X-UI 3.9.0)" in text, not failed_version)
                 if (state,missing_assets,failed_version,failed_gate,missing_certificate,cpu_level)==('active',False,False,False,None,'ok'):
-                    ui_helpers='\n'.join(function(n) for n in ('ui_rule','ui_title','ui_section','ui_values'))
+                    ui_helpers='\n'.join(function(n) for n in ('ui_title',))
                     for language in ('en','ru'):
                         rendered=subprocess.run(['bash','-euo','pipefail','-c',ui_helpers+'\n'+script],capture_output=True,text=True,
                             env={**environment,'UI_INTERACTIVE':'1','UI_LANG':language})

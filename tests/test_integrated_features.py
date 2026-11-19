@@ -281,13 +281,13 @@ python3() { if [[ "$*" == *--render-acme* ]]; then echo '# ACME fixture'; else p
                 capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
             text=result.stdout
-            self.assertIn('VLESS TLS Vision       Ready (vision.example:443)',text)
+            self.assertRegex(text, r'VLESS TLS Vision +Ready \(vision\.example:443\)')
             if enabled:
-                positions=[text.index(value) for value in ('Panel:','Username:','Password:','Diagnostics (panel login required):','Subscription:','AmneziaWG:','AdGuard Home:','Backup:')]
+                positions=[text.index(value) for value in ('Panel:','Username:','Password:','Diagnostics:','Subscription:','[✓] AmneziaWG','AdGuard Home:','Backup:')]
                 self.assertEqual(positions,sorted(positions))
-                self.assertIn('I: https://panel.example/subscription/fixture-id',text)
+                self.assertRegex(text, r'Subscription: +https://panel\.example/subscription/fixture-id')
                 self.assertEqual(text.count(output['url']),1)
-                self.assertLess(text.index('[✓] Subscription'),text.index('Panel:'))
+                self.assertLess(text.index('[✓] Subscription'),text.index('Subscription:'))
                 self.assertIn(' / '.join(output['protocols']),text)
                 self.assertTrue(text.rstrip().endswith('REMAINING='))
             else:
@@ -302,10 +302,10 @@ python3() { if [[ "$*" == *--render-acme* ]]; then echo '# ACME fixture'; else p
                 env={**os.environ,'DOT_RESULT':dot,'F2BAN_RESULT':f2ban,'APT_RESULT':apt,'TUNING_RESULT':'partially_skipped'},capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
             for label,state in (('Global DoT',dot),('Fail2ban',f2ban),('APT security',apt)):
-                line=next(line for line in result.stdout.splitlines() if label+' — ' in line)
+                line=next(line for line in result.stdout.splitlines() if label+' ' in line)
                 self.assertEqual('Configured' in line,state=='configured')
                 if state=='failed_unverified': self.assertIn('rollback not verified',line)
-            self.assertIn('Kernel tuning — Partially skipped',result.stdout)
+            self.assertRegex(result.stdout, r'Kernel tuning +Partially skipped')
             self.assertIn('fixture-user',result.stdout); self.assertIn('fixture-pass',result.stdout)
 
 
@@ -853,16 +853,17 @@ sysctl() {
         script+='\n'.join(function(name) for name in helpers+names)+'\n'+'; '.join(names)
         result=subprocess.run(['bash','-eu','-c',script],input='panel.example.com\nreality.example.com\ny\ny\nn\ny\nvision.example.com\nn\nn\nn\ny\n',text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual(result.stdout,
+        self.assertEqual(' '.join(result.stdout.replace('  > ', '').split()),
             'Enter the domain for your 3X-UI panel: Enter the domain for VLESS REALITY: Enhance VPS security? [Y/n]: '
-            'By default, VLESS Reality, VLESS XHTTP and Hysteria2 will be installed and configured.\n'
-            'Additional connections: VLESS WebSocket, Trojan gRPC, VLESS TCP/TLS (XTLS Vision), AmneziaWG, XHTTP for CDN.\n'
-            'Warning: these connections may not work everywhere, it depends on your country and provider. Use at your own risk. If unsure, answer N.\n'
-            'Set up additional connections? [y/N]: Set up the outdated VLESS WebSocket and Trojan gRPC connections? [y/N]: '
+            'By default, VLESS Reality, VLESS XHTTP and Hysteria2 will be installed and configured. '
+            'Additional connections: VLESS WebSocket, Trojan gRPC, VLESS TCP/TLS (XTLS Vision), AmneziaWG, XHTTP for CDN. '
+            'Set up additional connections? [y/N]: '
+            'Warning: all optional connections listed above may not work everywhere, it depends on your country and provider. Use at your own risk. If unsure, answer N. '
+            'Set up the outdated VLESS WebSocket and Trojan gRPC connections? [y/N]: '
             'Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]: '
             'Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains): '
             'Set up an additional AmneziaWG connection? [y/N]: Add an additional CDN-compatible XHTTP connection? [y/N]: '
-            'Install and configure AdGuard Home? [y/N]: Create a client in 3X-UI and display a subscription link after installation? [Y/n]: ')
+            'Install and configure AdGuard Home? [y/N]: Create a client in 3X-UI and display a subscription link after installation? [Y/n]:')
 
     def test_prompt_defaults_decline_and_eof(self):
         for name, variable, default in (('select_security', 'INSTALL_SECURITY', 'y'),
@@ -884,7 +885,7 @@ sysctl() {
         sequence = main[first:main.index('\n', last)]
         source = 'source "$1"\nuname() { echo x86_64; }\nINSTALL_AGH_DOT=n\n' + sequence
         source += '\nprintf "\\nRESULT:%s:%s\\n" "$INSTALL_AGH_DOT" "$CREATE_CLIENT"'
-        prompt = 'Enable DNS-over-TLS (DoT) for your devices? [y/N]: '
+        prompt = 'Enable DNS-over-TLS (DoT) for your devices? [y/N]:'
         client = 'Create a client in 3X-UI'
         for answers, expected, count in (
             ('n\ny\n', 'n:y', 0), ('y\n', 'n:n', 1), ('y\n\ny\n', 'n:y', 1),
@@ -898,7 +899,8 @@ sysctl() {
                 self.assertIn('RESULT:'+expected, result.stdout)
                 self.assertEqual(result.stdout.count(prompt), count, result.stdout)
                 if count:
-                    self.assertLess(result.stdout.index('It opens port 853'), result.stdout.index(prompt))
+                    plain = ' '.join(result.stdout.split())
+                    self.assertLess(plain.index(prompt), plain.index('It opens port 853'))
                     self.assertLess(result.stdout.rindex(prompt), result.stdout.index(client))
                 self.assertEqual('Please enter y or n.' in result.stdout, count == 2)
 
@@ -1406,7 +1408,8 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
             self.assertEqual(result.returncode,0,result.stderr)
             expected=[name for name,key in (('install_vision','INSTALL_VISION'),('install_amneziawg','INSTALL_AWG'),
                 ('install_adguard','INSTALL_AGH'),('install_security','INSTALL_SECURITY'),('install_initial_client','CREATE_CLIENT')) if variables[key]=='y']
-            self.assertEqual(result.stdout.splitlines(),['','Preparing system...']+expected)
+            lines = result.stdout.splitlines()
+            self.assertEqual(lines[lines.index('Preparing system...'):], ['Preparing system...']+expected)
         # An uncertain Vision inbound may still be enabled but lack its SNI
         # route. Do not attach a new client or publish it as ready in that state.
         failure_stubs=stubs+'\ninstall_vision() { VISION_RESULT=failed_unverified; return 1; }; show_results() { echo "$CLIENT_RESULT"; };'

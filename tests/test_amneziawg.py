@@ -237,7 +237,7 @@ else: sys.exit(1)
                 self.assertIn('Configured (UDP/8443)',lines[0]);self.assertIn('\x1b[32m',lines[0])
             else:
                 self.assertIn('Not configured',lines[0]);self.assertIn('\x1b[33m',lines[0])
-            self.assertIn('Password: password',result.stdout)
+            self.assertRegex(result.stdout, r'Password: +password')
 
     def test_api_credentials_use_stdin_and_private_temporary_state(self):
         import importlib.util

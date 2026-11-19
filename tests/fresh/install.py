@@ -86,9 +86,9 @@ def install(scenario, ref):
         # Public diagnostics are fixed booleans, never log lines or secret URLs.
         patterns = {
             'core_running': r'\[✓\]\s+3X-UI / Xray\s+Running',
-            'dot_configured': r'Global DoT — Configured',
-            'fail2ban_configured': r'Fail2ban — Configured',
-            'apt_configured': r'APT security — Configured',
+            'dot_configured': r'Global DoT +Configured',
+            'fail2ban_configured': r'Fail2ban +Configured',
+            'apt_configured': r'APT security +Configured',
             'vision_ready': r'\[✓\]\s+VLESS TLS Vision\s+Ready',
             'awg_configured': r'\[✓\]\s+AmneziaWG\s+Configured',
             'xhttp_cdn_disabled': r'\[✓\]\s+XHTTP CDN\s+Created disabled',
@@ -121,24 +121,24 @@ def install(scenario, ref):
             required = [u for u in UNITS if scenario == 'positive' or u != 'AdGuardHome']
             for unit in required:
                 subprocess.run(['systemctl', 'is-active', '--quiet', unit], check=True, timeout=10)
-            assert re.search(r'^ Username: \S+$', private, re.M)
-            assert re.search(r'^ Password: \S+$', private, re.M)
+            assert re.search(r'^ +Username: +\S+$', private, re.M)
+            assert re.search(r'^ +Password: +\S+$', private, re.M)
             assert re.search(r'\[✓\]\s+Client\s+Created', private)
             assert re.search(r'\[✓\]\s+Subscription\s+Ready', private)
             if scenario == 'positive':
                 assert result.returncode == 0, 'Maximum installation failed'
                 metadata = json.loads(Path('/opt/AdGuardHome/managed.json').read_text())
                 assert re.fullmatch(r'dns-[A-Za-z0-9]{12}', metadata['doh_path']), 'AGH public path is not random'
-                expected_doh = ' DoH: https://'+metadata['domain']+'/'+metadata['doh_path']
-                assert expected_doh in private.splitlines(), 'Final summary did not show the managed DoH address'
+                expected_doh = 'DoH: https://'+metadata['domain']+'/'+metadata['doh_path']
+                assert any(' '.join(line.split()) == expected_doh for line in private.splitlines()), 'Final summary did not show the managed DoH address'
                 assert report['components']['xhttp_cdn_disabled'], 'Requested XHTTP CDN was not created disabled'
                 for component in ('Global DoT', 'Fail2ban', 'APT security'):
-                    assert component+' — Configured' in private
+                    assert re.search(re.escape(component) + r' +Configured', private)
             else:
                 assert result.returncode != 0, 'Requested DoT outage reported full success'
                 assert 'DoT unavailable; original DNS restored.' in private
-                assert 'Global DoT — Failed, rolled back / unchanged' in private
-                assert 'Fail2ban — Configured' in private and 'APT security — Configured' in private
+                assert re.search(r'Global DoT +Failed, rolled back / unchanged', private)
+                assert report['components']['fail2ban_configured'] and report['components']['apt_configured']
                 assert (Path('/etc/resolv.conf').readlink(), Path('/etc/resolv.conf').read_bytes()) == dns_before
                 assert Path('/etc/systemd/network/10-pilot.network').read_bytes() == network
                 assert not Path('/etc/systemd/resolved.conf.d/90-3x-ui-auto-nginx.conf').exists()

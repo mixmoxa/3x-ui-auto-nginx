@@ -24,7 +24,14 @@ def function(name, source=INSTALLER):
     if name == 'main':
         # Isolated main fixtures provide their own optional selector stubs.
         body = INSTALLER_OPTION_STUBS + body
-    return (function('ui_text', source) + '\n' if name != 'ui_text' and 'ui_text ' in body else '') + body
+    helpers = []
+    if 'ui_wrap ' in body:
+        helpers.append('ui_wrap')
+    if name == 'show_results':
+        helpers.extend(('ui_rule', 'ui_section', 'ui_note', 'server_details_row'))
+    if name != 'ui_text' and 'ui_text ' in body:
+        helpers.append('ui_text')
+    return '\n'.join([*(function(helper, source) for helper in helpers), body])
 
 
 def relocate(source, root):

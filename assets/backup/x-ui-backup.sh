@@ -73,6 +73,13 @@ require_root() { [[ $EUID -eq 0 ]] || die 'Run x-ui-backup as root.'; }
 cleanup() {
     local result=$?
     trap - EXIT ERR
+    if [[ ${1:-} == restore && -z $ROLLBACK_DIR ]] && (( result && ! RESTORE_MUTATED )); then
+        if [[ ${XUI_RESTORE_LANG:-en} == ru ]]; then
+            warn 'Данные проекта не изменены. Папка восстановления не создавалась.'
+        else
+            warn 'Restore stopped before replacing project data. No recovery directory was created.'
+        fi
+    fi
     if (( RESTORE_RECOVERY )); then
         # Retain the original restore failure even when recovery succeeds.
         result=1
@@ -81,9 +88,20 @@ cleanup() {
             warn 'Previous managed state/service states restored and checked; restore failed.'
             [[ -z "$ROLLBACK_DIR" ]] || rm -rf -- "$ROLLBACK_DIR"
         else
-            warn "Automatic rollback could not be verified. Private recovery material: ${ROLLBACK_DIR:-not created}. Inspect nginx -t and systemctl status x-ui/nginx/AdGuardHome before retrying."
+            warn 'Automatic rollback could not be verified. Inspect nginx -t and systemctl status x-ui/nginx/AdGuardHome before retrying.'
         fi
         RESUME_CERTBOT_TIMER=0
+    fi
+    if (( result )) && [[ -n $ROLLBACK_DIR && -d $ROLLBACK_DIR ]]; then
+        local label
+        if [[ -f $ROLLBACK_DIR/ready ]]; then
+            label='Private recovery directory'
+            [[ ${XUI_RESTORE_LANG:-en} != ru ]] || label='Папка восстановления'
+        else
+            label='Incomplete recovery directory'
+            [[ ${XUI_RESTORE_LANG:-en} != ru ]] || label='Папка восстановления неполная'
+        fi
+        warn "$label: $ROLLBACK_DIR"
     fi
     if (( RESUME_XUI )); then
         if systemctl start x-ui && systemctl is-active --quiet x-ui; then
@@ -2578,6 +2596,7 @@ cmd_restore() {
     rm -f -- "$XHTTP_SOCKET"
     restore_service_states
     check_health
+    trap cleanup EXIT
     RESTORE_RECOVERY=0 RESTORE_MUTATED=0
     rm -rf -- "$ROLLBACK_DIR"
     ROLLBACK_DIR=''
@@ -2747,7 +2766,7 @@ main() {
     trap 'exit 143' TERM
     case ${1:-} in
         backup) cmd_backup ;;
-        restore) cmd_restore "${2:-}" ;;
+        restore) trap 'cleanup restore' EXIT; cmd_restore "${2:-}" ;;
         list) cmd_list ;;
         update-hooks) cmd_update_hooks ;;
         *) die 'Usage: x-ui-backup {backup [--json]|inspect <archive>|restore <archive>|extract <archive> <new-directory>|list|update-hooks}' ;;

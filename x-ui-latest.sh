@@ -29,19 +29,32 @@ ui_note() {
     else ui_text "$@"; fi
 }
 
-# ui_wrap ANSI-CODE TEXT: text inside a frame wraps by words to the frame width (60 characters, UTF-8 under
-# any LC_ALL; a longer word such as a path stays whole) and every line is coloured separately.
+# ui_wrap ANSI-CODE TEXT [WIDTH]: wrap by words, including before Python is installed.
+# The default matches the 60-column frames. Longer words (e.g. URLs) stay whole.
 ui_wrap() {
-    local line
-    while IFS= read -r line; do
-        if [[ -n "$line" && -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[%sm%s\e[0m\n' "$1" "$line"
-        else printf '%s\n' "$line"; fi
-    done < <(printf '%s' "$2" | python3 -I -c 'import sys, textwrap
-out = []
-for line in sys.stdin.buffer.read().decode("utf-8", "replace").rstrip("\n").split("\n"):
-    body = line.lstrip(" "); indent = line[:len(line) - len(body)]
-    out.append(textwrap.fill(body, 60, initial_indent=indent, subsequent_indent=indent, break_long_words=False, break_on_hyphens=False))
-sys.stdout.buffer.write(("\n".join(out) + "\n").encode())' 2>/dev/null || printf '%s\n' "$2")
+    local LC_ALL=C.UTF-8 width=${3:-60} color='' reset='' paragraph indent line word
+    local -a words
+    if [[ -n $1 && -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then
+        printf -v color '\e[%sm' "$1"
+        reset=$'\e[0m'
+    fi
+    while IFS= read -r paragraph; do
+        indent=${paragraph%%[! ]*}
+        line=$indent
+        IFS=$' \t' read -r -a words <<< "$paragraph"
+        for word in "${words[@]}"; do
+            if [[ $line == "$indent" ]]; then
+                line+=$word
+            elif (( ${#line} + 1 + ${#word} > width )); then
+                printf '%s%s%s\n' "$color" "$line" "$reset"
+                line=$indent$word
+            else
+                line+=" $word"
+            fi
+        done
+        if [[ $line == "$indent" ]]; then printf '\n'
+        else printf '%s%s%s\n' "$color" "$line" "$reset"; fi
+    done <<< "${2%$'\n'}"
 }
 
 ui_rule() {
@@ -75,11 +88,6 @@ ui_back() {
     if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then
         printf '\e[2m%s\e[0m\n' "$1"
     else printf '%s\n' "$1"; fi
-}
-ui_values() {
-    if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then
-        printf '\e[1;36m'; ui_text "$@"; printf '\e[0m'
-    else ui_text "$@"; fi
 }
 ui_complete() {
     # Private acknowledgement to manager_menu, separate from live stdout/stderr.
@@ -401,8 +409,10 @@ confirm_destructive_reinstall() {
     msg_warn "$(ui_text '  Existing installation detected' '  Обнаружена существующая установка')"
     msg_warn '============================================================'
     for category in "${EXISTING_INSTALL_CATEGORIES[@]}"; do msg_warn " [!] $category"; done
-    ui_text '\nContinuing will run a full OS dist-upgrade (services may restart),\nremove data in project-managed installation paths and replace nginx configuration.\nUse a clean dedicated VPS; this is a full rebuild, not an update.\nThe OS upgrade cannot be rolled back. Copy a backup off-host first.\n\n' '\nПродолжение запустит полный dist-upgrade ОС (службы могут перезапуститься),\nудалит данные в управляемых проектом каталогах и заменит конфигурацию nginx.\nИспользуйте чистый выделенный VPS: это полная переустановка, а не обновление.\nОбновление ОС нельзя откатить. Сначала скопируйте Backup за пределы VPS.\n\n'
-    ui_text 'Type YES to remove the existing deployment and continue: ' 'Чтобы удалить существующую установку и продолжить, введите YES: '
+    printf '\n'
+    ui_wrap '' "$(ui_text 'Type YES to remove the existing deployment and continue: ' 'Чтобы удалить существующую установку и продолжить, введите YES: ')" 76
+    ui_wrap '38;5;208' "$(ui_text '  Continuing will run a full OS dist-upgrade (services may restart),\n  remove data in project-managed installation paths and replace nginx configuration.\n  Use a clean dedicated VPS; this is a full rebuild, not an update.\n  The OS upgrade cannot be rolled back. Copy a backup off-host first.' '  Продолжение запустит полный dist-upgrade ОС (службы могут перезапуститься),\n  удалит данные в управляемых проектом каталогах и заменит конфигурацию nginx.\n  Используйте чистый выделенный VPS: это полная переустановка, а не обновление.\n  Обновление ОС нельзя откатить. Сначала скопируйте Backup за пределы VPS.')" 76
+    printf '  > '
     if ! IFS= read -r answer || [[ "$answer" != YES ]]; then
         msg_err "$(ui_text 'Cancelled. Existing deployment was not changed.' 'Отменено. Существующая установка не изменена.')"
         return 1
@@ -2463,12 +2473,13 @@ select_warp_ru() {
     # Questions precede the Python bootstrap and creation of PANEL_STAGE.
     baseline=$(verified_panel_release | sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p')
     if [[ -n ${PANEL_VERSION:-} && "v${PANEL_VERSION#v}" != "$baseline" ]]; then
-        ui_note 'Cloudflare WARP: skipped; this step is available only with the verified 3X-UI version.\n' 'Cloudflare WARP: шаг пропущен, он доступен только с проверенной версией 3X-UI.\n'
+        ui_wrap '38;5;208' "$(ui_text 'Cloudflare WARP: skipped; this step is available only with the verified 3X-UI version.\n' 'Cloudflare WARP: шаг пропущен, он доступен только с проверенной версией 3X-UI.\n')" 76
         return 0
     fi
-    ui_note 'Russian websites will see a Cloudflare IP instead of your VPS IP. This is not a Russian IP: some sites may be slower or may not open. It only affects traffic that goes through the VPS; if your app opens Russian sites directly, it will not help. The installer registers a device with Cloudflare and accepts their terms of service. If this fails, installation continues without it and the final report says so.\n' 'Российские сайты будут видеть IP Cloudflare, а не IP вашего VPS. Это не российский IP: часть сайтов может открываться медленнее или не открываться. Работает только для трафика, который идёт через VPS: если приложение само открывает российские сайты напрямую, это не поможет. Установщик зарегистрирует устройство в Cloudflare и примет их условия использования. Если не получится, установка продолжится без этого, об этом будет написано в итоговом отчёте.\n'
     while true; do
-        ui_text 'Route Russian websites through Cloudflare WARP to hide your VPS IP? [y/N]: ' 'Скрыть IP вашего VPS от российских сайтов через Cloudflare WARP? [Y/n]: '
+        ui_wrap '' "$(ui_text 'Route Russian websites through Cloudflare WARP to hide your VPS IP? [y/N]: ' 'Скрыть IP вашего VPS от российских сайтов через Cloudflare WARP? [Y/n]: ')" 76
+        ui_wrap '38;5;208' "$(ui_text '  Russian websites will see a Cloudflare IP instead of your VPS IP. This is not a Russian IP: some sites may be slower or may not open. It only affects traffic that goes through the VPS; if your app opens Russian sites directly, it will not help. The installer registers a device with Cloudflare and accepts their terms of service. If this fails, installation continues without it and the final report says so.' '  Российские сайты будут видеть IP Cloudflare, а не IP вашего VPS. Это не российский IP: часть сайтов может открываться медленнее или не открываться. Работает только для трафика, который идёт через VPS: если приложение само открывает российские сайты напрямую, это не поможет. Установщик зарегистрирует устройство в Cloudflare и примет их условия использования. Если не получится, установка продолжится без этого, об этом будет написано в итоговом отчёте.')" 76
+        printf '  > '
         IFS= read -r answer || return 0
         case "$answer" in
             '') [[ ${UI_LANG:-en} != ru ]] || INSTALL_WARP_RU=y; return 0 ;;
@@ -2688,10 +2699,12 @@ select_adguard() {
 select_dot() {
     INSTALL_AGH_DOT=n
     local answer
-    ui_note 'DNS-over-TLS lets Android Private DNS use your AdGuard Home. It opens port 853 to the whole internet: anyone who knows your server address can send DNS queries to it. The number of simultaneous connections from one IP address is limited. In AdGuard Home all DoT queries are shown as 127.0.0.1, so ClientID and per-device rules do not work for DoT. If unsure, answer N.\n' \
-        'DNS-over-TLS нужен, чтобы «Частный DNS» на Android работал через ваш AdGuard Home. Он открывает порт 853 для всего интернета: любой, кто знает адрес вашего сервера, сможет отправлять на него DNS-запросы. Число одновременных соединений с одного IP-адреса ограничено. В AdGuard Home все запросы по DoT видны как 127.0.0.1, поэтому ClientID и правила для отдельных устройств для DoT не работают. Если не уверены, ответьте N.\n'
+    printf '\n'
     while true; do
-        ui_text 'Enable DNS-over-TLS (DoT) for your devices? [y/N]: ' 'Включить DNS-over-TLS (DoT) для ваших устройств? [y/N]: '
+        ui_wrap '' "$(ui_text 'Enable DNS-over-TLS (DoT) for your devices? [y/N]: ' 'Включить DNS-over-TLS (DoT) для ваших устройств? [y/N]: ')" 76
+        ui_wrap '38;5;208' "$(ui_text '  DNS-over-TLS lets Android Private DNS use your AdGuard Home. It opens port 853 to the whole internet: anyone who knows your server address can send DNS queries to it. The number of simultaneous connections from one IP address is limited. In AdGuard Home all DoT queries are shown as 127.0.0.1, so ClientID and per-device rules do not work for DoT. If unsure, answer N.' \
+        '  DNS-over-TLS нужен, чтобы «Частный DNS» на Android работал через ваш AdGuard Home. Он открывает порт 853 для всего интернета: любой, кто знает адрес вашего сервера, сможет отправлять на него DNS-запросы. Число одновременных соединений с одного IP-адреса ограничено. В AdGuard Home все запросы по DoT видны как 127.0.0.1, поэтому ClientID и правила для отдельных устройств для DoT не работают. Если не уверены, ответьте N.')" 76
+        printf '  > '
         IFS= read -r answer || return 0
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -2960,7 +2973,7 @@ install_adguard() {
 }
 
 show_results() {
-    local version version_label="" firewall
+    local version version_label="" firewall columns=30 core_unverified=0
     version=$(/usr/local/x-ui/x-ui -v 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1) || version=""
     [[ -n "$version" ]] && version_label=" (3X-UI ${version})"
 
@@ -2971,62 +2984,60 @@ show_results() {
         else
             ui_title "$(ui_text 'INSTALLATION COMPLETED' 'УСТАНОВКА ЗАВЕРШЕНА')"
         fi
-        ui_section "$(ui_text 'COMPONENTS' 'КОМПОНЕНТЫ')"
     else
         printf '\n'
         msg_inf '============================================================'
         msg_inf "$(ui_text '  3X-UI Auto Nginx — Installation Result' '  3X-UI Auto Nginx — Результат установки')"
         msg_inf '============================================================'
     fi
-    # The core passed its initial gate; optional rollback may leave its current health unverified.
+    firewall=$(LC_ALL=C ufw status 2>/dev/null) || firewall=""
+    # The initial core check passed, but the current state may be unverified after rollback.
     if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${WARP_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_err "$(ui_text ' [!] 3X-UI / Xray           Post-rollback health not verified' ' [!] 3X-UI / Xray           Работа после отката не подтверждена')"
-    else
-        msg_ok "$(ui_text ' [✓] 3X-UI / Xray           Running%s' ' [✓] 3X-UI / Xray           Работает%s' "$version_label")"
+        core_unverified=1
     fi
-    case "${CPU_SUPPORT_LEVEL:-info}" in
-        ok)   msg_ok "$(ui_text ' [✓] CPU support             %s' ' [✓] Поддержка CPU          %s' "$CPU_SUPPORT_TEXT")" ;;
-        warn) msg_warn "$(ui_text ' [!] CPU support             %s' ' [!] Поддержка CPU          %s' "$CPU_SUPPORT_TEXT")" ;;
-        *)    msg_inf "$(ui_text ' [i] CPU support             %s' ' [i] Поддержка CPU          %s' "${CPU_SUPPORT_TEXT:-$(ui_text 'Compatible (acceleration not assessed)' 'Совместим (ускорение не проверялось)')}")" ;;
-    esac
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${WARP_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_err "$(ui_text ' [!] nginx                  Post-rollback health not verified' ' [!] nginx                  Работа после отката не подтверждена')"
-    else
-        msg_ok "$(ui_text ' [✓] nginx                  Running' ' [✓] nginx                  Работает')"
+
+    ui_section "$(ui_text 'PANEL ACCESS' 'ДОСТУП К ПАНЕЛИ')"
+    server_details_row "$(ui_text 'Panel:' 'Панель:')" "https://${domain}/${panel_path}/" value "$columns"
+    server_details_row "$(ui_text 'Username:' 'Логин:')" "$config_username" value "$columns"
+    server_details_row "$(ui_text 'Password:' 'Пароль:')" "$config_password" value "$columns"
+    server_details_row "$(ui_text 'Diagnostics:' 'Диагностика:')" "https://${domain}/${panel_path}/diag" value "$columns"
+    ui_wrap '' "$(ui_text '    Panel login required for diagnostics.' '    Для диагностики нужен вход в панель.')" 76
+    if [[ "${CLIENT_RESULT:-not_requested}" != not_requested ]]; then
+        ui_section "$(ui_text 'SUBSCRIPTION' 'ПОДПИСКА')"
+        case "${CLIENT_RESULT:-not_requested}" in
+            configured)
+                server_details_row "$(ui_text '[✓] Client' '[✓] Клиент')" "$(ui_text 'Created' 'Создан')" ok "$columns"
+                server_details_row "$(ui_text '[✓] Subscription' '[✓] Подписка')" "$(ui_text 'Ready' 'Готова')" ok "$columns"
+                ;;
+            failed_unverified) server_details_row "$(ui_text '[!] Client / Subscription' '[!] Клиент / Подписка')" "$(ui_text 'Failed verification — inspect panel before retrying' 'Проверка не пройдена — проверьте панель перед повторной попыткой')" err "$columns" ;;
+        esac
+        if [[ "$CLIENT_RESULT" == configured ]]; then
+            local subscription_url protocols
+            subscription_url=$(printf '%s' "$CLIENT_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["url"])')
+            protocols=$(printf '%s' "$CLIENT_OUTPUT" | python3 -c 'import json,sys; print(" / ".join(json.load(sys.stdin)["protocols"]))')
+            server_details_row "$(ui_text 'Subscription:' 'Подписка:')" "$subscription_url" value "$columns"
+            server_details_row "$(ui_text 'Subscription flags:' 'Флаги подписки:')" "$protocols" plain "$columns"
+            CLIENT_OUTPUT=''
+        fi
     fi
-    if [[ -s "/etc/letsencrypt/live/${domain}/fullchain.pem" && -s "/etc/letsencrypt/live/${domain}/privkey.pem" &&
-          -s "/etc/letsencrypt/live/${reality_domain}/fullchain.pem" && -s "/etc/letsencrypt/live/${reality_domain}/privkey.pem" &&
-          -s "/root/cert/${domain}/fullchain.pem" && -s "/root/cert/${domain}/privkey.pem" ]]; then
-        msg_ok "$(ui_text ' [✓] TLS certificates       Ready' ' [✓] Сертификаты TLS        Готовы')"
-    else
-        msg_warn "$(ui_text ' [!] TLS certificates       Check certificate files' ' [!] Сертификаты TLS        Проверьте файлы сертификатов')"
+    ui_section "$(ui_text 'CONNECTIONS' 'ПОДКЛЮЧЕНИЯ')"
+    server_details_row "$(ui_text 'Enabled by default:' 'Включены по умолчанию:')" 'REALITY · XHTTP · Hysteria2' plain "$columns"
+    if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then
+        server_details_row "$(ui_text 'Optional profiles:' 'Дополнительные профили:')" 'WS · Trojan gRPC' plain "$columns"
     fi
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${WARP_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_err "$(ui_text ' [!] XHTTP                  Post-rollback health not verified' ' [!] XHTTP                  Работа после отката не подтверждена')"
+    if (( core_unverified )); then
+        server_details_row '[!] XHTTP' "$(ui_text 'Post-rollback health not verified' 'Работа после отката не подтверждена')" err "$columns"
     else
-        msg_ok "$(ui_text ' [✓] XHTTP                  Ready' ' [✓] XHTTP                  Готов')"
-    fi
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${WARP_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_err "$(ui_text ' [!] Diagnostics            Post-rollback health not verified' ' [!] Диагностика            Работа после отката не подтверждена')"
-    elif [[ -s /var/www/diagnostics/index.html && -s /var/www/diagnostics/speedtest.js &&
-          -s /var/www/diagnostics/speedtest_worker.js && -s /usr/local/lib/3x-ui-pro/mtr-backend.py ]]; then
-        msg_ok "$(ui_text ' [✓] Diagnostics            Ready' ' [✓] Диагностика            Готова')"
-    else
-        msg_warn "$(ui_text ' [!] Diagnostics            Check diagnostics files' ' [!] Диагностика            Проверьте файлы диагностики')"
-    fi
-    if [[ -x /usr/local/bin/x-ui-backup ]]; then
-        msg_ok "$(ui_text ' [✓] Backup / Restore       Installed' ' [✓] Backup / Restore       Установлен')"
-    else
-        msg_warn "$(ui_text ' [!] Backup / Restore       Backup utility unavailable' ' [!] Backup / Restore       Утилита Backup недоступна')"
+        server_details_row '[✓] XHTTP' "$(ui_text 'Ready' 'Готов')" ok "$columns"
     fi
     case "${XHTTP_CDN_RESULT:-not_requested}" in
-        configured) msg_ok "$(ui_text ' [✓] XHTTP CDN              Created disabled; edit Host, attach a client and enable in 3X-UI.' ' [✓] XHTTP CDN              Создан выключенным; настройте Host, привяжите клиента и включите в 3X-UI.')" ;;
-        failed_rolled_back) msg_warn "$(ui_text ' [!] XHTTP CDN              Not configured; rollback verified.' ' [!] XHTTP CDN              Не настроен; откат проверен.')" ;;
-        failed_unverified) msg_err "$(ui_text ' [!] XHTTP CDN              ROLLBACK_UNVERIFIED; inspect retained configuration.' ' [!] XHTTP CDN              ROLLBACK_UNVERIFIED; проверьте сохранённую конфигурацию.')" ;;
+        configured) server_details_row '[✓] XHTTP CDN' "$(ui_text 'Created disabled; edit Host, attach a client and enable in 3X-UI.' 'Создан выключенным; настройте Host, привяжите клиента и включите в 3X-UI.')" ok "$columns" ;;
+        failed_rolled_back) server_details_row '[!] XHTTP CDN' "$(ui_text 'Not configured; rollback verified.' 'Не настроен; откат проверен.')" warn "$columns" ;;
+        failed_unverified) server_details_row '[!] XHTTP CDN' "$(ui_text 'ROLLBACK_UNVERIFIED; inspect retained configuration.' 'ROLLBACK_UNVERIFIED; проверьте сохранённую конфигурацию.')" err "$columns" ;;
     esac
     case "${AWG_RESULT:-not_requested}" in
-        configured) msg_ok "$(ui_text ' [✓] AmneziaWG              Configured (UDP/8443)' ' [✓] AmneziaWG              Настроен (UDP/8443)')" ;;
-        failed) msg_warn "$(ui_text ' [!] AmneziaWG              Not configured' ' [!] AmneziaWG              Не настроен')" ;;
+        configured) server_details_row '[✓] AmneziaWG' "$(ui_text 'Configured (UDP/8443)' 'Настроен (UDP/8443)')" ok "$columns" ;;
+        failed) server_details_row '[!] AmneziaWG' "$(ui_text 'Not configured' 'Не настроен')" warn "$columns" ;;
     esac
     local warp_core_note
     warp_core_note=$(ui_text 'The core stack works.' 'Основной стек работает.')
@@ -3036,129 +3047,128 @@ show_results() {
     case "${WARP_RESULT:-not_requested}" in
         configured)
             if [[ "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-                msg_warn "$(ui_text ' [!] Cloudflare WARP        Configured, but core health is not verified: check Xray in the panel.' ' [!] Cloudflare WARP        Настроен, но работа основного стека не подтверждена: проверьте Xray в панели.')"
+                server_details_row '[!] Cloudflare WARP' "$(ui_text 'Configured, but core health is not verified: check Xray in the panel.' 'Настроен, но работа основного стека не подтверждена: проверьте Xray в панели.')" warn "$columns"
             else
-                msg_ok "$(ui_text ' [✓] Cloudflare WARP        Configured: Russian sites and selected domains use WARP (3 rules)' ' [✓] Cloudflare WARP        Настроен: российские сайты и выбранные домены идут через WARP (3 правила)')"
+                server_details_row '[✓] Cloudflare WARP' "$(ui_text 'Configured: Russian sites and selected domains use WARP (3 rules)' 'Настроен: российские сайты и выбранные домены идут через WARP (3 правила)')" ok "$columns"
             fi
             ;;
-        failed) msg_warn "$(ui_text ' [!] Cloudflare WARP        Not configured; rules not enabled. %s' ' [!] Cloudflare WARP        Не настроен, правила не включены. %s' "$warp_core_note")" ;;
-        failed_rolled_back) msg_warn "$(ui_text ' [!] Cloudflare WARP        Not configured; rules not enabled. %s Xray configuration restored and verified.' ' [!] Cloudflare WARP        Не настроен, правила не включены. %s Конфигурация Xray возвращена и проверена.' "$warp_core_note")" ;;
-        failed_unverified) msg_err "$(ui_text ' [!] Cloudflare WARP        Configuration rollback not verified: check Xray in the panel.' ' [!] Cloudflare WARP        Откат конфигурации не подтверждён: проверьте Xray в панели.')" ;;
+        failed) server_details_row '[!] Cloudflare WARP' "$(ui_text 'Not configured; rules not enabled. %s' 'Не настроен, правила не включены. %s' "$warp_core_note")" warn "$columns" ;;
+        failed_rolled_back) server_details_row '[!] Cloudflare WARP' "$(ui_text 'Not configured; rules not enabled. %s Xray configuration restored and verified.' 'Не настроен, правила не включены. %s Конфигурация Xray возвращена и проверена.' "$warp_core_note")" warn "$columns" ;;
+        failed_unverified) server_details_row '[!] Cloudflare WARP' "$(ui_text 'Configuration rollback not verified: check Xray in the panel.' 'Откат конфигурации не подтверждён: проверьте Xray в панели.')" err "$columns" ;;
     esac
+    case "${VISION_RESULT:-not_requested}" in
+        configured) server_details_row '[✓] VLESS TLS Vision' "$(ui_text 'Ready (%s:443)' 'Готов (%s:443)' "$vision_domain")" ok "$columns" ;;
+        failed_rolled_back) server_details_row '[!] VLESS TLS Vision' "$(ui_text 'Failed — rolled back' 'Ошибка — выполнен откат')" warn "$columns" ;;
+        failed_unverified) server_details_row '[!] VLESS TLS Vision' "$(ui_text 'Failed — rollback not verified' 'Ошибка — откат не подтверждён')" err "$columns" ;;
+    esac
+    case "${WARP_RESULT:-not_requested}" in
+        failed|failed_rolled_back)
+            ui_wrap '1;33' "$(ui_text ' WARP is not configured: Russian websites still see your VPS IP. If you need it, add WARP in the 3X-UI panel (Xray, Outbounds, WARP) and send the sites you need to it in Routing.' ' WARP не настроен: российские сайты по-прежнему видят IP вашего VPS. Если он нужен, добавьте WARP в панели 3X-UI (Xray, Outbounds, WARP) и направьте на него нужные сайты в разделе Routing.')" 76 ;;
+        failed_unverified)
+            ui_wrap '1;31' "$(ui_text ' Check Xray: Outbounds: warp-masque; Routing: WARP - RU, WARP - RU2, WARP - RU3. To restore the template, open the basic Xray template, choose Reset to Default, confirm, then Save and check that Xray is running.' ' Проверьте Xray: Outbounds: warp-masque; Routing: WARP - RU, WARP - RU2, WARP - RU3. Для возврата шаблона откройте базовый шаблон Xray, выберите «Восстановить настройки по умолчанию», подтвердите, затем нажмите «Сохранить» и проверьте работу Xray.')" 76 ;;
+    esac
+    if [[ "${AWG_RESULT:-not_requested}" == configured ]]; then
+        ui_wrap '1;36' "$(ui_text '    AWG vpn:// export requires an Amnezia-compatible application.' '    Для экспорта AWG vpn:// требуется приложение с поддержкой Amnezia.')" 76
+    fi
+    ui_section "$(ui_text 'COMPONENTS' 'КОМПОНЕНТЫ')"
+    if (( core_unverified )); then
+        server_details_row '[!] 3X-UI / Xray' "$(ui_text 'Post-rollback health not verified' 'Работа после отката не подтверждена')" err "$columns"
+    else
+        server_details_row '[✓] 3X-UI / Xray' "$(ui_text 'Running%s' 'Работает%s' "$version_label")" ok "$columns"
+    fi
+    case "${CPU_SUPPORT_LEVEL:-info}" in
+        ok)   server_details_row "$(ui_text '[✓] CPU support' '[✓] Поддержка CPU')" "$CPU_SUPPORT_TEXT" ok "$columns" ;;
+        warn) server_details_row "$(ui_text '[!] CPU support' '[!] Поддержка CPU')" "$CPU_SUPPORT_TEXT" warn "$columns" ;;
+        *)    server_details_row "$(ui_text '[i] CPU support' '[i] Поддержка CPU')" "${CPU_SUPPORT_TEXT:-$(ui_text 'Compatible (acceleration not assessed)' 'Совместим (ускорение не проверялось)')}" inf "$columns" ;;
+    esac
+    if (( core_unverified )); then
+        server_details_row '[!] nginx' "$(ui_text 'Post-rollback health not verified' 'Работа после отката не подтверждена')" err "$columns"
+    else
+        server_details_row '[✓] nginx' "$(ui_text 'Running' 'Работает')" ok "$columns"
+    fi
+    if [[ -s "/etc/letsencrypt/live/${domain}/fullchain.pem" && -s "/etc/letsencrypt/live/${domain}/privkey.pem" &&
+          -s "/etc/letsencrypt/live/${reality_domain}/fullchain.pem" && -s "/etc/letsencrypt/live/${reality_domain}/privkey.pem" &&
+          -s "/root/cert/${domain}/fullchain.pem" && -s "/root/cert/${domain}/privkey.pem" ]]; then
+        server_details_row "$(ui_text '[✓] TLS certificates' '[✓] Сертификаты TLS')" "$(ui_text 'Ready' 'Готовы')" ok "$columns"
+    else
+        server_details_row "$(ui_text '[!] TLS certificates' '[!] Сертификаты TLS')" "$(ui_text 'Check certificate files' 'Проверьте файлы сертификатов')" warn "$columns"
+    fi
+    if (( core_unverified )); then
+        server_details_row "$(ui_text '[!] Diagnostics' '[!] Диагностика')" "$(ui_text 'Post-rollback health not verified' 'Работа после отката не подтверждена')" err "$columns"
+    elif [[ -s /var/www/diagnostics/index.html && -s /var/www/diagnostics/speedtest.js &&
+          -s /var/www/diagnostics/speedtest_worker.js && -s /usr/local/lib/3x-ui-pro/mtr-backend.py ]]; then
+        server_details_row "$(ui_text '[✓] Diagnostics' '[✓] Диагностика')" "$(ui_text 'Ready' 'Готова')" ok "$columns"
+    else
+        server_details_row "$(ui_text '[!] Diagnostics' '[!] Диагностика')" "$(ui_text 'Check diagnostics files' 'Проверьте файлы диагностики')" warn "$columns"
+    fi
+    if [[ -x /usr/local/bin/x-ui-backup ]]; then
+        server_details_row '[✓] Backup / Restore' "$(ui_text 'Installed' 'Установлен')" ok "$columns"
+    else
+        server_details_row '[!] Backup / Restore' "$(ui_text 'Backup utility unavailable' 'Утилита Backup недоступна')" warn "$columns"
+    fi
+    case "${AGH_RESULT:-not_requested}" in
+        installed)
+            server_details_row '[✓] AdGuard Home' "$(ui_text 'Running (v0.107.80)' 'Работает (v0.107.80)')" ok "$columns"
+            server_details_row '[✓] DNS-over-HTTPS' "$(ui_text 'Ready' 'Готов')" ok "$columns" ;;
+        failed_rolled_back)
+            server_details_row '[!] AdGuard Home' "$(ui_text 'Failed — rolled back' 'Ошибка — выполнен откат')" warn "$columns"
+            server_details_row '[!] DNS-over-HTTPS' "$(ui_text 'Not installed' 'Не установлен')" warn "$columns" ;;
+        failed_unverified)
+            server_details_row '[!] AdGuard Home' "$(ui_text 'Failed — rollback not verified' 'Ошибка — откат не подтверждён')" err "$columns"
+            server_details_row '[!] DNS-over-HTTPS' "$(ui_text 'State not verified' 'Состояние не подтверждено')" err "$columns" ;;
+    esac
+    if (( core_unverified )); then
+        server_details_row "$(ui_text '[!] Certificate renewal' '[!] Продление сертификатов')" "$(ui_text 'Post-rollback health not verified' 'Работа после отката не подтверждена')" err "$columns"
+    else
+        server_details_row "$(ui_text '[✓] Certificate renewal' '[✓] Продление сертификатов')" "$(ui_text 'Webroot + systemd timer' 'Webroot + таймер systemd')" ok "$columns"
+    fi
+    if [[ "${AGH_RESULT:-not_requested}" == installed ]]; then
+        server_details_row 'AdGuard Home:' "https://${domain}/${AGH_PATH}/" value "$columns"
+        server_details_row "$(ui_text 'Login:' 'Логин:')" 'admin' value "$columns"
+        server_details_row "$(ui_text 'Password:' 'Пароль:')" "$AGH_PASSWORD" value "$columns"
+        server_details_row 'DoH:' "https://${domain}/${AGH_DOH_PATH:-dns-query}" value "$columns"
+        if [[ ${INSTALL_AGH_DOT:-n} == y && -f /etc/nginx/stream-dot.d/adguard-dot.conf ]]; then
+            server_details_row 'DNS-over-TLS:' "$(ui_text '%s, port 853 (Android Private DNS)' '%s, порт 853 (Android «Частный DNS»)' "$domain")" value "$columns"
+        fi
+        AGH_PASSWORD=''
+    elif [[ "${AGH_RESULT:-not_requested}" == failed_rolled_back ]]; then
+        ui_wrap '1;33' "$(ui_text '    AdGuard Home was not installed. The core 3X-UI stack remains operational.' '    AdGuard Home не установлен. Основной стек 3X-UI продолжает работать.')" 76
+    elif (( core_unverified )); then
+        ui_wrap '1;31' "$(ui_text '    Post-rollback core health could not be verified. Inspect nginx and core services.' '    Работа основного стека после отката не подтверждена. Проверьте nginx и основные службы.')" 76
+    fi
+    ui_section "$(ui_text 'SECURITY' 'БЕЗОПАСНОСТЬ')"
     local component state
     for component in "Global DoT:${DOT_RESULT:-not_requested}" "Fail2ban:${F2BAN_RESULT:-not_requested}" "APT security:${APT_RESULT:-not_requested}"; do
         state=${component#*:}; component=${component%%:*}
         case "$state" in
-            configured) msg_ok "$(ui_text ' [✓] %s — Configured' ' [✓] %s — Настроен' "$component")" ;;
-            failed_rolled_back) msg_warn "$(ui_text ' [!] %s — Failed, rolled back / unchanged' ' [!] %s — Ошибка, выполнен откат / без изменений' "$component")" ;;
-            failed_unverified) msg_err "$(ui_text ' [!] %s — Failed, rollback not verified' ' [!] %s — Ошибка, откат не подтверждён' "$component")" ;;
+            configured) server_details_row "[✓] $component" "$(ui_text 'Configured' 'Настроен')" ok "$columns" ;;
+            failed_rolled_back) server_details_row "[!] $component" "$(ui_text 'Failed, rolled back / unchanged' 'Ошибка, выполнен откат / без изменений')" warn "$columns" ;;
+            failed_unverified) server_details_row "[!] $component" "$(ui_text 'Failed, rollback not verified' 'Ошибка, откат не подтверждён')" err "$columns" ;;
         esac
     done
     case "${TUNING_RESULT:-}" in
-        applied) msg_ok "$(ui_text ' [✓] Kernel tuning — Applied' ' [✓] Параметры ядра — Применены')" ;;
-        partially_skipped) msg_warn "$(ui_text ' [!] Kernel tuning — Partially skipped; core unaffected' ' [!] Параметры ядра — Частично пропущены; основной стек не затронут')" ;;
+        applied) server_details_row "$(ui_text '[✓] Kernel tuning' '[✓] Параметры ядра')" "$(ui_text 'Applied' 'Применены')" ok "$columns" ;;
+        partially_skipped) server_details_row "$(ui_text '[!] Kernel tuning' '[!] Параметры ядра')" "$(ui_text 'Partially skipped; core unaffected' 'Частично пропущены; основной стек не затронут')" warn "$columns" ;;
     esac
-    case "${SWAP_RESULT:-not_requested}" in
-        created) msg_ok "$(ui_text ' [✓] SWAP 1 GiB             Created and enabled' ' [✓] SWAP 1 GiB             Создан и включён')" ;;
-        existing) msg_inf "$(ui_text ' [i] SWAP                   Already configured' ' [i] SWAP                   Уже настроен')" ;;
-        skipped) msg_warn "$(ui_text ' [!] SWAP                   Skipped (%s)' ' [!] SWAP                   Пропущен (%s)' "$SWAP_REASON")" ;;
-    esac
-    case "${VISION_RESULT:-not_requested}" in
-        configured) msg_ok "$(ui_text ' [✓] VLESS TLS Vision       Ready (%s:443)' ' [✓] VLESS TLS Vision       Готов (%s:443)' "$vision_domain")" ;;
-        failed_rolled_back) msg_warn "$(ui_text ' [!] VLESS TLS Vision       Failed — rolled back' ' [!] VLESS TLS Vision       Ошибка — выполнен откат')" ;;
-        failed_unverified) msg_err "$(ui_text ' [!] VLESS TLS Vision       Failed — rollback not verified' ' [!] VLESS TLS Vision       Ошибка — откат не подтверждён')" ;;
-    esac
-    case "${CLIENT_RESULT:-not_requested}" in
-        configured)
-            msg_ok "$(ui_text ' [✓] Client                  Created' ' [✓] Клиент                 Создан')"
-            msg_ok "$(ui_text ' [✓] Subscription            Ready' ' [✓] Подписка               Готова')"
-            ;;
-        failed_unverified) msg_err "$(ui_text ' [!] Client / Subscription   Failed verification — inspect panel before retrying' ' [!] Клиент / Подписка       Проверка не пройдена — проверьте панель перед повторной попыткой')" ;;
-    esac
-    case "${AGH_RESULT:-not_requested}" in
-        installed)
-            msg_ok "$(ui_text ' [✓] AdGuard Home           Running (v0.107.80)' ' [✓] AdGuard Home           Работает (v0.107.80)')"
-            msg_ok "$(ui_text ' [✓] DNS-over-HTTPS         Ready' ' [✓] DNS-over-HTTPS         Готов')" ;;
-        failed_rolled_back)
-            msg_warn "$(ui_text ' [!] AdGuard Home           Failed — rolled back' ' [!] AdGuard Home           Ошибка — выполнен откат')"
-            msg_warn "$(ui_text ' [!] DNS-over-HTTPS         Not installed' ' [!] DNS-over-HTTPS         Не установлен')" ;;
-        failed_unverified)
-            msg_err "$(ui_text ' [!] AdGuard Home           Failed — rollback not verified' ' [!] AdGuard Home           Ошибка — откат не подтверждён')"
-            msg_err "$(ui_text ' [!] DNS-over-HTTPS         State not verified' ' [!] DNS-over-HTTPS         Состояние не подтверждено')" ;;
-    esac
-    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${WARP_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_err "$(ui_text ' [!] Certificate renewal    Post-rollback health not verified' ' [!] Продление сертификатов Работа после отката не подтверждена')"
-    else
-        msg_ok "$(ui_text ' [✓] Certificate renewal    Webroot + systemd timer' ' [✓] Продление сертификатов Webroot + таймер systemd')"
-    fi
-    firewall=$(LC_ALL=C ufw status 2>/dev/null) || firewall=""
     case "$firewall" in
-        "Status: active"*)   msg_ok "$(ui_text ' [✓] Firewall / UFW         Active' ' [✓] Firewall / UFW         Активен')" ;;
-        "Status: inactive"*) msg_warn "$(ui_text ' [!] Firewall / UFW         Inactive — review firewall settings' ' [!] Firewall / UFW         Неактивен — проверьте настройки firewall')" ;;
-        *)                   msg_warn "$(ui_text ' [!] Firewall / UFW         Unknown — review firewall settings' ' [!] Firewall / UFW         Состояние неизвестно — проверьте настройки firewall')" ;;
+        "Status: active"*)   server_details_row '[✓] Firewall / UFW' "$(ui_text 'Active' 'Активен')" ok "$columns" ;;
+        "Status: inactive"*) server_details_row '[!] Firewall / UFW' "$(ui_text 'Inactive — review firewall settings' 'Неактивен — проверьте настройки firewall')" warn "$columns" ;;
+        *)                   server_details_row '[!] Firewall / UFW' "$(ui_text 'Unknown — review firewall settings' 'Состояние неизвестно — проверьте настройки firewall')" warn "$columns" ;;
     esac
 
-    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text 'PANEL ACCESS' 'ДОСТУП К ПАНЕЛИ')"
-    msg_inf "$(ui_text '\n Panel:' '\n Панель:')"
-    msg_inf " https://${domain}/${panel_path}/"
-    if [[ ${UI_INTERACTIVE:-0} == 1 ]]; then
-        ui_values '\n Username: %s\n Password: %s\n' '\n Логин: %s\n Пароль: %s\n' "$config_username" "$config_password"
-    else
-        ui_text '\n Username: %s\n Password: %s\n' '\n Логин: %s\n Пароль: %s\n' "$config_username" "$config_password"
-    fi
-    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text 'SUBSCRIPTION AND SERVICES' 'ПОДПИСКА И ДОПОЛНИТЕЛЬНЫЕ СЕРВИСЫ')"
-    msg_inf "$(ui_text '\n Diagnostics (panel login required):' '\n Диагностика (нужен вход в панель):')"
-    msg_inf " https://${domain}/${panel_path}/diag"
-    if [[ "${CLIENT_RESULT:-not_requested}" == configured ]]; then
-        local subscription_url
-        subscription_url=$(printf '%s' "$CLIENT_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["url"])')
-        msg_inf "$(ui_text '\n Subscription:' '\n Подписка:')"
-        msg_inf " $subscription_url"
-        printf '%s' "$CLIENT_OUTPUT" | python3 -c 'import json,sys; print(" " + " / ".join(json.load(sys.stdin)["protocols"]))'
-        CLIENT_OUTPUT=''
-    fi
-    if [[ "${AWG_RESULT:-not_requested}" == configured ]]; then
-        printf '\n AmneziaWG:\n'
-        msg_inf "$(ui_text ' AWG vpn:// export requires an Amnezia-compatible application.' ' Для экспорта AWG vpn:// требуется приложение с поддержкой Amnezia.')"
-    fi
-    if [[ "${AGH_RESULT:-not_requested}" == installed ]]; then
-        msg_inf " AdGuard Home:"
-        msg_inf " https://${domain}/${AGH_PATH}/"
-        if [[ ${UI_INTERACTIVE:-0} == 1 ]]; then
-            ui_values ' Login: admin\n Password: %s\n' ' Логин: admin\n Пароль: %s\n' "$AGH_PASSWORD"
-            printf ' DoH: '
-            ui_note '%s' '%s' "https://${domain}/${AGH_DOH_PATH:-dns-query}"
-            printf '\n\n'
-        else
-            ui_text ' Login: admin\n Password: %s\n DoH: https://%s/%s\n\n' ' Логин: admin\n Пароль: %s\n DoH: https://%s/%s\n\n' "$AGH_PASSWORD" "$domain" "${AGH_DOH_PATH:-dns-query}"
-        fi
-        if [[ ${INSTALL_AGH_DOT:-n} == y && -f /etc/nginx/stream-dot.d/adguard-dot.conf ]]; then
-            ui_text ' DNS-over-TLS (Android Private DNS): %s, port 853\n' ' DNS-over-TLS (Android «Частный DNS»): %s, порт 853\n' "$domain"
-        fi
-        AGH_PASSWORD=''
-    elif [[ "${AGH_RESULT:-not_requested}" == failed_rolled_back ]]; then
-        msg_warn "$(ui_text ' AdGuard Home was not installed. The core 3X-UI stack remains operational.' ' AdGuard Home не установлен. Основной стек 3X-UI продолжает работать.')"
-    elif [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${WARP_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
-        msg_err "$(ui_text ' Post-rollback core health could not be verified. Inspect nginx and core services.' ' Работа основного стека после отката не подтверждена. Проверьте nginx и основные службы.')"
-    fi
-    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text 'OTHER INFORMATION' 'ПРОЧАЯ ИНФОРМАЦИЯ')"
-    case "${WARP_RESULT:-not_requested}" in
-        failed|failed_rolled_back)
-            msg_warn "$(ui_text ' WARP is not configured: Russian websites still see your VPS IP. If you need it, add WARP in the 3X-UI panel (Xray, Outbounds, WARP) and send the sites you need to it in Routing.' ' WARP не настроен: российские сайты по-прежнему видят IP вашего VPS. Если он нужен, добавьте WARP в панели 3X-UI (Xray, Outbounds, WARP) и направьте на него нужные сайты в разделе Routing.')" ;;
-        failed_unverified)
-            msg_err "$(ui_text ' Check Xray: Outbounds: warp-masque; Routing: WARP - RU, WARP - RU2, WARP - RU3. To restore the template, open the basic Xray template, choose Reset to Default, confirm, then Save and check that Xray is running.' ' Проверьте Xray: Outbounds: warp-masque; Routing: WARP - RU, WARP - RU2, WARP - RU3. Для возврата шаблона откройте базовый шаблон Xray, выберите «Восстановить настройки по умолчанию», подтвердите, затем нажмите «Сохранить» и проверьте работу Xray.')" ;;
-    esac
-    msg_inf "$(ui_text ' [i] Base OS                %s (full upgrade is not rollbackable)' ' [i] Базовая ОС             %s (полное обновление нельзя откатить)' "${BASE_OS_RESULT:-not_prepared}")"
-    msg_inf "$(ui_text ' [i] Local timezone         %s' ' [i] Часовой пояс           %s' "$(timedatectl show -p Timezone --value)")"
     if [[ "${APT_RESULT:-not_requested}" == configured ]]; then
-        msg_inf "$(ui_text ' [i] APT schedule           update 02:30 / upgrade 02:50; reboot 04:38, including logged-in users' ' [i] Расписание APT         update 02:30 / upgrade 02:50; перезагрузка 04:38, даже при активных пользователях')"
+        server_details_row "$(ui_text '[i] APT schedule' '[i] Расписание APT')" "$(ui_text 'update 02:30 / upgrade 02:50; reboot 04:38, including logged-in users' 'update 02:30 / upgrade 02:50; перезагрузка 04:38, даже при активных пользователях')" inf "$columns"
     fi
-    ui_text '\n Enabled by default: REALITY · XHTTP · Hysteria2\n' '\n Включены по умолчанию: REALITY · XHTTP · Hysteria2\n'
-    if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then
-        ui_text ' Optional profiles: WS · Trojan gRPC\n' ' Дополнительные профили: WS · Trojan gRPC\n'
-    fi
-    msg_inf "$(ui_text '\n Backup:' '\n Резервная копия:')"
-    printf ' x-ui-backup backup\n\n'
+    ui_section "$(ui_text 'OTHER INFORMATION' 'ПРОЧАЯ ИНФОРМАЦИЯ')"
+    server_details_row "$(ui_text '[i] Base OS' '[i] Базовая ОС')" "$(ui_text '%s (full upgrade is not rollbackable)' '%s (полное обновление нельзя откатить)' "${BASE_OS_RESULT:-not_prepared}")" inf "$columns"
+    server_details_row "$(ui_text '[i] Local timezone' '[i] Часовой пояс')" "$(timedatectl show -p Timezone --value)" inf "$columns"
+    case "${SWAP_RESULT:-not_requested}" in
+        created) server_details_row '[✓] SWAP 1 GiB' "$(ui_text 'Created and enabled' 'Создан и включён')" ok "$columns" ;;
+        existing) server_details_row '[i] SWAP' "$(ui_text 'Already configured' 'Уже настроен')" inf "$columns" ;;
+        skipped) server_details_row '[!] SWAP' "$(ui_text 'Skipped (%s)' 'Пропущен (%s)' "$SWAP_REASON")" warn "$columns" ;;
+    esac
+    server_details_row "$(ui_text 'Backup:' 'Резервная копия:')" 'x-ui-backup backup' plain "$columns"
+    printf '\n'
     msg_inf '============================================================'
     msg_warn "$(ui_text ' Save these credentials before closing the terminal.' ' Сохраните эти учётные данные перед закрытием терминала.')"
     msg_inf '============================================================'
@@ -3184,11 +3194,12 @@ select_security() {
 select_additional_connections() {
     INSTALL_WS_GRPC=n INSTALL_VISION=n INSTALL_AWG=n INSTALL_XHTTP_CDN=n
     local answer
-    ui_text 'By default, VLESS Reality, VLESS XHTTP and Hysteria2 will be installed and configured.\n' 'По умолчанию будут установлены и настроены: VLESS Reality, VLESS XHTTP и Hysteria2.\n'
-    ui_text 'Additional connections: VLESS WebSocket, Trojan gRPC, VLESS TCP/TLS (XTLS Vision), AmneziaWG, XHTTP for CDN.\n' 'Дополнительные подключения: VLESS WebSocket, Trojan gRPC, VLESS TCP/TLS (XTLS Vision), AmneziaWG, XHTTP для CDN.\n'
-    ui_note 'Warning: these connections may not work everywhere, it depends on your country and provider. Use at your own risk. If unsure, answer N.\n' 'Внимание: эти подключения могут работать не везде, это зависит от страны и провайдера. Используйте на свой риск. Если не уверены, ответьте N.\n'
+    ui_wrap '' "$(ui_text 'By default, VLESS Reality, VLESS XHTTP and Hysteria2 will be installed and configured.\n' 'По умолчанию будут установлены и настроены: VLESS Reality, VLESS XHTTP и Hysteria2.\n')" 76
+    ui_wrap '' "$(ui_text 'Additional connections: VLESS WebSocket, Trojan gRPC, VLESS TCP/TLS (XTLS Vision), AmneziaWG, XHTTP for CDN.\n' 'Дополнительные подключения: VLESS WebSocket, Trojan gRPC, VLESS TCP/TLS (XTLS Vision), AmneziaWG, XHTTP для CDN.\n')" 76
     while true; do
-        ui_text 'Set up additional connections? [y/N]: ' 'Настроить дополнительные подключения? [y/N]: '
+        ui_wrap '' "$(ui_text 'Set up additional connections? [y/N]: ' 'Настроить дополнительные подключения? [y/N]: ')" 76
+        ui_wrap '38;5;208' "$(ui_text '  Warning: all optional connections listed above may not work everywhere, it depends on your country and provider. Use at your own risk. If unsure, answer N.' '  Внимание: все перечисленные выше дополнительные подключения могут работать не везде, это зависит от страны и провайдера. Используйте на свой риск. Если не уверены, ответьте N.')" 76
+        printf '  > '
         IFS= read -r answer || return 0
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -3217,7 +3228,8 @@ select_vision() {
     local LC_ALL=C answer
     INSTALL_VISION=n
     while true; do
-        ui_text 'Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]: ' 'Настроить дополнительное подключение VLESS TCP/TLS (XTLS Vision)? Нужен отдельный домен. [y/N]: '
+        ui_wrap '' "$(ui_text 'Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]: ' 'Настроить дополнительное подключение VLESS TCP/TLS (XTLS Vision)? Нужен отдельный домен. [y/N]: ')" 76
+        printf '  > '
         IFS= read -r answer || return 0
         case "$answer" in
             ''|n|N) return 0 ;;
@@ -3225,7 +3237,8 @@ select_vision() {
             *) ui_text 'Please enter y or n.\n' 'Введите y или n.\n' ;;
         esac
     done
-    ui_text 'Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains): ' 'Введите домен VLESS TLS Vision (отличный от доменов панели и REALITY): '
+    ui_wrap '' "$(ui_text 'Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains): ' 'Введите домен VLESS TLS Vision (отличный от доменов панели и REALITY): ')" 76
+    printf '  > '
     IFS= read -r vision_domain || return 1
     vision_domain=${vision_domain,,}
     [[ -n "$vision_domain" ]] || {
@@ -3239,7 +3252,8 @@ select_client() {
     local answer
     CREATE_CLIENT=n
     while true; do
-        ui_text 'Create a client in 3X-UI and display a subscription link after installation? [Y/n]: ' 'Создать клиента в 3X-UI и показать ссылку подписки после установки? [Y/n]: '
+        ui_wrap '' "$(ui_text 'Create a client in 3X-UI and display a subscription link after installation? [Y/n]: ' 'Создать клиента в 3X-UI и показать ссылку подписки после установки? [Y/n]: ')" 76
+        printf '  > '
         IFS= read -r answer || return 0
         case "$answer" in
             ''|y|Y) CREATE_CLIENT=y; return 0 ;;
@@ -3497,13 +3511,19 @@ acquire_stack_lock() {
 main() {
     [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_title "$(ui_text 'INSTALLATION' 'УСТАНОВКА')"
     confirm_destructive_reinstall || exit 1
+    ui_text '\n  Domains\n\n' '\n  Домены\n\n'
     validate_domains || exit 1
+    ui_text '\n  Security\n\n' '\n  Безопасность\n\n'
     select_security || exit 1
+    ui_text '\n  Connections\n\n' '\n  Подключения\n\n'
     select_additional_connections || exit 1
+    ui_text '\n  Cloudflare WARP\n\n' '\n  Cloudflare WARP\n\n'
     select_warp_ru || exit 1
+    ui_text '\n  AdGuard Home and DoT\n\n' '\n  AdGuard Home и DoT\n\n'
     select_adguard || exit 1
     INSTALL_AGH_DOT=n
     if [[ "$INSTALL_AGH" == y ]]; then select_dot || exit 1; fi
+    ui_text '\n  Client and subscription\n\n' '\n  Клиент и подписка\n\n'
     select_client || exit 1
     [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text '[1] SYSTEM PREPARATION' '[1] ПОДГОТОВКА СИСТЕМЫ')"
     ui_text '\nPreparing system...\n' '\nПодготовка системы...\n'
@@ -3928,16 +3948,21 @@ backup_action() (
         local metadata
         metadata=$(bash /usr/local/bin/x-ui-backup inspect "$archive") || exit $?
         printf '%s' "$metadata" | backup_metadata "$archive" || exit $?
-        ui_section "$(ui_text 'WARNING' 'ВНИМАНИЕ')"
     else
         bash /usr/local/bin/x-ui-backup inspect "$archive" || exit $?
     fi
-    ui_text 'Optional Security configures automatic security updates and SSH Fail2ban.\nAutomatic reboot is allowed at 04:38 server time, including with active users.\nConfigure automatic security updates and SSH Fail2ban? [y/N] ' 'Опция Security настраивает автоматические обновления безопасности и Fail2ban для SSH.\nАвтоматическая перезагрузка разрешена в 04:38 по времени сервера, даже при активных пользователях.\nНастроить автоматические обновления безопасности и Fail2ban для SSH? [y/N] '
+    printf '\n'; msg_inf '  Security'; printf '\n'
+    ui_wrap '' "$(ui_text 'Optional Security configures automatic security updates and SSH Fail2ban.\nAutomatic reboot is allowed at 04:38 server time, including with active users.' 'Опция Security настраивает автоматические обновления безопасности и Fail2ban для SSH.\nАвтоматическая перезагрузка разрешена в 04:38 по времени сервера, даже при активных пользователях.')" 76
+    ui_text 'Configure automatic security updates and SSH Fail2ban? [y/N] ' 'Настроить автоматические обновления безопасности и Fail2ban для SSH? [y/N] '
     IFS= read -r answer || exit 0
     [[ "$answer" != y && "$answer" != Y ]] || apt=y
-    ui_text 'Enable UFW with SSH protection after Restore? [y/N] ' 'Включить UFW с защитой доступа по SSH после Restore? [y/N] '
+    printf '\n'; msg_inf '  UFW'; printf '\n'
+    ui_wrap '' "$(ui_text 'Enable UFW with SSH protection after Restore? [y/N] ' 'Включить UFW с защитой доступа по SSH после Restore? [y/N] ')" 76
+    ui_wrap '' "$(ui_text '  Yes: try to enable UFW with SSH access on Ubuntu 24.04/26.04.\n  No: add app rules and leave UFW on or off as it was.' '  Yes: на Ubuntu 24.04/26.04 попробуем включить UFW с доступом по SSH.\n  No: добавим правила для приложений и сохраним состояние UFW.')" 76
+    printf '  > '
     IFS= read -r answer || exit 0
     [[ "$answer" != y && "$answer" != Y ]] || ufw=y
+    [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text 'WARNING' 'ВНИМАНИЕ')"
     printf '\n'; ui_frame
     ui_wrap '38;5;208' "$(ui_text 'Restore replaces project data on this server: the nginx configuration, the 3x-ui panel and its database, the websites (/var/www/html), project certificates and /root/cert, and AdGuard Home. Any other files in these folders will be deleted. Certificates of other sites are not touched. Trust this archive before continuing.' 'Восстановление заменит данные проекта на этом сервере: настройки nginx, панель 3x-ui с базой, сайты (/var/www/html), сертификаты проекта и /root/cert, AdGuard Home. Всё остальное в этих папках будет удалено. Сертификаты других сайтов не затрагиваются. Продолжайте только с доверенным архивом.')"
     ui_frame
@@ -3962,8 +3987,7 @@ backup_action() (
     [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_title "$(ui_text 'RESTORE RESULT' 'РЕЗУЛЬТАТ ВОССТАНОВЛЕНИЯ')"
     if (( status )); then
         printf 'Restore: FAILED (exit %d)\nOverall: FAILED\n' "$status"
-        msg_err "$(ui_text 'Restore failed. Check the reported rollback state before another operation.' 'Ошибка Restore. Проверьте диагностику и состояние отката перед новой операцией.')"
-        ui_text 'Keep the archive and any reported recovery directory in /var/backups/x-ui.\n' 'Сохраните архив и указанную в диагностике папку восстановления в /var/backups/x-ui.\n'
+        msg_err "$(ui_text 'Restore failed. See the details above before retrying.' 'Ошибка Restore. Перед повтором проверьте сообщение выше.')"
         exit "$status"
     fi
     printf 'Restore: SUCCESS\n'
@@ -4739,17 +4763,33 @@ SERVER_DETAILS
 }
 
 server_details_row() {
-    local label=$1 value=$2 style=${3:-value}
-    printf '    %s' "$label"
-    if [[ -z $value ]]; then
+    local LC_ALL=C.UTF-8 label=$1 value=$2 style=${3:-value} width=${4:-0}
+    local prefix padding=0
+    if (( width > ${#label} )); then padding=$((width - ${#label})); fi
+    printf -v prefix '    %s%*s' "$label" "$padding" ''
+    if (( ! width )); then
+        printf '%s' "$prefix"
+        prefix=''
+    fi
+    if [[ -z $value && $width == 0 ]]; then
         msg_warn "$(ui_text 'not found' 'не найдено')"
-    elif [[ $style == warn ]]; then
-        msg_warn "$value"
-    elif [[ $style == plain ]]; then
-        printf '%s\n' "$value"
     else
-        ui_note '%s' '%s' "$value"
-        printf '\n'
+        case "$style" in
+            ok|inf|warn|err)
+                if (( width && ${#prefix} + ${#value} > 76 )); then
+                    local line continuation
+                    printf -v continuation '%*s' "${#prefix}" ''
+                    while IFS= read -r line; do
+                        "msg_$style" "$prefix$line"
+                        prefix=$continuation
+                    done < <(ui_wrap '' "$value" "$((76 - ${#prefix}))")
+                else
+                    "msg_$style" "$prefix$value"
+                fi
+                ;;
+            plain) printf '%s%s\n' "$prefix" "$value" ;;
+            *) printf '%s' "$prefix"; ui_note '%s' '%s' "$value"; printf '\n' ;;
+        esac
     fi
 }
 
