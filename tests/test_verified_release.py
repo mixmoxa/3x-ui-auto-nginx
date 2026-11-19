@@ -264,6 +264,36 @@ _panel_initial_config() { :; }
         for failure in ('download','pinned-mismatch','invalid-archive','unsafe-member','dependencies'):
             with self.subTest(failure=failure): self.preflight(failure=failure)
 
+    def test_canary_github_token_is_optional_and_stays_in_the_request_header(self):
+        import io
+        import upstream_canary
+        from urllib.error import HTTPError
+        from urllib.request import HTTPRedirectHandler
+        from unittest.mock import patch
+
+        url = 'https://api.github.com/repos/example/project/releases/latest'
+        secret = 'synthetic-canary-secret'
+        for github_token, gh_token, expected in (('', '', ''), (secret, 'unused', secret), ('', secret, secret)):
+            with self.subTest(auth=bool(expected)), \
+                    patch.dict(os.environ, {'GITHUB_TOKEN': github_token, 'GH_TOKEN': gh_token}), \
+                    patch.object(upstream_canary.urllib.request, 'urlopen', return_value=io.BytesIO(b'{"ok":true}')) as opening:
+                self.assertEqual(upstream_canary.fetch_json(url), {'ok': True})
+                request = opening.call_args.args[0]
+                self.assertEqual(request.get_header('Authorization'), 'Bearer '+expected if expected else None)
+                redirected = HTTPRedirectHandler().redirect_request(
+                    request, None, 302, 'Found', {}, 'https://example.invalid/')
+                self.assertIsNone(redirected.get_header('Authorization'))
+                self.assertNotIn(secret, repr(request))
+
+        with patch.dict(os.environ, {'GITHUB_TOKEN': secret}), patch.object(upstream_canary.time, 'sleep'), \
+                patch.object(upstream_canary.urllib.request, 'urlopen',
+                             side_effect=HTTPError(url, 403, secret, {}, None)) as opening:
+            with self.assertRaisesRegex(RuntimeError, r'GitHub release API request failed \(HTTP 403\)') as result:
+                upstream_canary.fetch_json(url)
+            self.assertNotIn(secret, str(result.exception))
+            self.assertTrue(result.exception.__suppress_context__)
+            self.assertEqual(opening.call_count, 3)
+
     def test_canary_selection_and_changed_implementation_cache_identity(self):
         from unittest.mock import patch
         import upstream_canary

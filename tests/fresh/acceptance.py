@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from kvm import preflight
 
 from diagnostics import VISION_STAGES, domain_failure, vision_detail, api_restart_metrics, api_restart_nginx_errors
-from diagnostics import dot_restore_package_report
+from diagnostics import dot_restore_package_report, public_service_diagnostics
 
 ROOT = Path('/pilot')
 REPO = Path('/repo')
@@ -115,6 +115,9 @@ def invoke(expression, result_name, timeout=180, tty=False):
         report[phase+'_dns_probes'] = probes
     if result.returncode:
         failure_location(result.stdout+result.stderr)
+        if phase == 'native-agh-update':
+            for detail in public_service_diagnostics(result.stdout+result.stderr):
+                print(phase+' '+detail, flush=True)
         if phase == 'dot-clean-target':
             failure = re.search(rb'^DoT Restore failure stage: (manager|preflight|packages|archive|replace|startup|unknown)\r?$', result.stdout, re.M)
             if failure:
@@ -146,6 +149,9 @@ def install(scenario, ref):
     (ROOT/(phase+'.private.log')).write_bytes(result.stdout+result.stderr)
     if result.returncode:
         failure_location(result.stderr)
+        if scenario == 'dot-outage':
+            for detail in public_service_diagnostics(result.stderr):
+                print(phase+' '+detail, flush=True)
     try:
         if result.returncode:
             private = ssh('cat /root/pilot/installer.raw.log', 20)

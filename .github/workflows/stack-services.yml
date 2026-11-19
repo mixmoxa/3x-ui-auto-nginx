@@ -34,8 +34,8 @@ jobs:
       - name: Install explicit service test dependencies
         if: steps.scope.outputs.docs_only != 'true'
         run: |
-          timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends nginx libnginx-mod-stream certbot sqlite3 openssl curl python3 python3-configobj python3-cryptography apache2-utils iproute2 qemu-user tar gzip sudo
+          . tests/ci_retry.sh
+          ci_retry ci_apt_install ci_host_apt nginx libnginx-mod-stream certbot sqlite3 openssl curl python3 python3-configobj python3-cryptography apache2-utils iproute2 qemu-user tar gzip sudo
       - name: Canonical completeness
         if: steps.scope.outputs.docs_only != 'true'
         run: python3 tests/run_ci.py --check-completeness
@@ -76,7 +76,9 @@ jobs:
         run: python3 tests/ci_scope.py
       - name: Build Debian 13 native service environment
         if: steps.scope.outputs.docs_only != 'true'
-        run: docker build --build-arg DISTRO=debian:13 -t xui-debian -f tests/systemd/Dockerfile .
+        run: |
+          . tests/ci_retry.sh
+          ci_retry docker build --build-arg DISTRO=debian:13 -t xui-debian -f tests/systemd/Dockerfile .
       - name: Native protocol/API integration with private nonroot state
         if: steps.scope.outputs.docs_only != 'true'
         run: |
@@ -115,8 +117,9 @@ jobs:
         env:
           DISTRO: ${{ matrix.distro }}
         run: |
-          docker build --build-arg "DISTRO=$DISTRO" --build-arg MINIMAL_DNS=1 -t xui-systemd-root -f tests/systemd/Dockerfile .
-          docker build -t xui-systemd-tools -f tests/systemd/tools.Dockerfile .
+          . tests/ci_retry.sh
+          ci_retry docker build --build-arg "DISTRO=$DISTRO" --build-arg MINIMAL_DNS=1 -t xui-systemd-root -f tests/systemd/Dockerfile .
+          ci_retry docker build -t xui-systemd-tools -f tests/systemd/tools.Dockerfile .
       - name: Real APT upgrade and console MTR installation (disposable container)
         if: steps.scope.outputs.docs_only != 'true'
         run: |

@@ -13,6 +13,7 @@ import sqlite3
 import stat
 import struct
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -20,7 +21,7 @@ from urllib.parse import parse_qs, urlsplit
 import uuid
 import ssl
 
-from diagnostics import dot_restore_package_counts, probe_dns, validate_dns
+from diagnostics import agh_listener_diagnostics, dot_restore_package_counts, probe_dns, validate_dns
 
 ROOT = Path('/root/pilot')
 os.umask(0o077)
@@ -876,6 +877,15 @@ def change_domains(single=False, panel_target='panel-next.example.test'):
 
 
 def native_agh_update():
+    try:
+        return _native_agh_update()
+    except Exception:
+        for line in agh_listener_diagnostics('/opt/AdGuardHome/managed.json'):
+            print('CI service: '+line, file=sys.stderr, flush=True)
+        raise
+
+
+def _native_agh_update():
     """Same real systemd guest: historical AGH, enablement, upstream update, v3."""
     import hashlib, shlex, tarfile
     env={**os.environ,**json.loads((ROOT/'environment.json').read_text())}

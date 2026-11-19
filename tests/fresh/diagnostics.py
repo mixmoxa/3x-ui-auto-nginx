@@ -1,10 +1,63 @@
 """Allowlisted public diagnostics; never return raw logs, names, URLs or packets."""
 import ast
 import json
+from pathlib import Path
 import re
 import shlex
 import struct
+import subprocess
 import time
+
+INSTALL_UNITS = ('ssh', 'nginx', 'x-ui', 'mtr-backend', 'AdGuardHome', 'fail2ban',
+                 'apt-daily.timer', 'apt-daily-upgrade.timer', 'certbot.timer')
+AGH_DIAGNOSTIC_UNITS = ('AdGuardHome', 'nginx', 'x-ui')
+UNIT_STATES = 'active|inactive|activating|deactivating|reloading|failed|maintenance|refreshing|unknown'
+
+
+def agh_listener_diagnostics(metadata_path):
+    try:
+        metadata = json.loads(Path(metadata_path).read_text())
+        web, dns = metadata['web_port'], metadata['dns_port']
+        if all(type(port) is int and 0 < port <= 65535 for port in (web, dns)):
+            yield f'Expected ports AdGuardHome web tcp/{web}, DNS udp/{dns}, nginx tcp/443'
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    for unit in AGH_DIAGNOSTIC_UNITS:
+        try:
+            result = subprocess.run(['systemctl', 'is-active', unit], capture_output=True, text=True, errors='replace', timeout=3)
+            state = result.stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            state = 'unknown'
+        yield f'{unit} is-active='+ (state if re.fullmatch(UNIT_STATES, state) else 'unknown')
+    try:
+        listeners = subprocess.check_output(['ss', '-H', '-lntu'], stderr=subprocess.DEVNULL, text=True, errors='replace', timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        yield 'Listening ports unavailable'
+        return
+    ports = set()
+    for line in listeners.splitlines():
+        fields = line.split()
+        if len(fields) >= 5 and fields[0] in ('tcp', 'udp'):
+            port = fields[4].rsplit(':', 1)[-1]
+            if re.fullmatch('[0-9]{1,5}', port) and 0 < int(port) <= 65535:
+                ports.add((fields[0], int(port)))
+    yield 'Listening ports '+ (', '.join(f'{protocol}/{port}' for protocol, port in sorted(ports)) or 'none')
+
+
+def public_service_diagnostics(output):
+    """Accept only fixed unit names/states and protocol/port pairs from guest output."""
+    units = '|'.join(map(re.escape, INSTALL_UNITS))
+    agh_units = '|'.join(AGH_DIAGNOSTIC_UNITS)
+    port = r'(?:tcp|udp)/[0-9]{1,5}'
+    pattern = (rf'CI service: (is-active check failed for (?:{units})|'
+               rf'(?:{agh_units}) is-active=(?:{UNIT_STATES})|'
+               rf'Listening ports (?:unavailable|none|{port}(?:, {port})*)|'
+               r'Expected ports AdGuardHome web tcp/[0-9]{1,5}, DNS udp/[0-9]{1,5}, nginx tcp/443)')
+    for line in output.decode(errors='replace').splitlines():
+        match = re.fullmatch(pattern, line)
+        if match:
+            yield match[1]
+
 
 VISION_STAGES = {
     'rendering ACME configuration':'rendering_acme',

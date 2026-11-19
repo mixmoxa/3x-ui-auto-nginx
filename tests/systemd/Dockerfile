@@ -4,11 +4,15 @@ ARG DISTRO
 ARG MINIMAL_DNS=0
 ENV DEBIAN_FRONTEND=noninteractive
 RUN --mount=type=secret,id=proxy_ca,target=/run/proxy-ca.pem \
-    if test -f /run/proxy-ca.pem; then printf 'Acquire::https::CaInfo "/run/proxy-ca.pem";\n' > /etc/apt/apt.conf.d/99test-proxy; fi; \
-    apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv systemd-resolved dbus \
-    openssh-server fail2ban unattended-upgrades nftables kmod nginx libnginx-mod-stream certbot sqlite3 \
-    python3 python3-systemd python3-cryptography python3-configobj openssl ca-certificates iproute2 curl wget jq procps iptables dpkg-dev tcpdump tar gzip && \
-    if test "$MINIMAL_DNS" = 0; then apt-get install -y --no-install-recommends qemu-user; fi && \
+    --mount=type=bind,source=tests/ci_retry.sh,target=/tmp/ci_retry.sh \
+    . /tmp/ci_retry.sh && \
+    if test -f /run/proxy-ca.pem; then printf 'Acquire::https::CaInfo "/run/proxy-ca.pem";\n' > /etc/apt/apt.conf.d/99test-proxy; fi && \
+    apt_setup() { \
+      ci_apt_install apt-get systemd systemd-sysv systemd-resolved dbus \
+        openssh-server fail2ban unattended-upgrades nftables kmod nginx libnginx-mod-stream certbot sqlite3 \
+        python3 python3-systemd python3-cryptography python3-configobj openssl ca-certificates iproute2 curl wget jq procps iptables dpkg-dev tcpdump tar gzip && \
+      if test "$MINIMAL_DNS" = 0; then apt-get install -y --no-install-recommends qemu-user; fi; \
+    } && ci_retry apt_setup && \
     rm -f /etc/apt/apt.conf.d/99test-proxy && mkdir -p /run/sshd && ssh-keygen -A
 RUN --mount=type=secret,id=proxy_ca,target=/run/proxy-ca.pem \
     mkdir -p /opt/xui-ci && \

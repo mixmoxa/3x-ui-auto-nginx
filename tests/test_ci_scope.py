@@ -27,23 +27,24 @@ class CIScope(unittest.TestCase):
             name='README'+('_'+language if language else '')+'.md'
             text=(ROOT/name).read_text()
             self.assertEqual(text.count('<a id="xhttp-cdn"></a>'),1,name)
-            self.assertTrue(re.search(r'(?m)^### 6\. 🌐 .+XHTTP.*',text),name)
-            self.assertIn('### 8. 🛡️ AdGuard Home + DNS-over-HTTPS',text)
-            self.assertRegex(text,r'(?m)^### 9\. 👤 ')
+            heading=re.search(r'(?m)^#### 4\.4\. 🌐 .*VLESS \+ XHTTP.*$',text)
+            self.assertIsNotNone(heading,name)
+            self.assertIn('### 6. 🛡️ AdGuard Home + DNS-over-HTTPS',text)
+            self.assertRegex(text,r'(?m)^### 7\. 👤 ')
             self.assertIn('<a id="6--adguard-home--dns-over-https"></a>',text)
             prompt='Добавить дополнительное подключение XHTTP, совместимое с CDN? [y/N]:' if not language else 'Add an additional CDN-compatible XHTTP connection? [y/N]:'
             self.assertIn('> `'+prompt+'`',text)
-            section=text.split('### 6. 🌐 ',1)[1].split('\n---',1)[0]
+            section=heading[0]+re.split(r'(?m)^(?:#{1,4} |---$)',text[heading.end():],maxsplit=1)[0]
             for term in ('VLESS','XHTTP','packet-up','CDN','3X-UI','HTTPS','Host'):
                 self.assertIn(term,section,name)
-            table=text.split('| VLESS + XHTTP |',1)[1].splitlines()
-            self.assertIn('CDN',table[1],name)
+            self.assertRegex(text,r'(?m)^\| VLESS \+ XHTTP \|',name)
+            self.assertRegex(text,r'(?m)^\| VLESS \+ XHTTP [^|\n]*CDN[^|\n]* \|',name)
             for link in references(text):
                 destination=local_path(ROOT,name,link)
                 if destination is not None:
                     self.assertTrue(destination.exists(),name+' references missing file')
         pointer=(ROOT/'README_RU.md').read_text()
-        for fragment in ('xhttp-cdn','7--adguard-home--dns-over-https','8--автоматическое-создание-клиента-и-подписки'):
+        for fragment in ('xhttp-cdn','7--adguard-home--dns-over-https','7--автоматическое-создание-клиента-и-подписки'):
             self.assertIn('README.md#'+fragment,pointer)
 
     def setUp(self):
@@ -308,6 +309,25 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
             with self.assertRaises(AssertionError):env['invoke']('checks.change_domains()','domains',tty=True)
             self.assertEqual(env['report'].get('failure_location'),'checks.py:527')
             self.assertNotIn(secret,json.dumps(env['report']))
+
+    def test_service_diagnostics_publish_only_unit_states_and_ports(self):
+        from unittest.mock import patch
+        diagnostics = self.diagnostics()
+        sample = 'udp UNCONN 0 0 *:53 *:*\ntcp LISTEN 0 1 *:443 *:*'
+        metadata = self.repo/'agh.json'
+        metadata.write_text(json.dumps({'web_port': 8080, 'dns_port': 53}))
+        with patch.object(diagnostics.subprocess, 'run', return_value=subprocess.CompletedProcess([], 3, 'failed\n')), \
+                patch.object(diagnostics.subprocess, 'check_output', return_value=sample):
+            lines = list(diagnostics.agh_listener_diagnostics(metadata))
+        self.assertEqual(lines, ['Expected ports AdGuardHome web tcp/8080, DNS udp/53, nginx tcp/443',
+                                 'AdGuardHome is-active=failed', 'nginx is-active=failed',
+                                 'x-ui is-active=failed', 'Listening ports tcp/443, udp/53'])
+        guest = '\r\n'.join('CI service: '+line for line in lines+[
+            'is-active check failed for apt-daily.timer', 'nginx is-active=private-data',
+            'Listening ports tcp/443 https://private.invalid/secret', 'is-active check failed for private-unit',
+        ])
+        self.assertEqual(list(diagnostics.public_service_diagnostics(guest.encode())),
+                         lines+['is-active check failed for apt-daily.timer'])
 
     def test_dns_wire_contract_and_safe_probe_failures(self):
         d = self.diagnostics()

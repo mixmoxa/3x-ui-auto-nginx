@@ -17,6 +17,11 @@ pull requests targeting `main`, and manual `workflow_dispatch`. Full Fresh runs
 on `opened`, `reopened` and `synchronize` (every push) for a PR targeting `main`, Draft included; switching Draft to Ready does not start a new run. These PR validation workflows
 have read-only repository permissions and no repository-secret dependency.
 
+Auto rerun makes at most one automatic retry of failed jobs for a current
+same-repository PR, a push to `main`, or a scheduled Upstream Canary run.
+See the **Auto rerun** workflow's job summary for the decision and the failed
+jobs. The first failed attempt remains in the original run's history.
+
 Reproduce the full suites on a disposable Ubuntu 24.04 test environment:
 
 ```bash
@@ -152,12 +157,11 @@ Ordinary workflow concurrency cancels superseded runs only for the same PR and
 workflow. Main pushes and dispatches have independent run-ID groups; Canary and
 release workflows remain independent. Cancelled runs are not successful checks.
 
-Fresh diagnostics publish only allowlisted Vision stage/exit/rollback fields and
-DNS probe/RCODE/ID-match/Answer-count/expected-A/length/timing values. Unknown
-Vision stages become `unknown`; raw logs, DNS names, packets, credentials and URLs
-remain private. DNS parsing validates the expected Answer A record rather than
-assuming it occupies the final four packet bytes. No retries or timeout increases
-are added; failure remains failure.
+Fresh diagnostics publish allowlisted Vision stage/exit/rollback fields, DNS
+probe metrics, service names and states, and protocol/port pairs. Unknown Vision
+stages become `unknown`. Raw logs, DNS names, packets, credentials, addresses and
+URLs remain private. DNS parsing validates the expected Answer A record. The
+scenario checks keep their original assertions and deadlines.
 
 ## Verified upstream baseline and Canary
 
@@ -167,7 +171,10 @@ The installer bootstraps only release-preflight dependencies, then verifies the 
 
 `upstream-canary.yml` runs daily or manually on free Ubuntu 24.04 runners; PRs changing Canary infrastructure also validate it as a non-required check. It runs the existing integration suite with the candidate's own official x-ui and bundled Xray, including native CLI/migration/SQLite persistence, actual RAW/JSON subscriptions, five transport positive/negative pairs and Mihomo. Its report records version, archive SHA-256, bundled Xray and failure diagnostics. It is **not a required PR check**, never writes the baseline, and has no repository-secret or VPS dependency.
 
-A small Actions cache stores only the tested result, keyed by version, digest and test-implementation fingerprint. Unchanged daily candidates reuse the latest tested PASS/FAIL report; preparation/download failures are reported but not cached as tested; changed artifacts/code and every manual run retest. Each fresh result gets a unique cache key, so manual retesting supersedes previous results. Cache eviction causes a fresh run, not a skip. Reports/logs are retained as artifacts for 30 days.
+A small Actions cache stores only the tested result, keyed by version, digest and test-implementation fingerprint. Unchanged daily candidates reuse the latest tested PASS/FAIL report; preparation/download failures are reported but not cached as tested; changed artifacts/code, manual runs and rerun attempts execute the tests again. Each fresh result gets a unique cache key. Cache eviction causes a fresh run, not a skip. Reports/logs are retained as artifacts for 30 days.
+
+The hosted probe uses GitHub's built-in read-only token for release metadata.
+Local probes use `GITHUB_TOKEN`, fall back to `GH_TOKEN`, and use the public API anonymously if both are unset.
 
 For an explicit local candidate run (non-root, integration dependencies installed):
 

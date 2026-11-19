@@ -17,6 +17,7 @@ SUITES = {
         'test_release_asset.ReleaseAsset',
         'test_installer_compatibility.InstallerCompatibility',
         'test_ci_scope.CIScope',
+        'test_ci_auto_rerun.CIAutoRerun',
         'test_recovery_extract.RecoveryExtract',
         'test_git_identity.GitIdentity',
         'test_integrated_features.IntegratedFeatures',

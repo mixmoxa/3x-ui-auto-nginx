@@ -17,8 +17,13 @@ systemctl() { :; }
 msg_err() { echo "$*" >&2; }
 # shellcheck disable=SC1091
 source "$state/functions"
-apt-get update -o APT::Update::Error-Mode=any
-apt-get install -y --no-install-recommends mtr-tiny openssh-server
+# shellcheck source=tests/ci_retry.sh
+. "$repo/tests/ci_retry.sh"
+apt_test_setup() {
+    apt-get update -o APT::Update::Error-Mode=any &&
+        apt-get install -y --no-install-recommends mtr-tiny openssh-server
+}
+ci_retry apt_test_setup
 mkdir -p /run/sshd
 /usr/sbin/sshd -t
 /usr/sbin/sshd -D -e -p 22322 -o ListenAddress=127.0.0.1 -o "PidFile=$state/sshd.pid" > "$state/sshd.log" 2>&1 &

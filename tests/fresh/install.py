@@ -7,14 +7,21 @@ import re
 import socket
 import ssl
 import subprocess
+import sys
 import time
 import urllib.request
 
-from diagnostics import vision_failure, api_restart_probe
+from diagnostics import INSTALL_UNITS, vision_failure, api_restart_probe
 
 ROOT = Path('/root/pilot')
-UNITS = ('ssh', 'nginx', 'x-ui', 'mtr-backend', 'AdGuardHome', 'fail2ban',
-         'apt-daily.timer', 'apt-daily-upgrade.timer', 'certbot.timer')
+
+
+def require_active(unit):
+    try:
+        subprocess.run(['systemctl', 'is-active', '--quiet', unit], check=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        print(f'CI service: is-active check failed for {unit}', file=sys.stderr, flush=True)
+        raise
 
 
 def mtr_api():
@@ -101,7 +108,7 @@ def install(scenario, ref):
             'xray_runtime_failure': r'Xray must own the REALITY TCP, live XHTTP Unix and Hysteria2 UDP listeners',
         }
         report['components'] = {name: bool(re.search(pattern, private)) for name, pattern in patterns.items()}
-        subprocess.run(['systemctl', 'is-active', '--quiet', 'ssh'], check=True, timeout=10)
+        require_active('ssh')
         subprocess.run(['getent', 'ahosts', 'debian.org'], check=True, capture_output=True, timeout=30)
         if scenario == 'dependency':
             assert result.returncode != 0, 'Mandatory dependency failure returned success'
@@ -118,9 +125,9 @@ def install(scenario, ref):
                 subprocess.run(['systemctl','is-active','--quiet','AdGuardHome'], check=True, timeout=10)
             assert not Path('/etc/fail2ban/jail.d/90-3x-ui-auto-nginx.local').exists()
         else:
-            required = [u for u in UNITS if scenario == 'positive' or u != 'AdGuardHome']
+            required = [u for u in INSTALL_UNITS if scenario == 'positive' or u != 'AdGuardHome']
             for unit in required:
-                subprocess.run(['systemctl', 'is-active', '--quiet', unit], check=True, timeout=10)
+                require_active(unit)
             assert re.search(r'^ +Username: +\S+$', private, re.M)
             assert re.search(r'^ +Password: +\S+$', private, re.M)
             assert re.search(r'\[✓\]\s+Client\s+Created', private)

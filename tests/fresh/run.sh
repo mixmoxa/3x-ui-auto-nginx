@@ -4,6 +4,8 @@ set -Eeuo pipefail
 umask 077
 repository=$(git rev-parse --show-toplevel)
 ref=$(git rev-parse HEAD)
+# shellcheck source=tests/ci_retry.sh
+. "$repository/tests/ci_retry.sh"
 restore_mode=${XUI_RESTORE_ACCEPTANCE:-0}
 fresh_group=all
 if [[ "$restore_mode" != 1 ]]; then
@@ -35,8 +37,8 @@ secret=()
 if [[ -f /etc/ssl/certs/ca-certificates.crt ]]; then
     secret=(--secret id=proxy_ca,src=/etc/ssl/certs/ca-certificates.crt)
 fi
-timeout 8m docker build "${secret[@]}" --build-arg "DISTRO=$distro" -t xui-fresh-root -f "$repository/tests/fresh/Dockerfile" "$repository"
-timeout 8m docker build "${secret[@]}" -t xui-fresh-tools -f "$repository/tests/systemd/tools.Dockerfile" "$repository"
+ci_retry timeout 8m docker build "${secret[@]}" --build-arg "DISTRO=$distro" -t xui-fresh-root -f "$repository/tests/fresh/Dockerfile" "$repository"
+ci_retry timeout 8m docker build "${secret[@]}" -t xui-fresh-tools -f "$repository/tests/systemd/tools.Dockerfile" "$repository"
 date +%s > "$work/images.ready"
 root_container=$(docker create xui-fresh-root)
 docker export "$root_container" -o "$work/rootfs.tar"

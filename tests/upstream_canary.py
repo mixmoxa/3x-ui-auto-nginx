@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 import threading
+import urllib.error
 import urllib.request
 
 from release_contract import ROOT, candidate, stable_version, verify
@@ -15,15 +16,20 @@ from release_contract import ROOT, candidate, stable_version, verify
 
 def fetch_json(url):
     headers = {'Accept':'application/vnd.github+json', 'User-Agent':'3x-ui-auto-nginx-canary'}
-    if os.environ.get('GH_TOKEN'):
-        headers['Authorization'] = 'Bearer '+os.environ['GH_TOKEN']
+    token = os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
+    request = urllib.request.Request(url, headers=headers)
+    if token:
+        request.add_unredirected_header('Authorization', 'Bearer '+token)
     for attempt in range(3):
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as response:
+            with urllib.request.urlopen(request, timeout=30) as response:
                 return json.loads(response.read(8*1024*1024))
-        except Exception:
+        except Exception as error:
             if attempt == 2:
-                raise
+                if not token:
+                    raise
+                status = f' (HTTP {error.code:d})' if isinstance(error, urllib.error.HTTPError) else ''
+                raise RuntimeError('GitHub release API request failed'+status) from None
             time.sleep(1)
 
 
