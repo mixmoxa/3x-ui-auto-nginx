@@ -694,7 +694,8 @@ include /etc/nginx/snippets/x-ui-auto-optional/*.conf;
         helper.write_bytes((ROOT/'assets/adguard/managed.sh').read_bytes())
         snippet = root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf'
         metadata = dict(domain='panel.example', path='adg-AbCdEf123456', web_port=18081)
-        for doh, variant in (('dns-query','legacy'),('dns-query',''),('dns-AbCdEf123456','')):
+        for doh, variant in (('dns-query','legacy'), ('dns-query','pre-ip-headers'),
+                             ('dns-AbCdEf123456','pre-ip-headers'), ('dns-AbCdEf123456','')):
             with self.subTest(doh=doh, variant=variant):
                 (agh/'managed.json').write_text(json.dumps(metadata if doh == 'dns-query' else dict(metadata,doh_path=doh)))
                 snippet.write_bytes(subprocess.check_output(['bash','-c',
@@ -906,6 +907,58 @@ entrypoint
         self.assertIn('Archive number',text);self.assertNotIn('Telegram Web Proxy Manager (TWPM) was found',text)
         code,text=tty_run(script,b'1\n3\n3\n/archive.tar.gz\nn\nn\nyes\n0\n0\n',env=self.f.env)
         self.assertIn(f'{YES_EN} {FRAME} {YES_EN_PROMPT}',' '.join(text.replace(str(root),'').split()));self.assertFalse((root/'restored').exists())
+
+    def test_dot_restore_menu_warns_once_in_selected_language_after_result(self):
+        from test_adguard_backup import AdGuardBackup
+        from test_personal_backup import relocated
+
+        # This class runs after the parallel root shards because Restore scans
+        # process arguments for other Backup utilities.
+        adguard = AdGuardBackup('runTest')
+        adguard.setUp()
+        self.addCleanup(adguard.doCleanups)
+        f = adguard.fixture
+        archive, _, _ = adguard.dot_archive()
+        manager = f.root/'manager.sh'
+        manager.write_text(relocated((ROOT/'x-ui-latest.sh').read_text(), f.root))
+        f.write('/usr/local/bin/x-ui-backup', f.script.read_text(), 0o755)
+        completion = f.root/'restore-completion'
+        code = '''
+source "$1"
+prepare_backup_helper() { :; }
+acquire_stack_lock() { :; }
+recover_domain_operation() { :; }
+UI_LANG=$2 UI_INTERACTIVE=1 UI_COMPLETION_FD=3 backup_action restore 3>"$3"
+'''
+        messages = {
+            'en': ('RESTORE RESULT', 'DoT was restored.', 'firewall rule blocks 853/tcp', 'Phones using Private DNS'),
+            'ru': ('РЕЗУЛЬТАТ ВОССТАНОВЛЕНИЯ', 'DoT восстановлен.', 'Порт 853/tcp закрыт', 'Телефоны с частным DNS'),
+        }
+        for language, (title, start, blocked, limited) in messages.items():
+            for action in ('deny', 'reject', 'limit', None):
+                with self.subTest(language=language, action=action):
+                    result = subprocess.run(
+                        ['bash', '-c', code, 'fixture', str(manager), language, str(completion)],
+                        input=f'{archive}\nn\nn\nYES\n', text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        env={**f.env, 'NO_COLOR': '1', 'UFW_STATE': 'active',
+                             'UFW_ADDED': f'ufw {action} 853/tcp' if action else ''}, timeout=60)
+                    output = result.stdout
+                    self.assertEqual(result.returncode, 0, output)
+                    self.assertEqual(completion.read_text(), 'completed\n')
+                    self.assertLess(output.index(title), output.index('Restore: SUCCESS'))
+                    self.assertLess(output.index('Restore: SUCCESS'), output.index('Overall: SUCCESS'))
+                    other = messages['ru' if language == 'en' else 'en'][1]
+                    self.assertNotIn(other, output)
+                    self.assertEqual(output.count(start), int(action is not None), output)
+                    last = output.strip().splitlines()[-1]
+                    if action:
+                        self.assertTrue(last.startswith(start), output)
+                        self.assertIn(limited if action == 'limit' else blocked, last)
+                        self.assertNotIn(blocked if action == 'limit' else limited, last)
+                        self.assertIn(f'ufw delete {action} 853/tcp', last)
+                        self.assertIn('ufw allow 853/tcp', last)
+                    else:
+                        self.assertEqual(last, 'Overall: SUCCESS', output)
 
     def test_post_restore_security_trust_cleanup_status_lock_and_partial_result(self):
         from test_personal_backup import relocated

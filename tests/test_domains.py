@@ -33,6 +33,12 @@ def rendered_hook(panel, reality, source=None):
                                     'fixture', panel, reality], text=True)
 
 
+def rendered_dot(panel, ipv6):
+    renderer = function('render_adguard_dot')
+    return subprocess.check_output(['bash', '-c', renderer+'\nrender_adguard_dot "$1" 18082 "$2"',
+                                    'fixture', panel, ipv6], text=True)
+
+
 class DomainFixture:
     def __init__(self, root, legacy=False, optional=False, historical=False, ws_grpc='y'):
         self.root = Path(root); self.module = helper('domains')
@@ -300,6 +306,11 @@ class DomainFixture:
                     raise subprocess.CalledProcessError(1,[action])
                 if action == 'render-hook':
                     return rendered_hook(*args)
+                if action == 'render-dot':
+                    panel, port, ipv6 = args
+                    if str(port) != '18082':
+                        raise AssertionError('Unexpected fixture DNS port')
+                    return rendered_dot(panel, ipv6)
                 if action == 'hook':
                     if fixture.p(fixture.module.HOOK).read_text() != rendered_hook(*args):
                         raise fixture.module.Refusal('Unowned project hook.')
@@ -344,7 +355,7 @@ curl() {
             names = ('check_certificate_identity', 'check_webroot_lineage', 'check_no_legacy_certbot_cron',
                      'check_acme_http', 'check_certificate_renewal', 'render_certificate_hook',
                      'check_xray_runtime', 'check_configured_xray_runtime', 'check_installation',
-                     'check_awg_reinstall_owner', 'ui_text', 'msg_err')
+                     'check_awg_reinstall_owner', 'ui_text', 'msg_err', 'render_adguard_dot')
             body += '\n'.join(function(name) for name in names)+'\n'+source+'\nprepare_domains_tools\n'
             result = subprocess.run(['bash', '-c', body], capture_output=True, text=True,
                                     env={**os.environ, 'REPOSITORY': str(ROOT)})
@@ -980,6 +991,63 @@ curl() {
                 self.assertTrue(f.p('/etc/letsencrypt/archive/deploy.example/privkey1.pem').read_bytes()==oldcert,'Old certificate key changed')
                 self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
                 self.assertTrue(all(v=='active' for v in f.services.values()))
+
+    def dot_fixture(self, ipv6=False):
+        f = self.fixture(optional=True)
+        metadata = f.p(f.module.AGH)
+        metadata.write_text(json.dumps({**json.loads(metadata.read_text()), 'dns_port': 18082}))
+        main = f.p('/etc/nginx/nginx.conf')
+        main.write_text(main.read_text().replace('stream-enabled/*.conf; }',
+                                                 'stream-enabled/*.conf; include /etc/nginx/stream-dot.d/*.conf; }'))
+        if not ipv6:
+            stream = f.p(f.module.STREAM)
+            stream.write_text(re.sub(r'(?m)^[ \t]*listen[ \t]+\[::\]:443;[ \t]*\n', '', stream.read_text()))
+        fragment = '/etc/nginx/stream-dot.d/adguard-dot.conf'
+        f.write(fragment, rendered_dot(f.panel, 'y' if ipv6 else 'n'))
+        f.write('/etc/nginx/stream-dot.d/foreign.conf', '# administrator configuration\n')
+        return f, f.p(fragment)
+
+    def test_change_panel_and_reality_with_dot(self):
+        for ipv6 in (False, True):
+            with self.subTest(ipv6=ipv6):
+                f, dot = self.dot_fixture(ipv6)
+                f.change('dot-panel.example')
+                self.assertEqual(dot.read_text(), rendered_dot('dot-panel.example', 'y' if ipv6 else 'n'))
+                before = (dot.read_bytes(), dot.stat().st_mtime_ns)
+                foreign = dot.with_name('foreign.conf')
+                foreign_before = (foreign.read_bytes(), foreign.stat().st_ino)
+                f.change(reality='dot-cover.example')
+                self.assertEqual((dot.read_bytes(), dot.stat().st_mtime_ns), before)
+                self.assertEqual((foreign.read_bytes(), foreign.stat().st_ino), foreign_before)
+
+    def test_dot_domain_rollback_restores_original_fragment(self):
+        f, dot = self.dot_fixture()
+        before = f.state(), dot.read_bytes(), dot.stat().st_mtime_ns
+        f.fault = 'verifying new stack'
+        with self.assertRaises(subprocess.CalledProcessError):
+            f.change('dot-panel.example')
+        self.assertTrue(f.fault_used)
+        self.assertEqual((f.state(), dot.read_bytes(), dot.stat().st_mtime_ns), before)
+        self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
+
+    def test_dot_mismatch_and_duplicate_stream_refuse_before_backup(self):
+        for fault in ('wrong-fragment', 'duplicate-stream'):
+            with self.subTest(fault=fault):
+                f, dot = self.dot_fixture()
+                main = f.p('/etc/nginx/nginx.conf')
+                if fault == 'wrong-fragment':
+                    dot.write_text(dot.read_text().replace('dot_conn 50', 'dot_conn 51'))
+                    error = 'adguard-dot.conf.*default'
+                else:
+                    main.write_text(main.read_text()+next(line for line in main.read_text().splitlines(keepends=True)
+                                                         if line.startswith('stream ')))
+                    error = 'nginx.conf.*stream'
+                before = f.state(), main.read_bytes(), dot.read_bytes()
+                with self.assertRaisesRegex(f.module.Refusal, error):
+                    f.change('dot-panel.example')
+                self.assertEqual((f.state(), main.read_bytes(), dot.read_bytes()), before)
+                self.assertFalse(any(args[0] in ('bash', 'certbot') for _, args in f.calls))
+                self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
 
     def test_change_domains_on_both_installer_layouts(self):
         for choice in ('y', 'n'):

@@ -213,7 +213,7 @@ enable_agh_updates
         # Private trusted fixture digest; actual sha256sum remains unstubbed.
         self.fixture.script.write_text(self.fixture.script.read_text().replace(OFFICIAL_AMD64_SHA, LEGACY_FIXTURE_BINARY_SHA))
 
-    def install_fixture(self, active=True, legacy=False, doh_path=None):
+    def install_fixture(self, active=True, legacy=False, doh_path=None, variant=''):
         f=self.fixture
         f.write('/opt/AdGuardHome/AdGuardHome',BINARY,0o755)
         f.write('/opt/AdGuardHome/AdGuardHome.yaml', adguard_yaml(legacy), 0o600)
@@ -229,20 +229,108 @@ enable_agh_updates
         f.write('/usr/local/lib/3x-ui-pro/managed-adguard.sh',relocate(helper,self.root).replace(OFFICIAL_AMD64_SHA, LEGACY_FIXTURE_BINARY_SHA),0o600)
         # Generate the exact snippet from the same managed helper.
         import subprocess
-        r=subprocess.run(['bash','-c','source "$1"; AGH_WEB_PORT=18081; AGH_PATH=adg-ABCDEFGHIJKL; AGH_DOH_PATH=$2; agh_snippet',
-                          'fixture',str(f.path('/usr/local/lib/3x-ui-pro/managed-adguard.sh')),doh_path or ''],capture_output=True,text=True)
+        r=subprocess.run(['bash','-c','source "$1"; AGH_WEB_PORT=18081; AGH_PATH=adg-ABCDEFGHIJKL; AGH_DOH_PATH=$2; agh_snippet "$3"',
+                          'fixture',str(f.path('/usr/local/lib/3x-ui-pro/managed-adguard.sh')),doh_path or '',variant],
+                         capture_output=True,text=True)
         self.assertEqual(r.returncode,0,r.stderr)
         f.write('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf',r.stdout,0o600)
         f.write('/etc/systemd/system/AdGuardHome.service',f'ExecStart={self.root}/opt/AdGuardHome/AdGuardHome -c {self.root}/opt/AdGuardHome/AdGuardHome.yaml -w {self.root}/opt/AdGuardHome -s run --no-check-update\n')
         services=json.loads((self.root/'services.json').read_text());services['AdGuardHome']='active' if active else 'inactive';(self.root/'services.json').write_text(json.dumps(services))
         enabled=json.loads((self.root/'enabled.json').read_text());enabled['AdGuardHome']=True;(self.root/'enabled.json').write_text(json.dumps(enabled))
 
+    def dot_archive(self, foreign=False):
+        import subprocess
+        from certificate_fixtures import function
+        f = self.fixture
+        self.install_fixture(doh_path='dns-AbCdEf123456')
+        main = f.path('/etc/nginx/nginx.conf')
+        main.write_text('load_module /usr/lib/nginx/modules/ngx_stream_module.so;\n'
+                        + main.read_text() + f'stream {{ include {f.root}/etc/nginx/stream-enabled/*.conf; '
+                                              f'include {f.root}/etc/nginx/stream-dot.d/*.conf; }}\n')
+        f.path('/etc/nginx/stream-enabled').mkdir(exist_ok=True)
+        dot_name = '/etc/nginx/stream-dot.d/adguard-dot.conf'
+        body = subprocess.check_output(['bash', '-c', function('render_adguard_dot')
+                                        + '\nrender_adguard_dot example.com 18082 n'], text=True)
+        f.write(dot_name, relocate(body, f.root), 0o644)
+        if foreign:
+            f.write('/etc/nginx/stream-dot.d/foreign.conf', '# foreign source\n')
+        return f.backup(), f.path(dot_name), main
+
+    def test_dot_backup_and_restore_leave_foreign_fragment_in_place(self):
+        f = self.fixture
+        archive, dot, main = self.dot_archive(foreign=True)
+        saved_dot, saved_main = dot.read_bytes(), main.read_bytes()
+        with tarfile.open(archive) as tar:
+            self.assertEqual(tar.extractfile(f.member('/etc/nginx/stream-dot.d/adguard-dot.conf')).read(), saved_dot)
+            self.assertEqual(tar.extractfile(f.member('/etc/nginx/nginx.conf')).read(), saved_main)
+            self.assertNotIn(f.member('/etc/nginx/stream-dot.d/foreign.conf'), tar.getnames())
+        dot.unlink()
+        foreign = dot.with_name('foreign.conf')
+        foreign.write_text('# foreign target\n')
+        inode = foreign.stat().st_ino
+        result = f.run_tool('restore', archive)
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertEqual((dot.read_bytes(), main.read_bytes()), (saved_dot, saved_main))
+        self.assertEqual(dot.stat().st_mode & 0o777, 0o644)
+        self.assertEqual((foreign.read_text(), foreign.stat().st_ino), ('# foreign target\n', inode))
+        self.assertIn(['ufw', 'allow', '853/tcp'], f.commands())
+
+    def test_dot_firewall_rollback_restores_rules_and_nginx(self):
+        f = self.fixture
+        archive, dot, main = self.dot_archive()
+        dot.unlink()
+        foreign = dot.with_name('foreign.conf')
+        foreign.write_text('# administrator\n')
+        before_main, inode = main.read_bytes(), foreign.stat().st_ino
+        os.setxattr(main, 'user.fixture', b'rollback metadata')
+        rules = [f.path('/etc/ufw/'+name) for name in ('user.rules', 'user6.rules')]
+        for path in rules:
+            path.write_text('original administrator rule\n')
+        original = [path.read_bytes() for path in rules]
+        result = f.run_tool('restore', archive, UFW_STATE='active', SCOPED_EFFECTS='1',
+                            FAIL_HEALTH_SERVICE='mtr-backend', FAIL_ONCE='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(['ufw', 'allow', '853/tcp'], f.commands())
+        self.assertIn(['ufw', 'reload'], f.commands())
+        self.assertIn('Previous managed state/service states restored and checked', result.stderr)
+        self.assertEqual([path.read_bytes() for path in rules], original)
+        self.assertEqual(main.read_bytes(), before_main)
+        self.assertEqual(os.getxattr(main, 'user.fixture'), b'rollback metadata')
+        self.assertFalse(dot.exists())
+        self.assertEqual((foreign.read_text(), foreign.stat().st_ino), ('# administrator\n', inode))
+
+    def test_dot_restore_respects_admin_ufw_rule_and_warns_last(self):
+        f = self.fixture
+        archive, dot, _ = self.dot_archive()
+        for action in ('deny', 'reject', 'limit'):
+            with self.subTest(action=action):
+                (f.root/'commands').unlink(missing_ok=True)
+                dot.unlink(missing_ok=True)
+                # Capture the exact administrator rule separately from additions to other ports.
+                rules = [f.path('/etc/ufw/'+name) for name in ('user.rules', 'user6.rules')]
+                existing = action+' 853/tcp # administrator\n'
+                for path in rules:
+                    path.write_text(existing)
+                result = f.run_tool('restore', archive, merge_output=True,
+                                    UFW_ADDED=f"ufw {action} 853/tcp comment 'administrator'",
+                                    UFW_STATE='active', SCOPED_EFFECTS='1')
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertIn('Restore completed successfully.', result.stdout)
+                self.assertTrue(dot.is_file())
+                self.assertNotIn(['ufw', 'allow', '853/tcp'], f.commands())
+                self.assertTrue(all(path.read_text().startswith(existing) for path in rules))
+                warning = result.stdout.strip().splitlines()[-1]
+                self.assertIn('Private DNS' if action == 'limit' else 'firewall rule blocks 853/tcp', warning)
+                self.assertIn(f'ufw delete {action} 853/tcp', warning)
+                self.assertIn('ufw allow 853/tcp', warning)
+
     def test_legacy_and_clientid_archives_restore_without_upgrading_state(self):
         import hashlib
         f=self.fixture
-        for legacy, doh_path in ((True, None), (False, None), (False, 'dns-AbCdEf123456')):
-            with self.subTest(legacy=legacy, doh_path=doh_path):
-                self.install_fixture(legacy=legacy, doh_path=doh_path)
+        for legacy, doh_path, variant in ((True, None, ''), (False, None, 'pre-ip-headers'),
+                                          (False, 'dns-AbCdEf123456', 'pre-ip-headers'), (False, 'dns-AbCdEf123456', '')):
+            with self.subTest(legacy=legacy, doh_path=doh_path, variant=variant):
+                self.install_fixture(legacy=legacy, doh_path=doh_path, variant=variant)
                 snippet=f.path('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf')
                 metadata=f.path('/opt/AdGuardHome/managed.json')
                 saved={path:path.read_bytes() for path in (snippet,
@@ -270,6 +358,7 @@ enable_agh_updates
         self.assertFalse(f.path('/opt/AdGuardHome').exists())
         self.assertFalse(f.path('/etc/systemd/system/AdGuardHome.service').exists())
         self.assertFalse(f.path('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf').exists())
+        self.assertNotIn(['ufw', 'allow', '853/tcp'], f.commands())
         self.assertNotIn('binary -c', (self.root/'binary-calls').read_text() if (self.root/'binary-calls').exists() else '')
 
     def test_stopped_adguard_restore_never_starts_it_and_preserves_data(self):

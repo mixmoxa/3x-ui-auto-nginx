@@ -71,6 +71,7 @@ def install(scenario, ref):
         answers = b'y\ny\ny\ny\nvision.example.test\ny\ny\nn\ny\nn\ny\n'
         if scenario == 'dot-outage': answers = b'y\nn\nn\nn\ny\n'
         if scenario == 'restore-source': answers = b'n\nn\nn\nn\nn\n'
+        if scenario == 'dot-restore-source': answers = b'n\nn\nn\ny\ny\nn\n'
         started = time.monotonic()
         with (ROOT/'installer.raw.log').open('wb') as log:
             result = subprocess.run(['bash', str(ROOT/'x-ui-latest.sh'), '-subdomain',
@@ -108,11 +109,13 @@ def install(scenario, ref):
             assert 'nginx-full' in private and 'no installation candidate' in private.lower()
             assert 'Installation Result' not in private, 'Mandatory failure displayed success summary'
             assert not Path('/usr/local/x-ui/x-ui').exists()
-        elif scenario == 'restore-source':
+        elif scenario in ('restore-source', 'dot-restore-source'):
             assert result.returncode == 0, 'Minimal source installation failed'
             for unit in ('ssh','nginx','x-ui','mtr-backend','certbot.timer'):
                 subprocess.run(['systemctl','is-active','--quiet',unit], check=True, timeout=10)
-            assert not Path('/opt/AdGuardHome').exists()
+            assert Path('/opt/AdGuardHome').exists() == (scenario == 'dot-restore-source')
+            if scenario == 'dot-restore-source':
+                subprocess.run(['systemctl','is-active','--quiet','AdGuardHome'], check=True, timeout=10)
             assert not Path('/etc/fail2ban/jail.d/90-3x-ui-auto-nginx.local').exists()
         else:
             required = [u for u in UNITS if scenario == 'positive' or u != 'AdGuardHome']

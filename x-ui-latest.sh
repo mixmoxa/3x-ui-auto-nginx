@@ -3895,7 +3895,7 @@ PYSECURITY
 backup_action() (
     acquire_stack_lock || exit $?
     recover_domain_operation || exit $?
-    local action=$1 choice archive answer apt=n ufw=n RESTORE_SECURITY_DIR=''
+    local action=$1 choice archive answer apt=n ufw=n RESTORE_SECURITY_DIR='' restore_warning=''
     trap '[[ -z "$RESTORE_SECURITY_DIR" ]] || rm -rf -- "$RESTORE_SECURITY_DIR"' EXIT
     if [[ "$action" == list ]]; then backup_list; exit $?; fi
     prepare_backup_helper || exit 1
@@ -3954,7 +3954,10 @@ backup_action() (
     fi
     local status=0
     [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_title "$(ui_text 'RESTORING BACKUP' 'ВОССТАНОВЛЕНИЕ')"
-    bash /usr/local/bin/x-ui-backup restore "$archive" || status=$?
+    {
+        restore_warning=$(XUI_RESTORE_WARNING_FD=5 XUI_RESTORE_LANG=${UI_LANG:-en} \
+            bash /usr/local/bin/x-ui-backup restore "$archive" 5>&1 1>&6) || status=$?
+    } 6>&1
     # The foreground child has exited, including its EXIT cleanup.
     [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_title "$(ui_text 'RESTORE RESULT' 'РЕЗУЛЬТАТ ВОССТАНОВЛЕНИЯ')"
     if (( status )); then
@@ -3973,6 +3976,7 @@ backup_action() (
     else
         ui_complete
     fi
+    if [[ -n "$restore_warning" ]]; then msg_warn "$restore_warning"; fi
     exit "$status"
 )
 
@@ -4010,13 +4014,14 @@ prepare_domains_tools() {
         cat "$DOMAINS_STAGE/adguard.sh"
         local name
         for name in check_certificate_identity check_webroot_lineage check_no_legacy_certbot_cron check_acme_http \
-                    check_certificate_renewal render_certificate_hook check_xray_runtime check_configured_xray_runtime check_installation check_awg_reinstall_owner ui_text msg_err; do
+                    check_certificate_renewal render_certificate_hook check_xray_runtime check_configured_xray_runtime check_installation check_awg_reinstall_owner ui_text msg_err render_adguard_dot; do
             declare -f "$name" || return 1
         done
         cat <<'DOMAIN_CHECKS'
 case "$1" in
     lineage) check_certificate_identity "$2" && check_webroot_lineage "$2" ;;
     render-hook) render_certificate_hook "$2" "$3" ;;
+    render-dot) render_adguard_dot "$2" "$3" "$4" ;;
     hook)
         matched=n
         for variant in current legacy hardened; do
@@ -4651,7 +4656,7 @@ def adguard(panel, vhost, declared):
             chain = [helper, *(p for p in helper.parents if p.is_relative_to(root))]
             if helper.is_file() and all(p.lstat().st_uid == 0 and not p.is_symlink() and
                                         not p.lstat().st_mode & 0o022 for p in chain):
-                for variant in ('', 'legacy') if 'doh_path' not in meta else ('',):
+                for variant in ('', 'pre-ip-headers', 'legacy') if 'doh_path' not in meta else ('', 'pre-ip-headers'):
                     rendered = subprocess.check_output([
                         'bash', '-c', 'source "$1" && AGH_PATH=$2 AGH_WEB_PORT=$3 AGH_DOH_PATH=$4 agh_snippet "$5"',
                         'server-details', str(helper), path, str(port), doh_path, variant,
@@ -4935,7 +4940,7 @@ PY
     }
     local snippet
     snippet=$(cat "$AGH_SNIPPET") || exit 1
-    [[ "$snippet" == "$(agh_snippet)" || ( $AGH_DOH_PATH == dns-query && "$snippet" == "$(agh_snippet legacy)" ) ]] || exit 1
+    [[ "$snippet" == "$(agh_snippet)" || "$snippet" == "$(agh_snippet pre-ip-headers)" || ( $AGH_DOH_PATH == dns-query && "$snippet" == "$(agh_snippet legacy)" ) ]] || exit 1
     [[ "$AGH_ARCH" == "$(dpkg --print-architecture)" ]] || exit 1
     if (( was_active )); then agh_health && agh_dns_probe || exit 1; fi
     if [[ -e "${targets[4]}" || -L "${targets[4]}" ]]; then

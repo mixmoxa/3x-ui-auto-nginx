@@ -214,7 +214,10 @@ elif name == 'ss':
                 print('udp UNCONN 0 128 *:443 *:* users:(("xray",pid=43210,fd=3))')
     if (root / 'opt/AdGuardHome/managed.json').exists() and '-lxnp' not in args:
         m=json.loads((root / 'opt/AdGuardHome/managed.json').read_text())
-        for protocol, key in (('tcp', 'web_port'), ('udp', 'dns_port')):
+        listeners = [('tcp', 'web_port'), ('udp', 'dns_port')]
+        if (root / 'etc/nginx/stream-dot.d/adguard-dot.conf').is_file():
+            listeners.append(('tcp', 'dns_port'))
+        for protocol, key in listeners:
             print(f'{protocol} LISTEN 0 128 127.0.0.1:{m[key]} 0.0.0.0:* users:(("AdGuardHome",pid=12345,fd=5))')
 elif name == 'crontab':
     path = root / 'crontab'
@@ -292,6 +295,8 @@ elif name in ('python3', 'gzip'):
 elif name == 'ufw':
     if args == ['status']:
         print('Status: ' + os.environ.get('UFW_STATE', 'inactive'))
+    elif args == ['show', 'added']:
+        print(os.environ.get('UFW_ADDED', ''))
     elif args[:1] == ['allow'] and os.environ.get('SCOPED_EFFECTS'):
         for name in ('user.rules','user6.rules'):
             with open(root/'etc/ufw'/name,'a') as out: out.write('allow '+args[1]+'\n')
@@ -477,12 +482,13 @@ class PersonalBackup(unittest.TestCase):
         path.write_text(contents)
         path.chmod(mode)
 
-    def run_tool(self, *args, **env):
+    def run_tool(self, *args, merge_output=False, **env):
         # Sourcing allows a root-check stub for unprivileged fixture execution.
         result = subprocess.run(['bash', '-c', 'source "$1"; shift; require_root() { :; }; '+('acquire_stack_lock() { :; }; ' if os.geteuid()!=0 else '')+'main "$@"',
                                  'fixture', str(self.script), *map(str, args)],
-                                env={**self.env, **env}, text=True, capture_output=True)
-        self.assertNotIn('fixture-secret-not-for-output', result.stdout + result.stderr)
+                                env={**self.env, **env}, text=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT if merge_output else subprocess.PIPE)
+        self.assertNotIn('fixture-secret-not-for-output', result.stdout + (result.stderr or ''))
         return result
 
     def commands(self):

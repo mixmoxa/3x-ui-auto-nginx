@@ -33,7 +33,7 @@ RESUME_AGH=0 ADGUARD_HOME=false AGH_ARCH=
 RESTORE_RECOVERY=0 RESTORE_MUTATED=0 ROLLBACK_DIR=
 declare -A OLD_ACTIVE=() OLD_ENABLED=()
 declare -A RESTORED_ACTIVE=() RESTORED_ENABLED=()
-BACKUP_SERVICE_STATES=
+BACKUP_SERVICE_STATES= RESTORE_DOT_WARNING=
 
 stage() { STAGE=$*; printf '\n==> %s\n' "$*"; }
 ok()    { printf '[OK] %s\n' "$*"; }
@@ -135,7 +135,7 @@ load_adguard_backup_state() {
         local snippet AGH_DOH_PATH=dns-query
         agh_config && agh_unit || die 'AdGuard Home configuration/service contract is invalid.'
         snippet=$(cat "$AGH_SNIPPET") || die 'Cannot read AdGuard Home nginx state.'
-        [[ "$snippet" == "$(agh_snippet)" || ( $AGH_DOH_PATH == dns-query && "$snippet" == "$(agh_snippet legacy)" ) ]] || die 'AdGuard Home nginx state is inconsistent.'
+        [[ "$snippet" == "$(agh_snippet)" || "$snippet" == "$(agh_snippet pre-ip-headers)" || ( $AGH_DOH_PATH == dns-query && "$snippet" == "$(agh_snippet legacy)" ) ]] || die 'AdGuard Home nginx state is inconsistent.'
         [[ "$AGH_ARCH" == "$ARCH" ]] || die 'AdGuard Home architecture does not match the host.'
         ADGUARD_HOME=true
     fi
@@ -558,11 +558,39 @@ current_ipv4() {
     printf '%s\n' "$candidate"
 }
 
+# The existing nginx tree is portable except for neighbors of our DoT fragment.
+copy_nginx_without_dot_dir() {
+    # Match cp -a for local rollback snapshots, including permission metadata.
+    local -a attributes=(--acls --xattrs '--xattrs-include=*' --selinux)
+    mkdir -p -- "$2" &&
+        tar -C "$1" "${attributes[@]}" --anchored --exclude='./stream-dot.d' -cf - . |
+        tar -C "$2" "${attributes[@]}" -xpf -
+}
+
+copy_nginx_tree() {
+    local source=$1 target=$2 relative=stream-dot.d/adguard-dot.conf
+    if [[ ! -e "$source/stream-dot.d" && ! -L "$source/stream-dot.d" ]]; then
+        cp -aT -- "$source" "$target"
+        return
+    fi
+    copy_nginx_without_dot_dir "$source" "$target" || return 1
+    if [[ -d "$source/stream-dot.d" && ! -L "$source/stream-dot.d" ]]; then
+        mkdir -m 0755 -- "$target/stream-dot.d" || return 1
+        if [[ -f "$source/$relative" && ! -L "$source/$relative" ]]; then
+            cp -a -- "$source/$relative" "$target/$relative" || return 1
+        fi
+    fi
+}
+
 collect_path() {
     local path=$1
     if [[ -e "$path" || -L "$path" ]]; then
         mkdir -p "$STAGING/files$(dirname "$path")"
-        cp -a -- "$path" "$STAGING/files$path"
+        if [[ "$path" == /etc/nginx ]]; then
+            copy_nginx_tree "$path" "$STAGING/files$path"
+        else
+            cp -a -- "$path" "$STAGING/files$path"
+        fi
     fi
 }
 
@@ -807,12 +835,44 @@ PY
     ok "Backup format 3; OS $OS_ID $OS_VERSION; architecture $ARCH"
 }
 
+replace_nginx_state() {
+    local source=$1 target=/etc/nginx relative=stream-dot.d/adguard-dot.conf
+    local dot_dir="$target/stream-dot.d"
+    if [[ ! -e "$dot_dir" && ! -L "$dot_dir" ]]; then
+        rm -rf -- "$target" || return 1
+        if [[ -d "$source" ]]; then cp -aT -- "$source" "$target" || return 1; fi
+        return 0
+    fi
+    # Leave the directory and its foreign entries in place on the target.
+    if [[ -f "$source/$relative" && ( ! -d "$dot_dir" || -L "$dot_dir" ) ]]; then
+        warn 'Cannot restore adguard-dot.conf in the existing /etc/nginx/stream-dot.d path.'
+        return 1
+    fi
+    find "$target" -mindepth 1 -maxdepth 1 ! -name stream-dot.d -exec rm -rf -- {} + || return 1
+    if [[ -d "$source" ]]; then copy_nginx_without_dot_dir "$source" "$target" || return 1; fi
+    if [[ -d "$dot_dir" && ! -L "$dot_dir" ]]; then
+        if [[ -f "$source/$relative" ]]; then
+            cp -aT --remove-destination -- "$source/$relative" "$target/$relative" || return 1
+        elif [[ -f "$target/$relative" && ! -L "$target/$relative" ]]; then
+            rm -f -- "$target/$relative" || return 1
+        fi
+        if [[ ${2:-} == rollback && ! -d "$source/stream-dot.d" ]]; then
+            # A failed clean Restore may have created the directory.
+            rmdir --ignore-fail-on-non-empty -- "$dot_dir" || return 1
+        fi
+    fi
+}
+
 replace_managed_state() {
     local path source
     for path in "${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" /var/www/diagnostics; do
         source="$STAGING/files$path"
         if [[ "$path" == /etc/letsencrypt ]]; then
             restore_project_certificates "$source"
+            continue
+        fi
+        if [[ "$path" == /etc/nginx ]]; then
+            replace_nginx_state "$source" || die 'Cannot restore nginx configuration.'
             continue
         fi
         rm -rf -- "$path"
@@ -1221,6 +1281,42 @@ PY
     check_no_legacy_certbot_cron && nginx -t && check_acme_http "$domain" "$reality_domain"
 }
 
+restore_dot_firewall() {
+    local rules line action log_command delete_commands='' blocked=0 limited=0
+    # Adding a rule with identical selectors can replace the administrator's action.
+    local exact='^ufw (deny|reject|limit)( log(-all)?)? 853/tcp( comment .*)?$'
+    rules=$(LC_ALL=C ufw show added) || die 'Cannot read existing UFW rules for 853/tcp.'
+    while IFS= read -r line; do
+        [[ "$line" =~ $exact ]] || continue
+        action=${BASH_REMATCH[1]} log_command=${BASH_REMATCH[2]}
+        delete_commands+="${delete_commands:+; }ufw delete ${action}${log_command} 853/tcp"
+        if [[ "$action" == limit ]]; then limited=1; else blocked=1; fi
+    done <<< "$rules"
+    if [[ -z "$delete_commands" ]]; then
+        ufw allow 853/tcp || die 'Cannot restore the DoT firewall rule for 853/tcp.'
+        return
+    fi
+    if [[ ${XUI_RESTORE_LANG:-en} == ru ]]; then
+        RESTORE_DOT_WARNING='DoT восстановлен.'
+        if (( blocked )); then
+            RESTORE_DOT_WARNING+=' Порт 853/tcp закрыт правилом файрвола администратора, поэтому снаружи DoT не заработает.'
+        fi
+        if (( limited )); then
+            RESTORE_DOT_WARNING+=' Правило limit для 853/tcp блокирует адрес, который слишком часто подключается. Телефоны с частным DNS могут переподключаться часто и попадать под это ограничение.'
+        fi
+        RESTORE_DOT_WARNING+=" Проверьте правила командой ufw status numbered. Чтобы снять ограничение, удалите нужное правило ($delete_commands) и выполните ufw allow 853/tcp."
+    else
+        RESTORE_DOT_WARNING='DoT was restored.'
+        if (( blocked )); then
+            RESTORE_DOT_WARNING+=' The administrator’s firewall rule blocks 853/tcp, so DoT will be unavailable from outside.'
+        fi
+        if (( limited )); then
+            RESTORE_DOT_WARNING+=' The limit rule on 853/tcp blocks addresses that connect too often. Phones using Private DNS may reconnect frequently and hit this limit.'
+        fi
+        RESTORE_DOT_WARNING+=" Check your rules with ufw status numbered. To remove the restriction, delete the applicable rule ($delete_commands) and run ufw allow 853/tcp."
+    fi
+}
+
 snapshot_restore_firewall() {
     local path status
     status=$(LC_ALL=C ufw status) || return 1
@@ -1261,6 +1357,10 @@ restore_firewall() {
     local awg status
     awg=$(sqlite3 "$DB" "SELECT count(*) FROM inbounds WHERE protocol='amneziawg' AND tag='inbound-8443-udp' AND port=8443 AND enable=1 AND listen='0.0.0.0';") || die 'Cannot read restored AmneziaWG firewall state.'
     if [[ "$awg" == 1 ]]; then ufw allow 8443/udp || die 'Cannot restore AmneziaWG firewall rule.'; fi
+    if [[ -f /etc/nginx/stream-dot.d/adguard-dot.conf && ! -L /etc/nginx/stream-dot.d/adguard-dot.conf &&
+          ! -L /etc/nginx/stream-dot.d ]]; then
+        restore_dot_firewall
+    fi
     status=$(LC_ALL=C ufw status) || die 'Cannot read UFW status.'
     if ! grep -q '^Status: active$' <<< "$status"; then
         warn 'UFW is inactive; application rules added without enabling the firewall.'
@@ -1668,6 +1768,10 @@ PY
 
 agh_snippet() {
     local doh_path=${AGH_DOH_PATH:-dns-query} client_route='' exact_rewrite='' client_rewrite=''
+    local reset_ip_headers=''
+    if [[ ${1:-} != legacy && ${1:-} != pre-ip-headers ]]; then
+        reset_ip_headers=$'    proxy_set_header CF-Connecting-IP "";\n    proxy_set_header True-Client-IP "";\n'
+    fi
     # AdGuard Home ValidateClientID: one hostname label, 1..63 bytes.
     local client_id='[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?'
     if [[ ${1:-} == legacy ]]; then
@@ -1687,7 +1791,7 @@ ${client_rewrite}    proxy_pass http://127.0.0.1:${AGH_WEB_PORT};
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$remote_addr;
     proxy_set_header X-Forwarded-Proto https;
-    proxy_buffering off;
+${reset_ip_headers}    proxy_buffering off;
     proxy_intercept_errors off;
     access_log off;
 }
@@ -1704,7 +1808,7 @@ ${exact_rewrite}    proxy_pass http://127.0.0.1:${AGH_WEB_PORT};
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$remote_addr;
     proxy_set_header X-Forwarded-Proto https;
-    proxy_buffering off;
+${reset_ip_headers}    proxy_buffering off;
     proxy_intercept_errors off;
     access_log off;
 }
@@ -1719,7 +1823,7 @@ location ^~ /${AGH_PATH}/ {
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$remote_addr;
     proxy_set_header X-Forwarded-Proto https;
-    proxy_intercept_errors off;
+${reset_ip_headers}    proxy_intercept_errors off;
     add_header X-Robots-Tag "noindex, nofollow" always;
 }${client_route}
 EOFNG
@@ -1736,7 +1840,7 @@ preflight_staged_adguard() (
         [[ "$AGH_RUNNING_VERSION" == "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["adguard_version"])' "$STAGING/meta.json")" ]] ||
         die 'Staged AdGuard Home configuration/binary contract is invalid; target state was not changed.'
     [[ -f "$snippet" && ! -L "$snippet" ]] &&
-        { cmp -s "$snippet" <(agh_snippet) ||
+        { cmp -s "$snippet" <(agh_snippet) || cmp -s "$snippet" <(agh_snippet pre-ip-headers) ||
           { [[ $AGH_DOH_PATH == dns-query ]] && cmp -s "$snippet" <(agh_snippet legacy); }; } ||
         die 'Staged AdGuard Home nginx snippet is invalid; target state was not changed.'
 )
@@ -2313,7 +2417,11 @@ snapshot_restore_target() {
     for path in "${owned[@]}"; do
         if [[ -e "$path" || -L "$path" ]]; then
             mkdir -p "$ROLLBACK_DIR/files$(dirname "$path")" || die "Cannot prepare rollback copy: $path"
-            cp -aT --reflink=auto -- "$path" "$ROLLBACK_DIR/files$path" || die "Cannot copy rollback state: $path"
+            if [[ "$path" == /etc/nginx ]]; then
+                copy_nginx_tree "$path" "$ROLLBACK_DIR/files$path" || die "Cannot copy rollback state: $path"
+            else
+                cp -aT --reflink=auto -- "$path" "$ROLLBACK_DIR/files$path" || die "Cannot copy rollback state: $path"
+            fi
         fi
     done
     # Diagnostics without testfiles (about 1.1 GiB of zeros): Restore and rollback create them again.
@@ -2345,6 +2453,10 @@ recover_restore_target() {
         done
         (( ! failed )) || return 1
         for path in "${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}" /var/www/diagnostics /etc/systemd/system/AdGuardHome.service /var/www/acme/.well-known/acme-challenge; do
+            if [[ "$path" == /etc/nginx ]]; then
+                replace_nginx_state "$ROLLBACK_DIR/files$path" rollback || failed=1
+                continue
+            fi
             rm -rf -- "$path" || failed=1
             if [[ -e "$ROLLBACK_DIR/files$path" || -L "$ROLLBACK_DIR/files$path" ]]; then
                 mkdir -p "$(dirname "$path")" && cp -aT -- "$ROLLBACK_DIR/files$path" "$path" || failed=1
@@ -2401,6 +2513,14 @@ cmd_restore() {
     install_missing_packages "${PACKAGES[@]}"
     check_python_dependencies
     stage 'Проверка архива / Checking the archive'
+    # Historical v3 archives may contain other files in this directory.
+    local staged_dot="$STAGING/files/etc/nginx/stream-dot.d"
+    if [[ -d "$staged_dot" && ! -L "$staged_dot" ]]; then
+        find "$staged_dot" -mindepth 1 -maxdepth 1 ! -name adguard-dot.conf -exec rm -rf -- {} +
+        [[ ! -L "$staged_dot/adguard-dot.conf" ]] || rm -f -- "$staged_dot/adguard-dot.conf"
+    else
+        rm -f -- "$staged_dot"
+    fi
     exclude_staged_telemt restore
     quick_check "$STAGING/files$DB"
     ADGUARD_HOME=$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["adguard_home"]).lower())' "$STAGING/meta.json")
@@ -2463,6 +2583,13 @@ cmd_restore() {
     ROLLBACK_DIR=''
     printf '\nRestore completed successfully.\n'
     warn 'Recovery uses the saved domains. On a new VPS, point their DNS to this VPS separately.'
+    if [[ -n "$RESTORE_DOT_WARNING" ]]; then
+        if [[ ${XUI_RESTORE_WARNING_FD:-} == 5 ]]; then
+            printf '%s\n' "$RESTORE_DOT_WARNING" >&5
+        else
+            warn "$RESTORE_DOT_WARNING"
+        fi
+    fi
 }
 
 # Explicit one-shot maintenance: reuse trusted renderers without running Restore.

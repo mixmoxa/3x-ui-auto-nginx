@@ -1,5 +1,6 @@
 """Installed-stack, Backup UI and actual subscription consumer checks in the guest."""
 import base64
+import hashlib
 import importlib.util
 import json
 import os
@@ -30,7 +31,6 @@ def run(*args):
 
 def restore_content():
     """Private content digests, never credentials or database rows in reports."""
-    import hashlib
     with sqlite3.connect('/etc/x-ui/x-ui.db') as db:
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         content = {name: db.execute('SELECT * FROM '+name+' ORDER BY rowid').fetchall()
@@ -47,8 +47,14 @@ def restore_content():
     return result
 
 
-def restore_source():
-    core_enable(False,names=('reality','xhttp'))
+def restore_source(dot=False):
+    if dot:
+        name = 'dot-'+uuid.uuid4().hex+'.example.test'
+        state = adguard_state({'domain':name, 'answer':'203.0.113.7'})
+        assert any(item['domain'] == name for item in state['rewrites'])
+        dot_verified('panel.example.test', name)
+    else:
+        core_enable(False,names=('reality','xhttp'))
     Path('/etc/x-ui/pr2-persist').write_text('PR2-lite persistent data\n')
     result = subprocess.run(['bash','/usr/local/bin/x-ui-backup','backup','--json'],
                             capture_output=True, timeout=150)
@@ -57,8 +63,27 @@ def restore_source():
     archive = json.loads(result.stdout)['archive']
     assert json.loads(run('bash','/usr/local/bin/x-ui-backup','inspect',archive))['format_version'] == 3
     (ROOT/'restore-archive-path').write_text(archive)
-    (ROOT/'restore-expected.json').write_text(json.dumps(restore_content()))
-    return {'real_backup_v3':True, 'minimal_source':True}
+    evidence = restore_content()
+    if dot:
+        import tarfile
+        paths = ('/etc/nginx/nginx.conf', '/etc/nginx/stream-dot.d/adguard-dot.conf')
+        with tarfile.open(archive) as saved:
+            for path in paths:
+                assert saved.extractfile('files'+path).read() == Path(path).read_bytes()
+        evidence = dict(content=evidence, query=name,
+                        nginx={path: hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in paths})
+    (ROOT/'restore-expected.json').write_text(json.dumps(evidence))
+    return {'real_backup_v3':True, 'minimal_source':True,
+            **({'installed_DoT_verified':True} if dot else {})}
+
+
+def restore_trust():
+    context=ssl.create_default_context(cafile=str(ROOT/'fixture.crt'))
+    with urllib.request.urlopen('https://10.0.2.2:15000/roots/0',context=context,timeout=10) as response:
+        Path('/usr/local/share/ca-certificates/pilot-pebble.crt').write_bytes(response.read())
+    subprocess.run(['update-ca-certificates'], check=True, capture_output=True, timeout=120)
+    return {**os.environ, **json.loads((ROOT/'environment.json').read_text()),
+            'CURL_CA_BUNDLE':'/etc/ssl/certs/ca-certificates.crt'}
 
 
 def restore_target():
@@ -66,12 +91,7 @@ def restore_target():
     fixture = Path('/etc/letsencrypt/cli.ini')
     assert fixture.read_text() == 'server = https://10.0.2.2:14000/dir\n'
     fixture.unlink()
-    env = {**os.environ, **json.loads((ROOT/'environment.json').read_text()),
-           'CURL_CA_BUNDLE':'/etc/ssl/certs/ca-certificates.crt'}
-    context=ssl.create_default_context(cafile=str(ROOT/'fixture.crt'))
-    with urllib.request.urlopen('https://10.0.2.2:15000/roots/0',context=context,timeout=10) as response:
-        Path('/usr/local/share/ca-certificates/pilot-pebble.crt').write_bytes(response.read())
-    subprocess.run(['update-ca-certificates'], check=True, capture_output=True, timeout=120)
+    env = restore_trust()
     # Real socket activation, including a nonstandard port, with both forwarded
     # SSH endpoints checked by the host after UFW and after a fresh QEMU boot.
     drop = Path('/etc/systemd/system/ssh.socket.d/90-pilot.conf'); drop.parent.mkdir(exist_ok=True)
@@ -127,6 +147,86 @@ def restore_verified(cold=False):
     if cold:
         assert Path('/proc/sys/kernel/random/boot_id').read_text() != (ROOT/'restore-boot-id').read_text()
     return {'disabled_roles_and_TCP_HTTP3':True,'services_active':True, 'ufw_active':True, 'restored_content_preserved':True, 'boot_verified':True}
+
+def dot_verified(domain, query):
+    fragment = Path('/etc/nginx/stream-dot.d/adguard-dot.conf')
+    info = fragment.stat()
+    directory = fragment.parent.stat()
+    assert (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) == (0, 0, 0o644)
+    assert (directory.st_uid, directory.st_gid, stat.S_IMODE(directory.st_mode)) == (0, 0, 0o755)
+    certificate = Path('/etc/letsencrypt/live')/domain/'fullchain.pem'
+    assert f'ssl_certificate {certificate};' in fragment.read_text()
+    assert f'ssl_certificate_key {certificate.with_name("privkey.pem")};' in fragment.read_text()
+    assert 'stream { include /etc/nginx/stream-enabled/*.conf; include /etc/nginx/stream-dot.d/*.conf; }' in (
+        Path('/etc/nginx/nginx.conf').read_text().splitlines())
+    run('nginx', '-t')
+    assert any(line.split()[3].endswith(':853') and '"nginx"' in line
+               for line in run('ss', '-H', '-lntp').splitlines())
+    assert 'ufw allow 853/tcp' in run('ufw', 'show', 'added').splitlines()
+    ident = os.urandom(2)
+    labels = b''.join(bytes([len(label)])+label.encode() for label in query.split('.'))
+    packet = ident+struct.pack('!5H', 0x100, 1, 0, 0, 0)+labels+b'\0'+struct.pack('!HH', 1, 1)
+    context = ssl.create_default_context()
+    with socket.create_connection(('127.0.0.1', 853), timeout=10) as connection:
+        with context.wrap_socket(connection, server_hostname=domain) as dns:
+            leaf = certificate.read_text().split('-----END CERTIFICATE-----')[0]+'-----END CERTIFICATE-----'
+            assert dns.getpeercert(binary_form=True) == ssl.PEM_cert_to_DER_cert(leaf)
+            dns.sendall(struct.pack('!H', len(packet))+packet)
+            with dns.makefile('rb') as reply:
+                size, = struct.unpack('!H', reply.read(2))
+                answer = reply.read(size)
+                assert len(answer) == size
+    validate_dns(answer, ident, 'dot', 0)
+    details = manager_tty(b'1\n6\n0\n', ROOT/'dot-details.private.log', timeout=60)
+    assert re.search(rb'DoT:\s+'+re.escape(domain.encode())+rb', port 853', details)
+
+
+def restore_dot_target():
+    assert not any(Path(path).exists() for path in ('/etc/x-ui', '/usr/local/x-ui', '/opt/AdGuardHome'))
+    # Let dpkg configure Certbot on the clean target before setting its ACME server.
+    fixture = Path('/etc/letsencrypt/cli.ini')
+    pebble_config = fixture.read_text()
+    assert pebble_config == 'server = https://10.0.2.2:14000/dir\n'
+    fixture.unlink()
+    env = restore_trust()
+    log = ROOT/'dot-restore.private.log'
+    with log.open('wb') as output:
+        result = subprocess.run(['bash', '-c', 'source "$1"; backup_action restore',
+                                 'fixture', str(ROOT/'x-ui-latest.sh')],
+                                input=b'/root/pilot/restore.tar.gz\nn\nn\nYES\n',
+                                stdout=output, stderr=subprocess.STDOUT, env=env, timeout=1500)
+    text = log.read_text(errors='replace')
+    if result.returncode:
+        stages = {'Restore preflight': 'preflight',
+                  'Установка нужных программ / Installing required packages': 'packages',
+                  'Проверка архива / Checking the archive': 'archive',
+                  'Stopping services and restoring managed state': 'replace',
+                  'Restoring saved service states': 'startup'}
+        seen = re.findall(r'^==> (.+)$', text, re.M)
+        print('DoT Restore failure stage: '+stages.get(seen[-1], 'unknown') if seen
+              else 'DoT Restore failure stage: manager', flush=True)
+    assert result.returncode == 0, 'DoT Restore failed; private log retained'
+    assert 'Overall: SUCCESS' in text
+    fixture.write_text(pebble_config)
+    assert run('ufw', 'status').strip() == 'Status: inactive'
+    evidence = json.loads((ROOT/'restore-expected.json').read_text())
+    assert restore_content() == evidence['content']
+    assert all(hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest
+               for path, digest in evidence['nginx'].items())
+    dot_verified('panel.example.test', evidence['query'])
+    return {'clean_target_DoT_verified':True, 'restored_content_preserved':True}
+
+
+def change_dot_panel():
+    target = 'panel-next.example.test'
+    log = ROOT/'domains-1.private.log'
+    output = manager_tty(f'1\n2\n1\n{target}\nYES\n0\n'.encode(), log, timeout=360)
+    assert ('SUCCESS: Panel='+target).encode() in output
+    assert not Path('/var/lib/3x-ui-auto-nginx/change-domains/journal.json').exists()
+    evidence = json.loads((ROOT/'restore-expected.json').read_text())
+    dot_verified(target, evidence['query'])
+    return {'changed_panel_DoT_verified':True}
+
 
 def load(name):
     spec = importlib.util.spec_from_file_location(name, ROOT / (name + '.py'))
@@ -641,10 +741,40 @@ def manager_backup():
             'AGH_upstreams_and_nonempty_rewrite_preserved':True}
 
 
+def manager_tty(answers, log, timeout):
+    import pty, select
+    env = {**os.environ, **json.loads((ROOT/'environment.json').read_text()), 'TERM':'dumb', 'NO_COLOR':'1'}
+    master, slave = pty.openpty()
+    output = bytearray()
+    process = subprocess.Popen(['bash', str(ROOT/'x-ui-latest.sh')], stdin=slave, stdout=slave, stderr=slave, env=env)
+    os.close(slave)
+    deadline = time.monotonic()+timeout
+    try:
+        os.write(master, answers)
+        while time.monotonic() < deadline:
+            if select.select([master], [], [], .2)[0]:
+                try:
+                    part = os.read(master, 65536)
+                except OSError:
+                    break
+                if not part:
+                    break
+                output.extend(part)
+            if process.poll() is not None:
+                break
+        process.wait(timeout=2)
+        assert process.returncode == 0, 'Manager operation failed; private output retained in guest'
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        os.close(master)
+        log.write_bytes(output)
+    return output
+
+
 def change_domains(single=False, panel_target='panel-next.example.test'):
     """Same installed VM: actual menu, Backup, Pebble, SQL and real consumers."""
-    import hashlib, pty, select
-    env={**os.environ,**json.loads((ROOT/'environment.json').read_text()),'TERM':'dumb','NO_COLOR':'1'}
     protected=('/etc/nginx/sites-available/vision.conf','/etc/nginx/sites-available/vision-acme.conf',
                '/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision',
                '/etc/letsencrypt/live/vision.example.test/fullchain.pem','/etc/letsencrypt/live/vision.example.test/privkey.pem',
@@ -677,25 +807,9 @@ def change_domains(single=False, panel_target='panel-next.example.test'):
         marker=json.loads(Path('/etc/x-ui/auto-nginx-managed.json').read_text());roles=marker['inbound_roles']
         old_certificates={name:hashlib.sha256((Path('/etc/letsencrypt/live')/name/'fullchain.pem').read_bytes()).hexdigest() for name in (panel,reality)}
         original=set(Path('/var/backups/x-ui').glob('*.tar.gz'))
-        master,slave=pty.openpty();output=bytearray()
-        process=subprocess.Popen(['bash',str(ROOT/'x-ui-latest.sh')],stdin=slave,stdout=slave,stderr=slave,env=env)
-        os.close(slave)
         language='1' if choice=='1' else '2'
         answers=language+'\n2\n'+choice+'\n'+(new_panel+'\n' if choice in ('1','3') else '')+(new_reality+'\n' if choice in ('2','3') else '')+'YES\n0\n'
-        os.write(master,answers.encode());deadline=time.monotonic()+360
-        try:
-            while time.monotonic()<deadline:
-                if select.select([master],[],[],.2)[0]:
-                    try:part=os.read(master,65536)
-                    except OSError:break
-                    if not part:break
-                    output.extend(part)
-                if process.poll() is not None:break
-            process.wait(timeout=2)
-            assert process.returncode==0,'Change Domains failed; private output retained in guest'
-        finally:
-            if process.poll() is None:process.kill();process.wait()
-            os.close(master);(ROOT/('domains-'+choice+'.private.log')).write_bytes(output)
+        output = manager_tty(answers.encode(), ROOT/('domains-'+choice+'.private.log'), timeout=360)
         assert b'ROLLBACK_UNVERIFIED' not in output and b'SUCCESS: Panel=' in output
         created=set(Path('/var/backups/x-ui').glob('*.tar.gz'))-original
         assert len(created)==1 and json.loads(run('bash','/usr/local/bin/x-ui-backup','inspect',str(next(iter(created)))))['format_version']==3

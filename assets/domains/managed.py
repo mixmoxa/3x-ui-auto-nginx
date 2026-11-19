@@ -47,6 +47,7 @@ HYSTERIA_MASQUERADE = dict(type='proxy', url='unix:/run/3x-ui-hysteria-cover.soc
 CLASH = '/var/www/subpage/clash.yaml.tpl'
 DIAGNOSTICS = '/var/www/diagnostics/index.html'
 AGH = '/opt/AdGuardHome/managed.json'
+DOT = '/etc/nginx/stream-dot.d/adguard-dot.conf'
 CORE = ('reality', 'ws', 'grpc', 'xhttp', 'hysteria2')
 SNI_INCLUDE = '/etc/nginx/stream-sni.d/*.conf'
 UPSTREAM_INCLUDE = '/etc/nginx/stream-upstreams.d/*.conf'
@@ -451,7 +452,7 @@ class Operation:
                     re.findall(r'location (?:=|\^~) (\S+) \{', route) == [cdn['path'], cdn['path']+'/'],
                     'XHTTP CDN nginx route differs from its managed snapshot.')
         domains = context['domains']; panel, reality, vision = (domains[k] for k in ('panel', 'reality', 'vision'))
-        stream = self.stream_integration(context, self.read(STREAM))
+        router_stream = self.stream_integration(context, self.read(STREAM))
         expected = ('map_hash_bucket_size 272;map $ssl_preread_server_name $sni_name {hostnames;' +
                     (vision+' vision;' if vision else '') + reality+' xray;'+panel+' www;SNI_INCLUDEdefault xray;}' +
                     'upstream xray { server 127.0.0.1:8443; }upstream www { server 127.0.0.1:7443; }' +
@@ -471,7 +472,7 @@ class Operation:
         variants = [expected.replace('SNI_INCLUDE', sni).replace('UPSTREAM_INCLUDE', upstream).replace('IPV6', ipv6)
                     for sni, upstream in layouts
                     for ipv6 in ('', 'listen [::]:443;')]
-        require(normalize(stream) in list(map(normalize, variants)),
+        require(normalize(router_stream) in list(map(normalize, variants)),
                 'Unknown nginx stream layout; Vision and other routes were preserved.')
         require(list(self.path('/etc/nginx/stream-enabled').iterdir()) == [self.path(STREAM)], 'Unknown additional nginx stream files.')
         shared = self.read('/etc/nginx/snippets/includes.conf')
@@ -534,8 +535,22 @@ class Operation:
         for file in ('fullchain.pem', 'privkey.pem'):
             self.read('/root/cert/'+panel+'/'+file, '/etc/letsencrypt/live/'+panel+'/'+file)
         main = self.read('/etc/nginx/nginx.conf')
-        require(main.count('stream { include /etc/nginx/stream-enabled/*.conf; }') == 1 and
-                'include /etc/nginx/sites-enabled/*;' in main, 'Unknown main nginx include layout.')
+        stream_include = 'stream { include /etc/nginx/stream-enabled/*.conf;'
+        standard = stream_include + ' }'
+        expanded = stream_include + ' include /etc/nginx/stream-dot.d/*.conf; }'
+        lines = main.splitlines()
+        has_dot = os.path.lexists(self.path(DOT))
+        require(lines.count(standard) + lines.count(expanded) == 1 and
+                (not has_dot or expanded in lines) and 'include /etc/nginx/sites-enabled/*;' in main,
+                '/etc/nginx/nginx.conf has an unrecognized stream include. Restore the project stream line and retry.')
+        if has_dot:
+            port = json.loads(self.read(AGH)).get('dns_port') if context['features']['adguard'] else None
+            ipv6 = 'y' if re.search(r'(?m)^[ \t]*listen[ \t]+\[::\]:443;', router_stream) else 'n'
+            fragment = self.object(DOT)
+            require(type(port) is int and fragment['kind'] == 'file' and
+                    base64.b64decode(fragment['data']) == self.check('render-dot', panel, port, ipv6).encode(),
+                    DOT+' differs from the default DoT configuration. Restore the default contents and retry.')
+            context['adguard_dot'] = (port, ipv6)
         self.read('/etc/nginx/sites-enabled/80.conf', '/etc/nginx/sites-available/80.conf')
         names = self.http_names(self.read(HTTP))
         # HTTP-01 preparation temporarily includes both original and proposed names.
@@ -916,6 +931,8 @@ class Operation:
             add(CLASH, edit(template, r'^(    url: )'+re.escape(url)+r'$', lambda m: m[1]+'https://'+panel+context['settings']['subPath']+'${SUB_ID}?provider=1'))
             html = self.read(DIAGNOSTICS)
             add(DIAGNOSTICS, edit(html, re.escape('<span class="mono">'+old['panel']+'</span>'), lambda m: '<span class="mono">'+panel+'</span>'))
+            if 'adguard_dot' in context:
+                add(DOT, self.check('render-dot', panel, *context['adguard_dot']))
             if context['features']['adguard']:
                 agh = json.loads(self.read(AGH)); agh['domain'] = panel
                 add(AGH, json.dumps(agh, ensure_ascii=True)+'\n')
@@ -1108,7 +1125,7 @@ class Operation:
 
     def conflict_check(self, record):
         domains = record['old']['domains']; new = record['new']['domains']
-        allowed = {STREAM, HTTP, HOOK, CLASH, DIAGNOSTICS, AGH, MANIFEST, HYSTERIA}
+        allowed = {STREAM, HTTP, HOOK, CLASH, DIAGNOSTICS, AGH, MANIFEST, HYSTERIA, DOT}
         for domain in {domains['panel'], domains['reality'], new['panel'], new['reality']}:
             hostname(domain)
             allowed |= {'/etc/nginx/sites-available/'+domain, '/etc/nginx/sites-enabled/'+domain}

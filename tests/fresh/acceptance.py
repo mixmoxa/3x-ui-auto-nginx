@@ -114,7 +114,11 @@ def invoke(expression, result_name, timeout=180, tty=False):
         report[phase+'_dns_probes'] = probes
     if result.returncode:
         failure_location(result.stdout+result.stderr)
-        if phase in ('change-domains', 'native-agh-update'):
+        if phase == 'dot-clean-target':
+            failure = re.search(rb'^DoT Restore failure stage: (manager|preflight|packages|archive|replace|startup|unknown)\r?$', result.stdout, re.M)
+            if failure:
+                report['dot_restore_failure_stage'] = failure[1].decode()
+        if phase in ('change-domains', 'dot-change-panel', 'native-agh-update'):
             private = ssh('cat /root/pilot/domains-[123].private.log', 15)
             if private.returncode == 0:
                 failure = domain_failure(private.stdout.decode(errors='replace'), (REPO/'assets/domains/managed.py').read_text())
@@ -228,23 +232,29 @@ def fixtures():
                 time.sleep(.05)
 
 
-def restore_acceptance(ref):
-    """One minimal source and one clean target, using the same QEMU/SSH harness."""
+def boot_restore_pair(ref, scenario, target_phase):
     global phase
-    phase = 'minimal-source'
-    fresh_disk(); boot(); install('restore-source', ref)
-    invoke('checks.restore_source()', 'restore-source', 180)
+    dot = scenario == 'dot-restore-source'
+    phase = scenario if dot else 'minimal-source'
+    fresh_disk(); boot(); install(scenario, ref)
+    invoke('checks.restore_source(dot='+repr(dot)+')', 'restore-source', 180)
     for source, target in (('$(cat /root/pilot/restore-archive-path)', 'restore.tar.gz'),
                            ('/root/pilot/restore-expected.json', 'restore-expected.json')):
         result = ssh('cat '+source, 90)
         assert result.returncode == 0
         (ROOT/target).write_bytes(result.stdout)
     poweroff()
-    phase = 'clean-target-restore-security'
+    phase = target_phase
     fresh_disk(); boot()
     for name in ('restore.tar.gz', 'restore-expected.json'):
         result = ssh('cat > /root/pilot/'+name, 90, input=(ROOT/name).read_bytes())
         assert result.returncode == 0
+
+
+def restore_acceptance(ref):
+    """One minimal source and one clean target, using the same QEMU/SSH harness."""
+    global phase
+    boot_restore_pair(ref, 'restore-source', 'clean-target-restore-security')
     invoke('checks.restore_target()', 'restore-target', 1800)
     assert ssh('true', port=22221).returncode == 0, 'New external SSH connection failed after UFW enable'
     report['new_external_ssh_after_ufw'] = 'PASS'
@@ -295,6 +305,11 @@ def fresh_acceptance(ref, group='all'):
         invoke('checks.change_domains()', 'change-domains', 1200, tty=True)
         phase = 'restore-before-domains'
         invoke('checks.restore_before_domains()', 'restore-before-domains', 600, tty=True)
+        poweroff()
+        boot_restore_pair(ref, 'dot-restore-source', 'dot-clean-target')
+        invoke('checks.restore_dot_target()', 'dot-restore-target', 1800)
+        phase = 'dot-change-panel'
+        invoke('checks.change_dot_panel()', 'dot-change-panel', 400)
         poweroff()
     if group in ('all','agh'):
         # Needs only an installed system; the phase restores its own state.

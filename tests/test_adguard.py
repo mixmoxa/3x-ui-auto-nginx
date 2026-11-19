@@ -755,10 +755,11 @@ main
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(directory.stat().st_mode & 0o777, 0o755)
 
-    def test_live_and_staged_renderers_emit_the_same_three_snippets(self):
+    def test_live_and_staged_renderers_emit_matching_snippets(self):
         backup = (ROOT / 'assets/backup/x-ui-backup.sh').read_text()
 
-        for path, variant in (('', 'legacy'), ('', ''), ('dns-AbCdEf123456', '')):
+        for path, variant in (('', 'legacy'), ('', 'pre-ip-headers'), ('', ''),
+                              ('dns-AbCdEf123456', 'pre-ip-headers'), ('dns-AbCdEf123456', '')):
             with self.subTest(path=path, variant=variant):
                 rendered = []
                 for source in (HELPER, backup):
@@ -769,17 +770,24 @@ main
                 self.assertEqual(*rendered)
                 self.assertIn(f'location = /{path or "dns-query"} {{\n'.encode(), rendered[0])
                 self.assertEqual(b'location ~ ' in rendered[0], variant != 'legacy')
+                for header in (b'CF-Connecting-IP', b'True-Client-IP'):
+                    self.assertEqual(rendered[0].count(b'proxy_set_header '+header+b' "";'),
+                                     0 if variant else 3)
 
     def test_real_nginx_optional_include_and_exact_routes(self):
         nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
         self.assertTrue(nginx, 'Real nginx is required')
         hits=[]
+        forwarded=[]
         random_id='client-'+os.urandom(6).hex()
         class Backend(BaseHTTPRequestHandler):
+            def record(self, method):
+                hits.append((method,self.path))
+                forwarded.append(tuple(self.headers.get(name) for name in ('CF-Connecting-IP', 'True-Client-IP')))
             def do_GET(self):
-                hits.append(('GET',self.path));self.send_response(200);self.end_headers();self.wfile.write(b'backend')
+                self.record('GET');self.send_response(200);self.end_headers();self.wfile.write(b'backend')
             def do_POST(self):
-                hits.append(('POST',self.path));self.send_response(200)
+                self.record('POST');self.send_response(200)
                 self.send_header('Set-Cookie', 'agh_session=fixture; Path=/; HttpOnly; SameSite=Lax')
                 self.end_headers();self.wfile.write(b'backend')
             def log_message(self,*args):pass
@@ -817,11 +825,13 @@ main
                 for path,method,status in cases:
                     before=len(hits)
                     url=f'http://127.0.0.1:{port}{path}'
-                    r=subprocess.run(['curl','--noproxy','*','-s','-o','/dev/null','-w','%{http_code}','-X',method,url],text=True,capture_output=True)
+                    r=subprocess.run(['curl','--noproxy','*','-s','-o','/dev/null','-w','%{http_code}','-X',method,
+                                      '-H','CF-Connecting-IP: 203.0.113.7','-H','True-Client-IP: 203.0.113.8',url],text=True,capture_output=True)
                     self.assertEqual(r.stdout,str(status),(path,method,r.stderr))
                     if status==200:
                         expected='/control/status' if path.startswith('/adg-') else '/dns-query'+path[len(public):]
                         self.assertEqual(hits[before:],[(method,expected)])
+                        self.assertEqual(forwarded[before:],[(None,None)])
                     else:self.assertEqual(len(hits),before,(path,method))
                 if enabled:
                     response = subprocess.run(['curl', '--noproxy', '*', '-fsS', '-D', '-', '-o', '/dev/null',

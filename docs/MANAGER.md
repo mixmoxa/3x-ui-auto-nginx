@@ -38,6 +38,8 @@ if accepted. Vision, AmneziaWG and CDN-compatible XHTTP are then offered individ
 If you choose to install AdGuard Home, the next question offers DNS-over-TLS
 (DoT) for Android Private DNS on the panel domain. The default is `N`. Choosing
 `y` opens TCP port 853 to the internet. To close it, run `ufw delete allow 853/tcp`.
+Backup and Restore preserve the DoT configuration. Change Domains updates the
+DoT certificate when the panel domain changes.
 
 Russian covers the main menus, installation questions, confirmations, warnings
 and result summaries. Product/protocol names, commands, paths, `YES`, `y/N`,

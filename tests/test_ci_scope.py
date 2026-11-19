@@ -339,13 +339,14 @@ class CIScope(unittest.TestCase):
         import ast
         from types import SimpleNamespace
         tree=ast.parse((ROOT/'tests/fresh/acceptance.py').read_text())
-        function=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='fresh_acceptance')
+        names = {'fresh_acceptance', 'boot_restore_pair'}
+        functions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
         positive=['maximum-install','manager-backup','transport-consumers','AWG-payload','tech0-RED-GREEN',
                   'installed-renewal-hooks','cold-boot','cold-transport-consumers','change-domains','restore-before-domains']
         agh=['maximum-install','maximum-install','native-agh-update']
         negative=['mandatory-dependency-negative','DoT-outage-partial-install','DoT-outage-core-consumers']
         with tempfile.TemporaryDirectory() as directory:
-            for group,disks in (('all',4),('positive',1),('agh',1),('negative',2)):
+            for group,disks in (('all',6),('positive',3),('agh',1),('negative',2)):
                 events=[];calls=[];group_root=Path(directory)/group;group_root.mkdir()
                 env=dict(ROOT=group_root,phase='',re=re)
                 def record(kind):events.append((kind,env['phase']))
@@ -353,9 +354,10 @@ class CIScope(unittest.TestCase):
                     install=lambda scenario,*args:(record('phase'),calls.append(scenario)),
                     invoke=lambda expression,*args,**kwargs:(record('phase'),calls.append(expression)),
                     ssh=lambda *args,**kwargs:SimpleNamespace(returncode=0,stdout=b'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n'))
-                exec(compile(ast.Module(body=[function],type_ignores=[]),'acceptance.py','exec'),env)
+                exec(compile(ast.Module(body=functions,type_ignores=[]),'acceptance.py','exec'),env)
                 env['fresh_acceptance']('a'*40,group)
-                positive_phases=[positive[0],*positive[:6],'installed-renewal-hooks','cold-boot',*positive[6:]]
+                positive_phases=[positive[0],*positive[:6],'installed-renewal-hooks','cold-boot',*positive[6:],
+                                 'dot-restore-source','dot-restore-source','dot-clean-target','dot-change-panel']
                 self.assertEqual([phase for kind,phase in events if kind=='phase'],
                                  (positive_phases if group in ('all','positive') else [])+
                                  (agh if group in ('all','agh') else [])+
@@ -364,7 +366,8 @@ class CIScope(unittest.TestCase):
                     'checks.amneziawg()','checks.search_domain_regression()','checks.renewal()',
                     'checks.disabled_cold_boot(prepare=True)','checks.disabled_cold_boot()',
                     'checks.installed(cold=True)','checks.transports()','checks.change_domains()',
-                    'checks.restore_before_domains()']
+                    'checks.restore_before_domains()','dot-restore-source','checks.restore_source(dot=True)',
+                    'checks.restore_dot_target()','checks.change_dot_panel()']
                 agh_calls=['positive','checks.installed()','checks.native_agh_update()']
                 negative_calls=['dependency','dot-outage','checks.transports(vision=False, ws_grpc=False)']
                 self.assertEqual(calls,(positive_calls if group in ('all','positive') else [])+
@@ -384,6 +387,9 @@ class CIScope(unittest.TestCase):
                     cold=events.index(('boot','cold-boot'))
                     self.assertEqual(events[cold-1][0],'off')
                     self.assertNotIn(('disk','cold-boot'),events)
+                    restored = events.index(('boot', 'dot-clean-target'))
+                    self.assertEqual(events[restored-2:restored],
+                                     [('off', 'dot-restore-source'), ('disk', 'dot-clean-target')])
             events.clear()
             with self.assertRaises(ValueError):env['fresh_acceptance']('a'*40,'unknown')
             self.assertEqual(events,[])

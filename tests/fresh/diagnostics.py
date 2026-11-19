@@ -125,7 +125,7 @@ def dns_metrics(data, ident):
 
 
 def validate_dns(data, ident, probe, elapsed):
-    if probe not in ('native_udp','doh_get','doh_post'): raise ValueError('Unknown DNS probe')
+    if probe not in ('native_udp','doh_get','doh_post','dot'): raise ValueError('Unknown DNS probe')
     metrics = {'probe':probe, **dns_metrics(data, ident), 'elapsed_seconds':round(elapsed, 3)}
     if not (metrics['parse_valid'] and metrics['transaction_id_match'] and metrics['rcode'] == 0
             and metrics['answer_records'] >= 1 and metrics['expected_a']):
