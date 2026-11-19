@@ -199,6 +199,24 @@ class CIScope(unittest.TestCase):
         module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
         return module
 
+    def test_dot_restore_package_diagnostics_publish_only_counts(self):
+        diagnostics = self.diagnostics()
+        secret = 'https://user:credential@example.invalid/private-package'
+        private = f'''E: Failed to fetch {secret} 404 Not Found
+E: Failed to fetch {secret} Connection timed out
+E: Unable to locate package PRIVATE
+E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 11
+E: Sub-process /usr/bin/dpkg returned an error code (1)
+'''
+        counts = diagnostics.dot_restore_package_counts(private)
+        self.assertEqual(counts, dict(apt_404=1, apt_failed_to_fetch=2, apt_unable_to_locate=1,
+                                      apt_lock_held=1, dpkg_error=1, timeout=1))
+        line = 'DoT Restore package diagnostics: 1 ' + ' '.join(map(str, counts.values()))
+        self.assertEqual(diagnostics.dot_restore_package_report((line+'\r\n').encode()),
+                         dict(restore_exit_code=1, **counts))
+        self.assertIsNone(diagnostics.dot_restore_package_report(f'{line} {secret}\n'.encode()))
+        self.assertEqual(set(diagnostics.dot_restore_package_counts('private data').values()), {0})
+
     def test_vision_failure_is_allowlisted_not_raw_log(self):
         diagnostics = self.diagnostics()
         secret = 'PRIVATE-CREDENTIAL-https://secret.invalid/token'

@@ -1298,7 +1298,8 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
             lineage=root/'etc/letsencrypt/live/vision.example'; lineage.mkdir(parents=True)
             (lineage/'fullchain.pem').write_text('administrator certificate')
             stubs='stat() { case "$2" in *%a*) echo "${OWNER:-0}:0:$(/usr/bin/stat -c %a "$3")";; *) echo "${OWNER:-0}:0";; esac; }; msg_err() { echo "$*" >&2; }; msg_warn() { :; };\n'
-            functions=relocated(function('render_vision_hook')+'\n'+function('preflight_vision_artifacts'),root)
+            functions=relocated('\n'.join(function(name) for name in (
+                'render_vision_hook', 'previous_vision_hook_domain', 'preflight_vision_artifacts')),root)
             run=lambda: subprocess.run(['bash','-eu','-c',stubs+functions+'\ncheck_webroot_lineage() { :; }; INSTALL_VISION=y; vision_domain=vision.example; preflight_vision_artifacts'],env={**os.environ,'PANEL_STAGE':str(stage)},capture_output=True,text=True)
             self.assertNotEqual(run().returncode,0,'Foreign existing lineage adopted')
             hook.write_text(subprocess.check_output(['bash','-c',relocated(function('render_vision_hook'),root)+'\nrender_vision_hook vision.example'],text=True)); hook.chmod(0o755)

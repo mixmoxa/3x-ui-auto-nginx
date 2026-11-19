@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from kvm import preflight
 
 from diagnostics import VISION_STAGES, domain_failure, vision_detail, api_restart_metrics, api_restart_nginx_errors
+from diagnostics import dot_restore_package_report
 
 ROOT = Path('/pilot')
 REPO = Path('/repo')
@@ -118,6 +119,10 @@ def invoke(expression, result_name, timeout=180, tty=False):
             failure = re.search(rb'^DoT Restore failure stage: (manager|preflight|packages|archive|replace|startup|unknown)\r?$', result.stdout, re.M)
             if failure:
                 report['dot_restore_failure_stage'] = failure[1].decode()
+                if failure[1] == b'packages':
+                    packages = dot_restore_package_report(result.stdout)
+                    if packages is not None:
+                        report['dot_restore_package_diagnostics'] = packages
         if phase in ('change-domains', 'dot-change-panel', 'native-agh-update'):
             private = ssh('cat /root/pilot/domains-[123].private.log', 15)
             if private.returncode == 0:

@@ -235,9 +235,16 @@ clean_previous_install() {
         rm -f "$cdn_route" || return 1
     fi
     systemctl stop x-ui 2>/dev/null || true
-    if [[ "${VISION_PREVIOUS_HOOK:-}" == owned ]]; then
-        rm -f /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision
+    if [[ -n ${VISION_PREVIOUS_DOMAIN:-} &&
+          ( ${INSTALL_VISION:-n} != y || "$VISION_PREVIOUS_DOMAIN" != "${vision_domain:-}" ) ]]; then
+        rm -f /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision || return 1
+        if [[ "${VISION_CERTIFICATE_TO_DELETE:-}" == "$VISION_PREVIOUS_DOMAIN" ]] &&
+           ! certbot delete --cert-name "$VISION_PREVIOUS_DOMAIN" --non-interactive; then
+            msg_warn "$(ui_text 'Could not delete the Vision certificate for %s. To remove it manually, run: sudo certbot delete --cert-name %s --non-interactive' 'Не удалось удалить сертификат Vision для %s. Для ручного удаления выполните: sudo certbot delete --cert-name %s --non-interactive' "$VISION_PREVIOUS_DOMAIN" "$VISION_PREVIOUS_DOMAIN")"
+        fi
     fi
+    local had_awg=n
+    if [[ ${INSTALL_AWG:-n} != y ]] && has_managed_awg_inbound "${XUIDB:-/etc/x-ui/x-ui.db}"; then had_awg=y; fi
     rm -rf /etc/systemd/system/x-ui.service || return 1
     rm -rf /usr/local/x-ui || return 1
     rm -rf /etc/x-ui || return 1
@@ -264,6 +271,13 @@ clean_previous_install() {
         printf '%s' "${restored_config%.}" > "$nginx_conf" || true
     fi
     if [[ $had_dot == y ]]; then ufw delete allow 853/tcp || true; fi
+    local rules
+    # UFW deletes an equivalent commented rule too when no comment is supplied.
+    if [[ $had_awg == y ]] && rules=$(LC_ALL=C ufw show added) &&
+       grep -Fxq 'ufw allow 8443/udp' <<< "$rules" &&
+       ! grep -q '^ufw allow 8443/udp comment ' <<< "$rules"; then
+        ufw delete allow 8443/udp || true
+    fi
 }
 
 # ─── Port / path generators ──────────────────────────────────────────────────
@@ -402,13 +416,18 @@ detect_existing_installation() {
 }
 
 confirm_destructive_reinstall() {
-    local answer category
+    local answer category vision_hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision
+    VISION_CERTIFICATE_TO_DELETE=''
     detect_existing_installation
     (( ${#EXISTING_INSTALL_CATEGORIES[@]} )) || return 0
     msg_warn '============================================================'
     msg_warn "$(ui_text '  Existing installation detected' '  Обнаружена существующая установка')"
     msg_warn '============================================================'
     for category in "${EXISTING_INSTALL_CATEGORIES[@]}"; do msg_warn " [!] $category"; done
+    if [[ -e $vision_hook || -L $vision_hook ]] &&
+       VISION_CERTIFICATE_TO_DELETE=$(vision_certificate_for_reinstall "$vision_hook"); then
+        ui_wrap '1;33' "$(ui_text ' [!] The Vision certificate for %s will be deleted. It can only be restored from a Backup made before reinstalling.' ' [!] Сертификат Vision для %s будет удалён. Вернуть его можно только из Backup, сделанного до переустановки.' "$VISION_CERTIFICATE_TO_DELETE")" 76
+    fi
     printf '\n'
     ui_wrap '' "$(ui_text 'Type YES to remove the existing deployment and continue: ' 'Чтобы удалить существующую установку и продолжить, введите YES: ')" 76
     ui_wrap '38;5;208' "$(ui_text '  Continuing will run a full OS dist-upgrade (services may restart),\n  remove data in project-managed installation paths and replace nginx configuration.\n  Use a clean dedicated VPS; this is a full rebuild, not an update.\n  The OS upgrade cannot be rolled back. Copy a backup off-host first.' '  Продолжение запустит полный dist-upgrade ОС (службы могут перезапуститься),\n  удалит данные в управляемых проектом каталогах и заменит конфигурацию nginx.\n  Используйте чистый выделенный VPS: это полная переустановка, а не обновление.\n  Обновление ОС нельзя откатить. Сначала скопируйте Backup за пределы VPS.')" 76
@@ -2086,7 +2105,7 @@ PYIDENTITY
 }
 
 check_webroot_lineage() {
-    python3 - "$1" <<'PY'
+    python3 - "$1" "${2:-}" <<'PY'
 import sys
 from pathlib import Path
 from configobj import ConfigObj, ConfigObjError
@@ -2103,6 +2122,13 @@ try:
         path = live / (name + '.pem')
         if cfg.get(name) != str(path) or not path.is_file() or not path.stat().st_size:
             raise ValueError('missing or unexpected certificate/key path')
+    if sys.argv[2] == 'delete':
+        # Certbot also deletes cert, chain and the archive_dir from the renewal file.
+        archive = live.parent.parent / 'archive' / domain
+        if (cfg.get('archive_dir', str(archive)) != str(archive) or live.resolve() != live or
+                archive.parent.resolve() != archive.parent or
+                any(cfg.get(name) != str(live / (name + '.pem')) for name in ('cert', 'chain'))):
+            raise ValueError('certificate deletion paths are outside the managed lineage')
     cert = x509.load_pem_x509_certificate((live / 'fullchain.pem').read_bytes())
     names = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.DNSName)
     if set(names) != {domain}:
@@ -2603,6 +2629,29 @@ for family, address in ((socket.AF_INET,'0.0.0.0'), (socket.AF_INET6,'::')):
         if family == socket.AF_INET6 and error.errno in (errno.EAFNOSUPPORT, errno.EADDRNOTAVAIL): continue
         sys.exit(1 if error.errno == errno.EADDRINUSE else 2)
 PYPORT
+}
+
+has_managed_awg_inbound() {
+    local manifest="${1%/*}/auto-nginx-managed.json"
+    [[ -f "$manifest" && ! -L "$manifest" && $(stat -c '%u:%g:%a' "$manifest") == '0:0:600' ]] || return 1
+    python3 - "$manifest" "$1" <<'PYAWG'
+import json, sqlite3, sys
+from pathlib import Path
+try:
+    manifest, database = map(Path, sys.argv[1:])
+    state = json.loads(manifest.read_text())
+    if (state['format'] != 1 or state['layout'] != 'nginx-stream-v1' or
+            state['features']['amneziawg'] is not True):
+        sys.exit(1)
+    inbound_id = state['inbound_roles']['amneziawg']
+    if type(inbound_id) is not int:
+        sys.exit(1)
+    with sqlite3.connect(database.as_uri()+'?mode=ro', uri=True, timeout=3) as db:
+        inbound = db.execute('SELECT protocol, listen, port, tag FROM inbounds WHERE id=?', (inbound_id,)).fetchone()
+    sys.exit(inbound != ('amneziawg', '0.0.0.0', 8443, 'inbound-8443-udp'))
+except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
+    sys.exit(1)
+PYAWG
 }
 
 check_awg_reinstall_owner() {
@@ -3263,8 +3312,32 @@ select_client() {
     done
 }
 
+previous_vision_hook_domain() {
+    local hook=$1 old_domain
+    [[ -f "$hook" && ! -L "$hook" && "$(stat -c '%u:%g:%a' "$hook")" == '0:0:755' ]] || return 1
+    old_domain=$(sed -n 's/^VISION_DOMAIN=//p' "$hook")
+    [[ "$old_domain" =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ && "$old_domain" == *.* ]] || return 1
+    cmp -s "$hook" <(render_vision_hook "$old_domain") ||
+        cmp -s "$hook" <(render_vision_hook "$old_domain" previous) ||
+        cmp -s "$hook" <(render_vision_hook "$old_domain" legacy) || return 1
+    printf '%s\n' "$old_domain"
+}
+
+vision_certificate_for_reinstall() {
+    local old_domain core_hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx
+    old_domain=$(previous_vision_hook_domain "$1") || return 1
+    [[ "$old_domain" != "${domain:-}" && "$old_domain" != "${reality_domain:-}" &&
+       ( ${INSTALL_VISION:-n} != y || "$old_domain" != "${vision_domain:-}" ) ]] || return 1
+    if grep -Fxq -e "PANEL_DOMAIN=$old_domain" -e "REALITY_DOMAIN=$old_domain" "$core_hook" 2>/dev/null ||
+       grep -Fq -- "/etc/letsencrypt/live/$old_domain/" /etc/nginx/conf.d/telemt-web-manager.conf 2>/dev/null; then
+        return 1
+    fi
+    check_webroot_lineage "$old_domain" delete 2>/dev/null || return 1
+    printf '%s\n' "$old_domain"
+}
+
 preflight_vision_artifacts() {
-    VISION_PREVIOUS_HOOK=''
+    VISION_PREVIOUS_DOMAIN=''
     VISION_OWNED_LINEAGE=''
     local name file hook old_domain='' nginx_domain=''
     for name in vision vision-acme; do
@@ -3288,20 +3361,19 @@ preflight_vision_artifacts() {
     fi
     hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision
     if [[ -e "$hook" || -L "$hook" ]]; then
-        [[ -f "$hook" && ! -L "$hook" && "$(stat -c '%u:%g:%a' "$hook")" == '0:0:755' ]] || return 1
-        old_domain=$(sed -n 's/^VISION_DOMAIN=//p' "$hook")
-        [[ "$old_domain" =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ && "$old_domain" == *.* ]] || return 1
-        cmp -s "$hook" <(render_vision_hook "$old_domain") ||
-            cmp -s "$hook" <(render_vision_hook "$old_domain" previous) ||
-            cmp -s "$hook" <(render_vision_hook "$old_domain" legacy) || { msg_err 'Unowned Vision deploy-hook; deployment preserved.'; return 1; }
-        [[ -z "$nginx_domain" || "$old_domain" == "$nginx_domain" ]] || { msg_err 'Vision hook/nginx domains differ.'; return 1; }
-        VISION_PREVIOUS_HOOK=owned
+        if old_domain=$(previous_vision_hook_domain "$hook"); then
+            [[ -z "$nginx_domain" || "$old_domain" == "$nginx_domain" ]] || { msg_err 'Vision hook/nginx domains differ.'; return 1; }
+            VISION_PREVIOUS_DOMAIN=$old_domain
+        elif [[ ${INSTALL_VISION:-n} == y ]]; then
+            msg_err 'Unowned Vision deploy-hook; deployment preserved.'
+            return 1
+        fi
     fi
     if [[ "${INSTALL_VISION:-n}" == y ]] &&
        [[ -e "/etc/letsencrypt/live/$vision_domain" || -L "/etc/letsencrypt/live/$vision_domain" ||
           -e "/etc/letsencrypt/archive/$vision_domain" || -L "/etc/letsencrypt/archive/$vision_domain" ||
           -e "/etc/letsencrypt/renewal/$vision_domain.conf" || -L "/etc/letsencrypt/renewal/$vision_domain.conf" ]]; then
-        [[ "$VISION_PREVIOUS_HOOK" == owned && "$old_domain" == "$vision_domain" && "$nginx_domain" == "$vision_domain" &&
+        [[ "$VISION_PREVIOUS_DOMAIN" == "$vision_domain" && "$nginx_domain" == "$vision_domain" &&
            -f /etc/nginx/sites-available/vision.conf && -f /etc/nginx/sites-available/vision-acme.conf ]] || {
             msg_err 'Existing Vision lineage has no complete verified project ownership; deployment preserved.'; return 1;
         }
@@ -3510,13 +3582,13 @@ acquire_stack_lock() {
 
 main() {
     [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_title "$(ui_text 'INSTALLATION' 'УСТАНОВКА')"
-    confirm_destructive_reinstall || exit 1
     ui_text '\n  Domains\n\n' '\n  Домены\n\n'
     validate_domains || exit 1
     ui_text '\n  Security\n\n' '\n  Безопасность\n\n'
     select_security || exit 1
     ui_text '\n  Connections\n\n' '\n  Подключения\n\n'
     select_additional_connections || exit 1
+    confirm_destructive_reinstall || exit 1
     ui_text '\n  Cloudflare WARP\n\n' '\n  Cloudflare WARP\n\n'
     select_warp_ru || exit 1
     ui_text '\n  AdGuard Home and DoT\n\n' '\n  AdGuard Home и DoT\n\n'

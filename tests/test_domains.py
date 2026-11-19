@@ -949,7 +949,8 @@ curl() {
                 html=f.root/'var/www/html'
                 for name in ('cover-panel','cover-reality','cover-vision','other'):(html/name).mkdir(parents=True,exist_ok=True)
                 script='systemctl() { :; }; msg_err() { :; };\n'
-                script+='\n'.join(relocated(function(name),f.root) for name in ('preflight_xhttp_cdn','preflight_cover_sites','clean_previous_install'))
+                script+='\n'.join(relocated(function(name),f.root) for name in (
+                    'preflight_xhttp_cdn','preflight_cover_sites','has_managed_awg_inbound','clean_previous_install'))
                 script+='\nINSTALL_XHTTP_CDN=n; preflight_xhttp_cdn; '
                 if foreign=='after-preflight':script+="printf '# changed route; preserve\\n' > "+str(route)+'; '
                 script+='clean_previous_install'

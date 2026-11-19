@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, urlsplit
 import uuid
 import ssl
 
-from diagnostics import probe_dns, validate_dns
+from diagnostics import dot_restore_package_counts, probe_dns, validate_dns
 
 ROOT = Path('/root/pilot')
 os.umask(0o077)
@@ -203,8 +203,11 @@ def restore_dot_target():
                   'Stopping services and restoring managed state': 'replace',
                   'Restoring saved service states': 'startup'}
         seen = re.findall(r'^==> (.+)$', text, re.M)
-        print('DoT Restore failure stage: '+stages.get(seen[-1], 'unknown') if seen
-              else 'DoT Restore failure stage: manager', flush=True)
+        stage = stages.get(seen[-1], 'unknown') if seen else 'manager'
+        print('DoT Restore failure stage: '+stage, flush=True)
+        if stage == 'packages':
+            counts = dot_restore_package_counts(text.rsplit('\n==> ', 1)[-1])
+            print('DoT Restore package diagnostics:', result.returncode, *counts.values(), flush=True)
     assert result.returncode == 0, 'DoT Restore failed; private log retained'
     assert 'Overall: SUCCESS' in text
     fixture.write_text(pebble_config)

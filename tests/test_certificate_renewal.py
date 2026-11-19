@@ -249,19 +249,25 @@ dpkg-query() { return 1; }
 
     def test_install_has_no_mutations_before_yes(self):
         (self.root / 'etc/x-ui').mkdir(parents=True)
-        guard = ('detect_existing_installation','confirm_destructive_reinstall')
+        guard = ('detect_existing_installation','confirm_destructive_reinstall','valid_hostname','validate_domains',
+                 'select_security','select_additional_connections','select_ws_grpc','select_vision',
+                 'select_amneziawg','select_xhttp_cdn','ui_note')
         mocks = MOCK + '\nsystemctl() { return 1; }\ndpkg-query() { return 1; }\n'
-        operations = ('preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state','select_security','select_vision','select_client','select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features','select_amneziawg','preflight_amneziawg','preflight_panel_release','make_port','select_adguard','cleanup_adguard','validate_domains','clean_previous_install','install_packages','setup_firewall','get_server_ip',
+        operations = ('preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state','select_client','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features','preflight_amneziawg','preflight_panel_release','make_port','select_adguard','cleanup_adguard','clean_previous_install','install_packages','setup_firewall','get_server_ip','certbot','ufw',
                       'setup_acme_http','get_ssl_certs','install_panel','configure_nginx','configure_xui_db','install_clash_sub',
                       'install_fake_site','install_diagnostics','tune_system','install_backup_tool','setup_certificate_renewal',
-                      'check_installation','show_results')
+                      'check_installation','show_results','install_vision','install_amneziawg','install_xhttp_cdn')
         mocks += '\n'.join(n+'() { echo '+n+' >> "$CALLS"; }' for n in operations)
+        mocks += '\nselect_warp_ru() { :; }; setup_swap() { :; };\n'
         mocks += '\nINSTALL_AGH=n\nsystemctl() { echo "systemctl $*" >> "$CALLS"; [[ "$*" == "is-enabled --quiet x-ui" ]]; }\nx-ui() { echo x-ui >> "$CALLS"; }\n'
         # Detection must see missing service states rather than mutate them.
         for answer in ('YES\n','yes\n','\n',''):
             self.calls.unlink(missing_ok=True)
             body = function('main')+'\nmain'
-            result = self.run_functions(guard,body,mock=mocks,input=answer)
+            result = self.run_functions(guard,body,mock=mocks,input='n\ny\ny\ny\nvision.example.com\ny\ny\n'+answer)
+            self.assertIn('Set up additional connections?', result.stdout)
+            self.assertIn('Type YES', result.stdout)
+            self.assertLess(result.stdout.index('Set up additional connections?'), result.stdout.index('Type YES'))
             mutations = self.calls.read_text().splitlines() if self.calls.exists() else []
             # Read-only systemctl detection queries are allowed before confirmation.
             changes = [c for c in mutations if not c.startswith(('systemctl is-active','systemctl is-enabled'))]
@@ -272,6 +278,84 @@ dpkg-query() { return 1; }
                 self.assertNotEqual(result.returncode,0)
                 self.assertEqual(changes,[])
             self.assertTrue((self.root/'etc/x-ui').exists())
+
+    def test_reinstall_warns_for_the_vision_certificate_selected_for_deletion(self):
+        from test_integrated_features import helper
+
+        domain = 'vision.example.com'
+        hook = self.root/'etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision'
+        certroot = self.root/'etc/letsencrypt'
+        cert = certroot/'live'/domain/'fullchain.pem'
+        renewal = certroot/'renewal'/(domain+'.conf')
+        stage = self.root/'stage'
+        stage.mkdir()
+        shutil.copyfile(Path(__file__).resolve().parents[1]/'assets/vision/managed.py', stage/'managed-vision.py')
+        vision = helper('vision')
+        render = relocate(function('render_vision_hook'), self.root)
+        owned_hook = subprocess.check_output(['bash', '-c', render+'\nrender_vision_hook "$1"', 'fixture', domain], text=True)
+        installer = self.root/'installer.sh'
+        installer.write_text(relocate(INSTALLER, self.root))
+        stubs = MOCK + '''
+systemctl() { return 1; }
+certbot() {
+    [[ ! -e "$ROOT/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision" ]] || return 2
+    printf '%s\\n' "$*" >> "$CALLS"
+    return 1
+}
+confirm_destructive_reinstall && preflight_vision_artifacts && clean_previous_install
+'''
+        for case, selected, new_domain, language, deletes in (
+                ('omit', 'n', '', 'ru', True), ('rename', 'y', 'new-vision.example.com', 'en', True),
+                ('same', 'y', domain, 'en', False), ('foreign', 'n', '', 'en', False),
+                ('missing', 'n', '', 'en', False), ('foreign archive', 'n', '', 'en', False),
+                ('new panel', 'n', '', 'en', False), ('shared TWPM domain', 'n', '', 'en', False)):
+            with self.subTest(case=case):
+                self.calls.unlink(missing_ok=True)
+                certificates(self.root, extra=(domain,))
+                config = ConfigObj(str(renewal))
+                config['cert'] = str(cert.parent/'cert.pem')
+                config['chain'] = str(cert.parent/'chain.pem')
+                config['archive_dir'] = str(certroot/'archive'/('telegram.example.com' if case == 'foreign archive' else domain))
+                config.write()
+                hook.unlink(missing_ok=True)
+                if case != 'missing':
+                    hook.write_text('# administrator hook\n' if case == 'foreign' else owned_hook)
+                    hook.chmod(0o755)
+                if case == 'same':
+                    # The preflight for reusing its existing certificate also requires both managed nginx sites.
+                    sites = self.root/'etc/nginx/sites-available'
+                    sites.mkdir(parents=True, exist_ok=True)
+                    (sites/'vision.conf').write_text(vision.fallback_config(domain, 12001))
+                    (sites/'vision-acme.conf').write_text(vision.acme_config(domain, ipv6=False))
+                    for site in sites.iterdir():
+                        site.chmod(0o644)
+                if case == 'shared TWPM domain':
+                    vhost = self.root/'etc/nginx/conf.d/telemt-web-manager.conf'
+                    vhost.parent.mkdir(parents=True, exist_ok=True)
+                    vhost.write_text(f'ssl_certificate {cert};\n')
+                script = '''
+source "$1"
+INSTALL_VISION=$SELECTED
+vision_domain=$NEW_DOMAIN
+domain=$NEW_PANEL
+reality_domain=reality.example.com
+UI_LANG=$LANGUAGE
+''' + stubs
+                result = subprocess.run(['bash', '-eu', '-c', script, 'fixture', str(installer)],
+                                        input='YES\n', text=True, capture_output=True,
+                                        env={**self.env, 'SELECTED': selected, 'NEW_DOMAIN': new_domain,
+                                             'NEW_PANEL': domain if case == 'new panel' else 'example.com',
+                                             'LANGUAGE': language, 'PANEL_STAGE': str(stage)})
+                warning = (f'Сертификат Vision для {domain} будет удалён. Вернуть его можно только из Backup, сделанного до переустановки.'
+                           if language == 'ru' else f'The Vision certificate for {domain} will be deleted. It can only be restored from a Backup made before reinstalling.')
+                prompt = 'введите YES' if language == 'ru' else 'Type YES'
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(warning in ' '.join(result.stdout.split(prompt)[0].split()), deletes)
+                command = f'delete --cert-name {domain} --non-interactive'
+                self.assertEqual(self.calls.read_text().splitlines() if self.calls.exists() else [], [command] if deletes else [])
+                self.assertEqual(('certbot '+command) in result.stdout, deletes)
+                self.assertTrue(cert.is_file())
+                self.assertEqual(hook.exists(), case in ('same', 'foreign'))
 
     def test_legacy_cron_removal_preserves_unrelated_jobs(self):
         cron = self.root/'cron'

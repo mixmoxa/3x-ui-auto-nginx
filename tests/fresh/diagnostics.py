@@ -16,6 +16,32 @@ VISION_STAGES = {
     'configuring Vision inbound/nginx/HTTPS':'configuring_inbound',
 }
 
+DOT_RESTORE_PACKAGE_ERRORS = {
+    'apt_404': r'\b404\s+Not Found\b',
+    'apt_failed_to_fetch': r'\bFailed to fetch\b',
+    'apt_unable_to_locate': r'\bUnable to locate package\b',
+    'apt_lock_held': r'Could not get lock|Unable to acquire.*lock|lock.*held by process',
+    'dpkg_error': r'dpkg: error|dpkg returned an error code|Errors were encountered while processing:',
+    'timeout': r'\btimed out\b|\btime[- ]?out\b|\bdeadline exceeded\b',
+}
+
+
+def dot_restore_package_counts(log):
+    """Count matching lines per class. A line can match more than one class."""
+    lines = log.splitlines()
+    counts = {}
+    for key, regex in DOT_RESTORE_PACKAGE_ERRORS.items():
+        pattern = re.compile(regex, re.I)
+        counts[key] = sum(bool(pattern.search(line)) for line in lines)
+    return counts
+
+
+def dot_restore_package_report(output):
+    keys = ('restore_exit_code', *DOT_RESTORE_PACKAGE_ERRORS)
+    match = re.search(rb'^DoT Restore package diagnostics: (-?[0-9]{1,3})' +
+                      rb' ([0-9]{1,9})' * (len(keys) - 1) + rb'\r?$', output, re.M)
+    return dict(zip(keys, map(int, match.groups()))) if match else None
+
 
 def api_restart_probe(root):
     """Observe the existing curl request; preserve its bytes, options and exit."""

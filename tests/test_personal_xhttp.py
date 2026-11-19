@@ -580,9 +580,11 @@ systemctl() {
 
     def test_firewall_never_disables_resets_or_hardcodes_ssh(self):
         cleanup = function("clean_previous_install")
-        # Only the exact managed DoT rule may be deleted during rebuild.
+        cleanup = cleanup[cleanup.index("clean_previous_install() {"):]
+        # Only the exact managed DoT and AmneziaWG rules may be deleted during rebuild.
         dot_delete = "if [[ $had_dot == y ]]; then ufw delete allow 853/tcp || true; fi"
-        source = SOURCE.replace(cleanup, cleanup.replace(dot_delete, "", 1), 1)
+        awg_delete = "ufw delete allow 8443/udp || true"
+        source = SOURCE.replace(cleanup, cleanup.replace(dot_delete, "", 1).replace(awg_delete, "", 1), 1)
         for line in source.splitlines():
             if re.search(r"\bufw\b", line):
                 executable = " ".join(shlex.split(line, comments=True))

@@ -296,10 +296,20 @@ elif name == 'ufw':
     if args == ['status']:
         print('Status: ' + os.environ.get('UFW_STATE', 'inactive'))
     elif args == ['show', 'added']:
-        print(os.environ.get('UFW_ADDED', ''))
+        if os.environ.get('REINSTALL_FIXTURE_RULES'):
+            rules = (root/'etc/ufw/user.rules').read_text().splitlines()
+            print('\n'.join('ufw '+rule for rule in rules if rule.startswith('allow ')))
+        else:
+            print(os.environ.get('UFW_ADDED', ''))
     elif args[:1] == ['allow'] and os.environ.get('SCOPED_EFFECTS'):
         for name in ('user.rules','user6.rules'):
             with open(root/'etc/ufw'/name,'a') as out: out.write('allow '+args[1]+'\n')
+    elif args[:2] == ['delete', 'allow'] and os.environ.get('REINSTALL_FIXTURE_RULES'):
+        for name in ('user.rules', 'user6.rules'):
+            path = root/'etc/ufw'/name
+            if path.exists():
+                rules = path.read_text().splitlines(keepends=True)
+                path.write_text(''.join(rule for rule in rules if rule.rstrip() != 'allow '+args[2]))
     elif args == ['reload'] and os.environ.get('FAIL_UFW_RECOVERY'):
         sys.exit(1)
 elif name == 'nginx':
@@ -1076,10 +1086,10 @@ class PersonalBackup(unittest.TestCase):
                 self.assertFalse(any(c[0] in ('systemctl','curl','nginx','ss') for c in f.commands()))
                 if scenario=='no-vision':self.assertFalse(f.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision').exists())
 
-    def seed_vision(self):
+    def seed_vision(self, extra=()):
         from test_integrated_features import helper
         vision = helper('vision')
-        certificates(self.root, extra=('vision.example.com',))
+        certificates(self.root, extra=('vision.example.com', *extra))
         row = vision.inbound('vision.example.com', 12000, 12001,
                 str(self.path('/etc/letsencrypt/live/vision.example.com/fullchain.pem')),
                 str(self.path('/etc/letsencrypt/live/vision.example.com/privkey.pem')))
@@ -1102,13 +1112,74 @@ class PersonalBackup(unittest.TestCase):
         self.write('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision',body,0o755)
 
     def test_vision_backup_round_trip_and_missing_third_certificate_rejected(self):
-        self.seed_vision()
+        from test_integrated_features import helper
+
+        db_path = self.path('/etc/x-ui/x-ui.db')
+        core_db = db_path.read_bytes()
+        self.seed_vision(extra=('telegram.example.com',))
+        _, awg = self.seed_amneziawg()
+        self.write('/etc/x-ui/auto-nginx-managed.json', json.dumps({
+            'format': 1, 'layout': 'nginx-stream-v1',
+            'features': {'amneziawg': True}, 'inbound_roles': {'amneziawg': awg['id']},
+        }), 0o600)
+        domain = 'vision.example.com'
+        certroot = self.path('/etc/letsencrypt')
+        live = certroot/'live'/domain
+        renewal = certroot/'renewal'/(domain+'.conf')
+        vision_archive = certroot/'archive'/domain
+        vision_archive.mkdir(parents=True)
+        cfg = ConfigObj(str(renewal))
+        for stem in ('cert', 'chain', 'fullchain', 'privkey'):
+            path = live/(stem+'.pem')
+            archived = vision_archive/(stem+'1.pem')
+            archived.write_bytes((live/('privkey.pem' if stem == 'privkey' else 'fullchain.pem')).read_bytes())
+            path.unlink(missing_ok=True)
+            path.symlink_to(Path('../../archive')/domain/archived.name)
+            cfg[stem] = str(path)
+        cfg['archive_dir'] = str(vision_archive)
+        cfg.write()
+        foreign = certroot/'live/telegram.example.com/fullchain.pem'
+        foreign_certificate = foreign.read_bytes()
+        rules = '/etc/ufw/user.rules'
+        administrator_rule = 'allow from 192.0.2.1 to any port 8443 proto udp'
+        self.write(rules, f'{administrator_rule}\nallow 8443/udp\n')
         archive = self.backup()
-        result = self.run_tool('restore',str(archive))
-        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-        self.assertTrue(self.path('/etc/letsencrypt/live/vision.example.com/fullchain.pem').is_file())
-        hook = self.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision')
+        hook = certroot/'renewal-hooks/deploy/3x-ui-auto-nginx-vision'
         current = hook.read_bytes()
+        vision = helper('vision')
+        self.write('/etc/nginx/sites-available/vision.conf', vision.fallback_config(domain, 12001))
+        self.write('/etc/nginx/sites-available/vision-acme.conf', vision.acme_config(domain, ipv6=False))
+        stage = self.root/'stage'
+        stage.mkdir()
+        shutil.copyfile(ROOT/'assets/vision/managed.py', stage/'managed-vision.py')
+        installer = self.root/'installer.sh'
+        installer.write_text(relocated(INSTALLER, self.root))
+        cleanup = '''
+source "$1"
+certbot() {
+    [[ ! -e "$CERTROOT/renewal-hooks/deploy/3x-ui-auto-nginx-vision" ]] || return 1
+    command certbot --config-dir "$CERTROOT" --work-dir "$FIXTURE_ROOT/certbot-work" \\
+        --logs-dir "$FIXTURE_ROOT/certbot-logs" "$@"
+}
+INSTALL_VISION=n INSTALL_AWG=n domain=example.com reality_domain=reality.example.com
+confirm_destructive_reinstall && preflight_vision_artifacts && clean_previous_install
+'''
+        result = subprocess.run(['bash', '-eu', '-c', cleanup, 'fixture', str(installer)], input='YES\n',
+                                env={**self.env, 'CERTROOT': str(certroot), 'PANEL_STAGE': str(stage),
+                                     'REINSTALL_FIXTURE_RULES': '1'}, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        before_restore = (hook.exists(), live.exists(), renewal.exists(), vision_archive.exists(),
+                          self.path(rules).read_text())
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path.write_bytes(core_db)
+        self.path('/etc/ufw/user6.rules').touch()
+        result = self.run_tool('restore', archive, SCOPED_EFFECTS='1')
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertEqual(before_restore, (False, False, False, False, administrator_rule+'\n'))
+        self.assertEqual(foreign.read_bytes(), foreign_certificate)
+        self.assertIn('allow 8443/udp', self.path(rules).read_text().splitlines())
+        self.assertEqual(hook.read_bytes(), current)
+        self.assertTrue(self.path('/etc/letsencrypt/live/vision.example.com/fullchain.pem').is_file())
         source = relocated(function('render_vision_hook'), self.root)
         hook.write_text(subprocess.check_output(['bash','-c',source+'\nrender_vision_hook vision.example.com legacy'],text=True))
         archive = self.backup()
@@ -1442,6 +1513,29 @@ class PersonalBackup(unittest.TestCase):
                 self.assertEqual(db.execute('PRAGMA quick_check').fetchone(),('ok',))
             self.assertIn(['ufw','allow','8443/udp'],self.commands())
             self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
+        db_path = self.path('/etc/x-ui/x-ui.db')
+        awg_db = db_path.read_bytes()
+        installer = self.root/'installer.sh'
+        installer.write_text(relocated(INSTALLER, self.root))
+        for case, selected, inbound, rule in (
+                ('keep AWG', 'y', row['id'], 'allow 8443/udp'),
+                ('foreign inbound', 'n', row['id'] + 1, 'allow 8443/udp'),
+                ('commented rule', 'n', row['id'], "allow 8443/udp comment 'administrator VPN'"),
+                ('mixed rules', 'n', row['id'], "allow 8443/udp\nallow 8443/udp comment 'administrator VPN'")):
+            with self.subTest(case=case):
+                db_path.parent.mkdir(parents=True, exist_ok=True)
+                db_path.write_bytes(awg_db)
+                self.write('/etc/x-ui/auto-nginx-managed.json', json.dumps({
+                    'format': 1, 'layout': 'nginx-stream-v1',
+                    'features': {'amneziawg': True}, 'inbound_roles': {'amneziawg': inbound},
+                }), 0o600)
+                rules = self.path('/etc/ufw/user.rules')
+                rules.write_text(rule+'\n')
+                result = subprocess.run(['bash', '-eu', '-c', 'source "$1"; clean_previous_install', 'fixture', str(installer)],
+                                        env={**self.env, 'INSTALL_AWG': selected, 'REINSTALL_FIXTURE_RULES': '1'},
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+                self.assertEqual(rules.read_text(), rule+'\n')
 
     def test_native_awg_empty_stream_survives_restore(self):
         self.seed_amneziawg()
